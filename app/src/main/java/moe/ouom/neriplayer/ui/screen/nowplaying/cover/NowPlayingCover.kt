@@ -92,6 +92,8 @@ import moe.ouom.neriplayer.util.media.offlineCachedImageRequest
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
 
 private const val NowPlayingCoverImageCrossfadeMs = 220
 private const val NowPlayingCoverFrameCacheLimit = 3
@@ -1002,12 +1004,32 @@ private fun NowPlayingCoverInteractiveImage(
     } else {
         RoundedCornerShape(NowPlayingCoverCornerRadius)
     }
+    // 电视：封面也有焦点框，以前用的是全局环（圆角 12/20dp，画在节点边界上），
+    // 而封面本身是 24dp 圆角 —— 环比封面「方」而且紧贴画面，看着像被框死在卡片里。
+    // 这里按封面圆角 + 一点外距来画：节点不变大，卡片四周缩进去 CoverRingGap，
+    // 环就落在卡片外面一圈、并与封面同圆角。
+    val coverRing = rememberTvFocusRingIndication(
+        radius = NowPlayingCoverCornerRadius + CoverRingGap,
+        cleanRadiusBoost = 0.dp
+    )
+    val ringGapModifier = if (coverRing != null) Modifier.padding(CoverRingGap) else Modifier
+    val clickableModifier = if (coverRing != null && preview.song != null) {
+        Modifier.combinedClickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = coverRing,
+            onClick = preview.action(owner, content.source.coverUrl, longPress = false),
+            onLongClick = preview.action(owner, content.source.coverUrl, longPress = true)
+        )
+    } else {
+        previewModifier
+    }
     val imageModifier = Modifier.fillMaxSize()
         .then(modifier)
         .sharedCoverTarget(NowPlayingCoverCornerRadius)
+        .then(clickableModifier)
+        .then(ringGapModifier)
         .clip(coverShape)
         .background(coverSurfaceColor(content.source.coverUrl, MaterialTheme.colorScheme.primaryContainer))
-        .then(previewModifier)
     NowPlayingCoverImageFrame(
         owner, content.source, content.offlineMode, content.requestSizePx, imageModifier
     )
@@ -1039,6 +1061,9 @@ private fun NowPlayingCoverImageFrame(
 }
 
 private val NowPlayingCoverCornerRadius = 24.dp
+
+/** 封面焦点环离封面边缘的距离（只影响环的位置：卡片在这段距离之内） */
+private val CoverRingGap = 5.dp
 
 private fun coverSurfaceColor(coverUrl: String?, placeholder: Color): Color =
     if (coverUrl == null) placeholder else Color.Transparent

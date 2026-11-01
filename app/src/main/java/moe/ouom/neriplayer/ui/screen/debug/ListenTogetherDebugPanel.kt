@@ -111,6 +111,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import moe.ouom.neriplayer.R as AppR
+import moe.ouom.neriplayer.ui.component.common.rememberTvTextFieldIme
 
 internal data class DebugField(
     val label: String,
@@ -274,30 +275,36 @@ fun ListenTogetherRoomPanel(
                     roomVersion = roomState?.version,
                     roomId = sessionState.roomId
                 )
+                // 电视：「确认键才弹键盘」（未进入输入状态时设成只读，不启动输入法）
+                val ime1 = rememberTvTextFieldIme(swallowLeft = false, swallowRight = false)
                 if (showBaseUrlEditor) {
                     OutlinedTextField(
                         value = baseUrl,
                         onValueChange = { baseUrl = it },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().then(ime1.modifier),
                         label = { Text(stringResource(CoreCommonR.string.listen_together_worker_base_url)) },
-                        singleLine = true
+                        singleLine = true,
+                        readOnly = ime1.readOnly,
                     )
                 }
                 OutlinedTextField(
                     value = nickname,
                     onValueChange = { nickname = it.trim().take(24) },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().then(ime1.modifier),
                     label = { Text(stringResource(CoreCommonR.string.listen_together_nickname)) },
-                    singleLine = true
+                    singleLine = true,
+                    readOnly = ime1.readOnly,
                 )
                 if (isInRoom) {
+                    // 电视：「确认键才弹键盘」（未进入输入状态时设成只读，不启动输入法）
+                    val ime2 = rememberTvTextFieldIme(swallowLeft = false, swallowRight = false)
                     OutlinedTextField(
                         value = roomIdInput,
                         onValueChange = {},
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().then(ime2.modifier),
                         label = { Text(stringResource(CoreCommonR.string.listen_together_room_id)) },
                         singleLine = true,
-                        readOnly = true
+                        readOnly = true,
                     )
                 }
                 runningActionResId?.let { resId ->
@@ -423,15 +430,18 @@ fun ListenTogetherRoomPanel(
                     .padding(vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                // 电视：「确认键才弹键盘」（未进入输入状态时设成只读，不启动输入法）
+                val ime3 = rememberTvTextFieldIme(swallowLeft = false, swallowRight = false)
                 if (showBaseUrlEditor) {
                     OutlinedTextField(
                         value = baseUrl,
                         onValueChange = { baseUrl = it },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 20.dp),
+                            .padding(horizontal = 20.dp).then(ime3.modifier),
                         label = { Text(stringResource(CoreCommonR.string.listen_together_worker_base_url)) },
-                        singleLine = true
+                        singleLine = true,
+                        readOnly = ime3.readOnly,
                     )
                 }
                 OutlinedTextField(
@@ -439,24 +449,27 @@ fun ListenTogetherRoomPanel(
                     onValueChange = { nickname = it.trim().take(24) },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp),
+                        .padding(horizontal = 20.dp).then(ime3.modifier),
                     shape = neriSearchFieldShape(OutlinedTextFieldDefaults.shape),
                     colors = neriSearchFieldColors(),
                     label = { Text(stringResource(CoreCommonR.string.listen_together_nickname)) },
-                    singleLine = true
+                    singleLine = true,
+                    readOnly = ime3.readOnly,
                 )
                 if (isInRoom) {
+                    // 电视：「确认键才弹键盘」（未进入输入状态时设成只读，不启动输入法）
+                    val ime4 = rememberTvTextFieldIme(swallowLeft = false, swallowRight = false)
                     OutlinedTextField(
                         value = roomIdInput,
                         onValueChange = {},
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 20.dp),
+                            .padding(horizontal = 20.dp).then(ime4.modifier),
                         shape = neriSearchFieldShape(OutlinedTextFieldDefaults.shape),
                         colors = neriSearchFieldColors(),
                         label = { Text(stringResource(CoreCommonR.string.listen_together_room_id)) },
                         singleLine = true,
-                        readOnly = true
+                        readOnly = true,
                     )
                 }
                 runningActionResId?.let { resId ->

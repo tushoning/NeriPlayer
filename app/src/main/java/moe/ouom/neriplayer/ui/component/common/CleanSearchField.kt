@@ -38,6 +38,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -56,7 +57,12 @@ fun CleanSearchField(
     onQueryChange: (String) -> Unit,
     placeholder: String,
     modifier: Modifier = Modifier,
-    onSearch: (() -> Unit)? = null
+    onSearch: (() -> Unit)? = null,
+    /**
+     * 只读状态下按右键是否留在原地。
+     * 右边还有按钮要过去的（本地歌手的排序三点）必须传 false，否则焦点出不去。
+     */
+    swallowRight: Boolean = true
 ) {
     val colors = MaterialTheme.colorScheme
     val focusManager = LocalFocusManager.current
@@ -73,11 +79,14 @@ fun CleanSearchField(
         label = "clean_search_icon"
     )
     val fill = if (LocalHasCustomBackground.current) Color.Transparent else colors.onSurface.copy(alpha = 0.06f)
+    // 「自动弹出软键盘」关掉时只是不让它弹输入法，焦点框还是输入框自己那个
+    val ime = rememberTvTextFieldIme(swallowRight = swallowRight)
     NeriSearchFieldGlass(modifier = modifier.height(46.dp), shape = CircleShape) {
         BasicTextField(
             value = query,
             onValueChange = onQueryChange,
             singleLine = true,
+            readOnly = ime.readOnly,
             textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface),
             cursorBrush = SolidColor(colors.primary),
             interactionSource = interactionSource,
@@ -88,6 +97,7 @@ fun CleanSearchField(
             }),
             modifier = Modifier
                 .fillMaxSize()
+                .then(ime.modifier)
                 .background(fill, CircleShape)
                 .border(1.dp, ring, CircleShape),
             decorationBox = { innerTextField ->

@@ -58,6 +58,8 @@ import kotlinx.coroutines.launch
 import moe.ouom.neriplayer.ui.screen.artist.NeteaseArtistDetailScreen
 import moe.ouom.neriplayer.ui.screen.artist.BiliUploaderDetailScreen
 import moe.ouom.neriplayer.ui.screen.artist.YouTubeMusicCreatorNavigationScreen
+import moe.ouom.neriplayer.ui.screen.history.RecentScreen
+import moe.ouom.neriplayer.ui.screen.history.stats.PlaybackStatsScreen
 import moe.ouom.neriplayer.ui.screen.playlist.LocalArtistDetailScreen
 import moe.ouom.neriplayer.ui.screen.playlist.HotPlaylistDetailScreen
 import moe.ouom.neriplayer.ui.screen.playlist.LocalPlaylistDetailScreen
@@ -70,6 +72,7 @@ import moe.ouom.neriplayer.ui.screen.tab.library.LibraryScreen
 import moe.ouom.neriplayer.data.model.NeteaseArtistSummary
 import moe.ouom.neriplayer.data.model.BiliUploaderSummary
 import moe.ouom.neriplayer.data.model.youtube.music.YouTubeMusicCreatorSummary
+import moe.ouom.neriplayer.ui.component.navigation.TvTopBarFocus
 import moe.ouom.neriplayer.ui.navigation.biliUploaderSourceRoute
 import moe.ouom.neriplayer.ui.viewmodel.tab.AlbumSummary
 import moe.ouom.neriplayer.ui.viewmodel.tab.PlaylistSummary
@@ -184,6 +187,18 @@ sealed class LibrarySelectedItem : Parcelable {
             "artistName" to artist.name,
             "album" to album.toSaveMap()
         )
+    }
+    /**
+     * 「最近播放」「播放统计」也是媒体库的二级页：走宿主自己的场景栈，
+     * 盖上来以后媒体库列表不再参与组合，焦点和触摸就不会再穿透到下面那一层。
+     */
+    @Parcelize
+    data class Recent(val entry: Int = 0) : LibrarySelectedItem() {
+        override fun saveState() = hashMapOf<String, Any?>(SAVED_TYPE_KEY to "recent")
+    }
+    @Parcelize
+    data class Stats(val entry: Int = 0) : LibrarySelectedItem() {
+        override fun saveState() = hashMapOf<String, Any?>(SAVED_TYPE_KEY to "stats")
     }
     @Parcelize
     data class Bili(val playlist: BiliPlaylist) : LibrarySelectedItem() {
@@ -724,8 +739,15 @@ fun LibraryHostScreen(
                                     )
                                 }
                             },
-                            onOpenRecent = onOpenRecent,
-                            onOpenStats = onOpenStats
+                            // 标签只是入口：点了就在宿主里压一个新场景，和歌单详情同样的层级
+                            onOpenRecent = {
+                                skipDetailCloseAnimation = false
+                                openLibrarySelectedItem(LibrarySelectedItem.Recent())
+                            },
+                            onOpenStats = {
+                                skipDetailCloseAnimation = false
+                                openLibrarySelectedItem(LibrarySelectedItem.Stats())
+                            }
                         )
                         }
                         }
@@ -743,6 +765,22 @@ fun LibraryHostScreen(
                                         localPlaylistSourceRoute(current.playlistId)
                                     )
                                 },
+                                offlineMode = offlineMode
+                            )
+                        }
+
+                        is LibrarySelectedItem.Recent -> {
+                            RecentScreen(
+                                onBack = { closeSelectedDetail() },
+                                onSongClick = onSongClick,
+                                offlineMode = offlineMode
+                            )
+                        }
+
+                        is LibrarySelectedItem.Stats -> {
+                            PlaybackStatsScreen(
+                                onBack = { closeSelectedDetail() },
+                                onSongClick = onSongClick,
                                 offlineMode = offlineMode
                             )
                         }
@@ -963,6 +1001,8 @@ private val librarySelectedItemRestorers: Map<String, (Map<String, Any?>) -> Lib
     "netease" to { saved -> restorePlaylistSummary(saved.savedMap("playlist"))?.let(LibrarySelectedItem::Netease) },
     "neteaseArtist" to { saved -> saved.savedNeteaseArtist()?.let(LibrarySelectedItem::NeteaseArtist) },
     "neteaseArtistAlbum" to ::restoreNeteaseArtistAlbumItem,
+    "recent" to { _ -> LibrarySelectedItem.Recent() },
+    "stats" to { _ -> LibrarySelectedItem.Stats() },
     "bili" to { saved -> restoreBiliPlaylist(saved.savedMap("playlist"))?.let(LibrarySelectedItem::Bili) },
     "ytmusic" to { saved -> restoreYouTubeMusicPlaylist(saved.savedMap("playlist"))?.let(LibrarySelectedItem::YouTubeMusic) },
     "biliArtist" to ::restoreBiliUploaderItem,

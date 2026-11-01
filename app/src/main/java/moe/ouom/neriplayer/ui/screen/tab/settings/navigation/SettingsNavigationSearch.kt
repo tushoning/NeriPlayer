@@ -101,7 +101,7 @@ internal fun settingsHomeSelectedPage(page: SettingsPage?): SettingsPage? =
     page?.backTargetPage() ?: page
 
 internal fun LazyListScope.settingsHomePageItems(navigation: SettingsNavigationState) {
-    settingsHomeSearchFieldItem(navigation)
+    // 电视上不放顶部搜索框（遥控器输入文字太费劲，用户要求去掉）
     settingsHomeSearchResultsItem(navigation)
     settingsHomePageGroupItems(navigation)
 }

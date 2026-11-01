@@ -2,7 +2,11 @@ package moe.ouom.neriplayer.ui.screen.tab.settings.page
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
+import moe.ouom.neriplayer.ui.screen.tab.settings.component.rememberSettingsRingIndication
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,6 +18,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.only
@@ -41,6 +46,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.ScaffoldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TopAppBarState
 import androidx.compose.runtime.Composable
@@ -49,6 +55,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -59,8 +70,14 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
 import moe.ouom.neriplayer.ui.theme.LocalHasCustomBackground
 import moe.ouom.neriplayer.ui.theme.NeriDesign
+import moe.ouom.neriplayer.ui.tv.TvFocusIndication
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.tvPageSidePadding
+import moe.ouom.neriplayer.ui.tv.tvBringIntoViewOnFocus
+import moe.ouom.neriplayer.ui.tv.tvClampLeft
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.selected
@@ -89,6 +106,13 @@ private val MiuixHighlightShape = RoundedCornerShape(18.dp)
 private val MiuixSettingsContentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
 private val MiuixPageRowPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
 private val MiuixSettingsTabletMaxWidth = 920.dp
+
+/**
+ * 电视上设置页正文的边距，直接对齐歌单详情页「全部播放」那一行（start 18 / end 22 / 上下 8）。
+ */
+internal val tvSettingsContentStart: Dp = 18.dp
+internal val tvSettingsContentEnd: Dp = 22.dp
+internal val tvSettingsContentVertical: Dp = 8.dp
 
 internal const val SETTINGS_SPLIT_NAVIGATION_PANE_TAG = "settings-split-navigation-pane"
 internal const val SETTINGS_SPLIT_DETAIL_PANE_TAG = "settings-split-detail-pane"
@@ -157,6 +181,40 @@ internal fun MiuixSettingsHomeScaffold(
     val isTabletLayout = currentWindowWidthDp() >= 720.dp
     val horizontalPadding = settingsHorizontalPadding(isTabletLayout)
 
+    // 电视：顶部已经有标签栏，这一层 Scaffold 的 topBar 是空的。topBar 为空时
+    // Scaffold 传给内容的约束会把列表一次性铺开（焦点能走出屏幕，列表自己不滚），
+    // 所以电视上绕开 Scaffold，直接用一个铺满的 Box 装列表。
+    if (LocalIsTelevision.current) {
+        // 电视上要居中：这个 Box 原来没有 contentAlignment，列表被限宽后就贴在左边，
+        // 调过缩放后看着就是「整页往左偏」。
+        // 设置页单独一档边距：页面边距 + 自己那 28dp 内容边距，比别的页面更松一点。
+        val sidePadding = tvPageSidePadding()
+        val tvContentWidth = (currentWindowWidthDp() - sidePadding * 2)
+            .coerceAtMost(MiuixSettingsTabletMaxWidth)
+        Box(
+            modifier = modifier.fillMaxSize(),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            LazyColumn(
+                modifier = Modifier
+                    .width(tvContentWidth)
+                    .fillMaxHeight(),
+                state = listState,
+                // 正文边距跟歌单详情页「全部播放」那一行一致：start 18 / end 22 / 上下 8。
+                // 原来用的是 28dp 的平板档 + 上下 10/18，和上面的返回按钮差一截。
+                contentPadding = PaddingValues(
+                    start = tvSettingsContentStart,
+                    end = tvSettingsContentEnd,
+                    top = tvSettingsContentVertical,
+                    bottom = tvSettingsContentVertical + miniPlayerHeight
+                ),
+                verticalArrangement = Arrangement.spacedBy(settingsListSpacing),
+                content = content
+            )
+        }
+        return
+    }
+
     Scaffold(
         modifier = modifier
             .fillMaxSize()
@@ -168,7 +226,8 @@ internal fun MiuixSettingsHomeScaffold(
             WindowInsetsSides.Top + WindowInsetsSides.Horizontal
         ),
         topBar = {
-            LargeTopAppBar(
+            // 电视上顶部已有标签栏，设置页不再重复一条大标题
+            if (!LocalIsTelevision.current) LargeTopAppBar(
                 title = {
                     // large top app bars compose both title slots, but only one is visible
                     val isExpandedTitleSlot = LocalTextStyle.current.fontSize.value > 24f
@@ -303,6 +362,30 @@ internal fun MiuixSettingsSectionIntro(
     }
 }
 
+/**
+ * 设置首页各入口的焦点记忆。
+ *
+ * 设置内部的二级页不是独立路由，返回时整页内容会被替换，Compose 没法自动把光标
+ * 还回「刚才点进去的那个入口」，所以这里按入口页记一份请求器，返回时主动送回去。
+ */
+internal object SettingsEntryFocus {
+    private val lock = Any()
+    private val requesters = HashMap<SettingsPage, FocusRequester>()
+
+    /** 最近一次获得焦点的入口页，返回设置首页时用它当落点 */
+    @Volatile
+    var lastFocusedPage: SettingsPage? = null
+
+    fun requesterFor(page: SettingsPage): FocusRequester = synchronized(lock) {
+        requesters.getOrPut(page) { FocusRequester() }
+    }
+
+    fun request(page: SettingsPage?): Boolean {
+        if (page == null) return false
+        return runCatching { requesterFor(page).requestFocus() }.getOrDefault(false)
+    }
+}
+
 @Composable
 internal fun MiuixSettingsPageGroupCard(
     pages: List<SettingsPage>,
@@ -369,9 +452,28 @@ private fun MiuixSettingsPageRow(
     onClick: () -> Unit
 ) {
     val clean = NeriDesign.isClean
+    val isTelevision = LocalIsTelevision.current
+    val entryRequester = remember(page) { SettingsEntryFocus.requesterFor(page) }
+    // 一级界面的条目装在一张 16dp 圆角的卡片里：环的圆角跟着卡片走（不是往里缩），
+    // 半径会再减 1dp 基础内缩，正好和卡片圆角同心，四个角不会被削。
+    // 简洁风格（苹果大圆角）下一级首页的环再放大一点点：16 + 6 = 22dp
+    // （+12 那版显得过圆，用户反馈太大）
+    val tvRowIndication = rememberSettingsRingIndication(16.dp, cleanExtra = 6.dp)
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(
+                if (isTelevision) {
+                    Modifier
+                        .focusRequester(entryRequester)
+                        .tvBringIntoViewOnFocus()
+                        .onFocusChanged {
+                            if (it.isFocused) SettingsEntryFocus.lastFocusedPage = page
+                        }
+                } else {
+                    Modifier
+                }
+            )
             .heightIn(min = if (clean) 64.dp else 76.dp)
             .testTag(settingsPageRowTestTag(page))
             .semantics {
@@ -384,7 +486,16 @@ private fun MiuixSettingsPageRow(
                     else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
                 }
             )
-            .clickable(onClick = onClick)
+            // 电视：整行占满宽度，最左边再按左不能穿到页面外的主标签栏
+            .tvClampLeft()
+            // 一级界面：焦点环两边各往里缩 10dp（上下不动）。
+            // 这些行装在一张圆角卡片里，环贴着行边界时四个角会被卡片的圆角削掉；
+            // 缩进去之后半径不再被压小（drawTvFocusRing 只减基础内缩），四角保持圆角。
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = tvRowIndication,
+                onClick = onClick
+            )
             .padding(MiuixPageRowPadding),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(if (clean) 14.dp else 16.dp)
@@ -447,21 +558,58 @@ internal fun MiuixSettingsDetailScaffold(
     showBackButton: Boolean = true,
     content: LazyListScope.() -> Unit
 ) {
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(
-        state = topAppBarState,
-        // follow the finger and stay put; a release snap reads as an unwanted bounce
-        snapAnimationSpec = null,
-        canScroll = {
-            shouldAllowCollapsingTopAppBar(
-                canScrollForward = listState.canScrollForward,
-                canScrollBackward = listState.canScrollBackward,
-                collapsedFraction = topAppBarState.collapsedFraction
-            )
-        }
-    )
+    // 电视：顶栏固定不折叠。LargeTopAppBar 的标题在展开态位于底部、随列表滚动才升到返回按钮
+    // 那一行，遥控器用户看到的就是「文字慢慢飘上去」，所以用普通 TopAppBar + pinned。
+    val isTelevision = LocalIsTelevision.current
+    val scrollBehavior = if (isTelevision) {
+        TopAppBarDefaults.pinnedScrollBehavior(topAppBarState)
+    } else {
+        TopAppBarDefaults.exitUntilCollapsedScrollBehavior(
+            state = topAppBarState,
+            // follow the finger and stay put; a release snap reads as an unwanted bounce
+            snapAnimationSpec = null,
+            canScroll = {
+                shouldAllowCollapsingTopAppBar(
+                    canScrollForward = listState.canScrollForward,
+                    canScrollBackward = listState.canScrollBackward,
+                    collapsedFraction = topAppBarState.collapsedFraction
+                )
+            }
+        )
+    }
     val miniPlayerHeight = LocalMiniPlayerHeight.current
     val isTabletLayout = currentWindowWidthDp() >= 720.dp
     val horizontalPadding = settingsHorizontalPadding(isTabletLayout)
+    // 电视：二级页要和一级页用同一条左边缘（居中内容宽度 + 自身内容边距），
+    // 否则返回按钮比一级页的卡片更靠左，看着像「没设置边距」。
+    val tvSidePadding = if (isTelevision) tvPageSidePadding() else 0.dp
+    val tvContentWidth = if (isTelevision) {
+        (currentWindowWidthDp() - tvSidePadding * 2).coerceAtMost(MiuixSettingsTabletMaxWidth)
+    } else {
+        MiuixSettingsTabletMaxWidth
+    }
+    // 电视：二级页和歌单详情页同一套边距关系 ——
+    // 「返回」那一行只贴页面边距（tvPageSidePadding），正文字段再往里 18/22。
+    // 原来顶栏在页面边距之上又叠了一层 28dp，正文只有 10dp，两者对不齐。
+    val tvGutter = if (isTelevision) {
+        (currentWindowWidthDp() - tvContentWidth) / 2
+    } else {
+        0.dp
+    }
+    // 二级页一进来光标默认落在左上角的返回按钮上（标题就是这一页的身份，
+    // 换页时 title 变，等于「又进了一个二级页」）。页面刚切过来时焦点节点还没挂好，
+    // 单次 requestFocus 会失败，所以逐帧试几帧。
+    val backFocusRequester = remember { FocusRequester() }
+    val settingsScrollScope = rememberCoroutineScope()
+    LaunchedEffect(title, showBackButton, isTelevision) {
+        if (!isTelevision || !showBackButton) return@LaunchedEffect
+        repeat(6) {
+            if (runCatching { backFocusRequester.requestFocus() }.getOrDefault(false)) {
+                return@LaunchedEffect
+            }
+            withFrameNanos { }
+        }
+    }
 
     Scaffold(
         modifier = modifier
@@ -473,7 +621,49 @@ internal fun MiuixSettingsDetailScaffold(
             WindowInsetsSides.Top + WindowInsetsSides.Horizontal
         ),
         topBar = {
-            LargeTopAppBar(
+            if (isTelevision) {
+                TopAppBar(
+                    modifier = Modifier.padding(horizontal = tvGutter),
+                    title = {
+                        Text(title, style = MaterialTheme.typography.titleLarge)
+                    },
+                    navigationIcon = {
+                        if (showBackButton) {
+                            IconButton(
+                                onClick = onBack,
+                                modifier = if (isTelevision) {
+                                    Modifier
+                                        .focusRequester(backFocusRequester)
+                                        // 电视：光标从正文走到返回键时，正文如果还停在中间，
+                                        // 顺手把它带回顶部 —— 页面顶部那段说明文字是纯文字、
+                                        // 拿不到焦点，不这样处理就永远滚不回来了。
+                                        .onFocusChanged { focus ->
+                                            if (focus.isFocused && listState.canScrollBackward) {
+                                                // 瞬时到位：动画还没跑完就按下键的话，
+                                                // 焦点项的 bringIntoView 会再抢一次滚动，页面会抖一下。
+                                                settingsScrollScope.launch {
+                                                    runCatching { listState.scrollToItem(0) }
+                                                }
+                                            }
+                                        }
+                                } else {
+                                    Modifier
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                                    contentDescription = stringResource(CoreCommonR.string.action_back)
+                                )
+                            }
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        scrolledContainerColor = Color.Transparent
+                    )
+                )
+            } else LargeTopAppBar(
+                modifier = Modifier.padding(horizontal = tvGutter),
                 title = { Text(title) },
                 navigationIcon = {
                     if (showBackButton) {
@@ -501,14 +691,22 @@ internal fun MiuixSettingsDetailScaffold(
         ) {
             LazyColumn(
                 modifier = Modifier
-                    .widthIn(max = MiuixSettingsTabletMaxWidth)
+                    // 电视：和一级页同宽（居中 + 页面边距），正文边距才有参照
+                    .then(
+                        if (isTelevision) Modifier.width(tvContentWidth)
+                        else Modifier.widthIn(max = MiuixSettingsTabletMaxWidth)
+                    )
                     .fillMaxSize(),
                 state = listState,
                 contentPadding = PaddingValues(
-                    start = horizontalPadding,
-                    end = horizontalPadding,
-                    top = 10.dp,
-                    bottom = 18.dp + miniPlayerHeight
+                    start = if (isTelevision) tvSettingsContentStart else horizontalPadding,
+                    end = if (isTelevision) tvSettingsContentEnd else horizontalPadding,
+                    top = if (isTelevision) tvSettingsContentVertical else 10.dp,
+                    bottom = if (isTelevision) {
+                        tvSettingsContentVertical + miniPlayerHeight
+                    } else {
+                        18.dp + miniPlayerHeight
+                    }
                 ),
                 verticalArrangement = Arrangement.spacedBy(settingsListSpacing),
                 content = content
@@ -782,3 +980,4 @@ internal fun LazyListScope.miuixSettingsSectionCardItem(
         )
     }
 }
+

@@ -27,12 +27,14 @@ package moe.ouom.neriplayer.ui.screen.download
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
 import moe.ouom.neriplayer.ui.theme.NeriDesign
 import moe.ouom.neriplayer.ui.component.common.CleanSearchField
+import moe.ouom.neriplayer.ui.component.common.rememberTvTextFieldIme
 import android.app.Application
 import android.content.res.Resources
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -46,6 +48,7 @@ import moe.ouom.neriplayer.ui.component.overlay.DensityScaledAlertDialog as Aler
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -441,6 +444,7 @@ private fun DownloadManagerTopBar(
 ) {
     val context = LocalContext.current
     TopAppBar(
+        modifier = Modifier.padding(horizontal = pageSidePaddingOr(0.dp)),
         title = {
             Column {
                 Text(
@@ -617,12 +621,15 @@ private fun DownloadManagerSearchField(query: String, onQueryChange: (String) ->
         )
         return
     }
+    val searchIme = rememberTvTextFieldIme()
     OutlinedTextField(
         value = query,
         onValueChange = onQueryChange,
+        readOnly = searchIme.readOnly,
         modifier = Modifier
             .downloadPageContentWidth()
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 16.dp)
+            .then(searchIme.modifier),
         placeholder = { Text(stringResource(CoreCommonR.string.download_search_hint)) },
         leadingIcon = { Icon(Icons.Default.Search, contentDescription = stringResource(CoreCommonR.string.action_search)) },
         singleLine = true,
@@ -742,8 +749,8 @@ private fun DownloadedSongsList(
                 state = listState,
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(
-                    start = 16.dp,
-                    end = 16.dp,
+                    start = pageSidePaddingOr(16.dp),
+                    end = pageSidePaddingOr(16.dp),
                     top = 16.dp,
                     bottom = 16.dp + miniPlayerHeight
                 ),

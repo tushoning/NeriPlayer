@@ -26,15 +26,19 @@ package moe.ouom.neriplayer.ui.screen.tab.home
 import moe.ouom.neriplayer.ui.i18n.UiText
 import moe.ouom.neriplayer.ui.i18n.asString
 import moe.ouom.neriplayer.ui.theme.NeriDesign
+import moe.ouom.neriplayer.ui.theme.cleanCornerRadiusFor
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
 import moe.ouom.neriplayer.ui.screen.playlist.FavoriteSongLookup
 import android.app.Application
 import android.content.ClipData
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -48,6 +52,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridScope
@@ -56,6 +62,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -84,6 +91,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TopAppBarState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -97,6 +106,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -120,6 +136,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import moe.ouom.neriplayer.common.R as CoreCommonR
@@ -166,6 +183,18 @@ import moe.ouom.neriplayer.util.format.formatPlayCount
 import kotlin.math.ceil
 import kotlin.math.min
 import java.util.Locale
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOuterOr
+import moe.ouom.neriplayer.ui.tv.LocalTvRowMenuKeyState
+import moe.ouom.neriplayer.ui.tv.TvRowMenuKeyEffect
+import moe.ouom.neriplayer.ui.tv.rememberTvMenuFirstItemFocus
+import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
+import moe.ouom.neriplayer.ui.tv.rememberTvRowMenuKeyState
+import moe.ouom.neriplayer.ui.tv.tvStripItemFocus
+import moe.ouom.neriplayer.ui.tv.tvStripClamp
+import moe.ouom.neriplayer.ui.tv.tvBringIntoViewOnFocus
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
+import moe.ouom.neriplayer.ui.tv.tvRowMenuKeyPress
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -301,27 +330,6 @@ fun HomeScreen(
         }
     }
 
-    val titleOptions = listOf(
-        stringResource(CoreCommonR.string.app_name),
-        stringResource(CoreCommonR.string.home_title_brand_loud),
-        stringResource(CoreCommonR.string.home_title_brand_wave),
-        stringResource(CoreCommonR.string.home_title_brand_call)
-    ).distinct()
-    val titleSeed = rememberSaveable { (0..Int.MAX_VALUE).random() }
-    val appBarTitle = titleOptions[titleSeed % titleOptions.size]
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(
-        state = topAppBarState,
-        // follow the finger and stay put; a release snap reads as an unwanted bounce
-        snapAnimationSpec = null,
-        canScroll = {
-            shouldAllowCollapsingTopAppBar(
-                canScrollForward = gridState.canScrollForward,
-                canScrollBackward = gridState.canScrollBackward,
-                collapsedFraction = topAppBarState.collapsedFraction
-            )
-        }
-    )
-
     val snackbarHostState = remember { SnackbarHostState() }
     val guessYouLikeTitle = stringResource(CoreCommonR.string.home_ytmusic_guess_you_like)
     val dailyDiscoverTitle = stringResource(CoreCommonR.string.home_ytmusic_daily_discover)
@@ -354,10 +362,14 @@ fun HomeScreen(
     val isTabletLayout = windowWidthDp >= 720.dp
     val isTabletDevice =
         LocalConfiguration.current.smallestScreenWidthDp >= PHONE_SMALLEST_SCREEN_WIDTH_DP
+    val isTelevision = LocalIsTelevision.current
     // clean style trades a little density for calmer rhythm: wider gutters, larger tablet tiles
     val cleanStyle = NeriDesign.isClean
     val pageHorizontalPadding = if (isTabletLayout) 28.dp else 16.dp
     val gridMinCellSize = when {
+        // 电视：格子更大、每屏卡片更少。10 列缩略图在弱 SoC 上要同时合成几十张封面，
+        // 滑动时掉帧非常明显；5~6 列既看得清，也少一半的解码和绘制
+        isTelevision -> if (isTabletLayout) 240.dp else 200.dp
         isTabletLayout && cleanStyle -> 172.dp
         isTabletLayout -> 156.dp
         // two large tiles per row on phones reads calmer than three thumbnails
@@ -375,9 +387,7 @@ fun HomeScreen(
         if (cleanStyle && !isTabletLayout) HomePhoneGridCells(gridMinCellSize)
         else GridCells.Adaptive(gridMinCellSize)
     }
-    // 大标题与卡片左边缘对齐，扣掉 TopAppBar 自带的标题内边距
-    val appBarTitleInset = (pageHorizontalPadding + gridContentPadding - TopAppBarTitleInset).coerceAtLeast(0.dp)
-
+    val appBarTitleInset = 0.dp // 标题栏已移除，保留变量避免影响其他引用
     fun toggleHomeSongFavorite(song: SongItem, isFavorite: Boolean) {
         scope.launch {
             val repository = localPlaylistRepo ?: withContext(Dispatchers.IO) {
@@ -415,6 +425,20 @@ fun HomeScreen(
         }
     }
 
+    // 刷新入口挂在顶部「首页」标签上（见 NeriTvTopBar）：标签栏发信号，这里真正去拉数据
+    LaunchedEffect(isInternational, offlineMode) {
+        HomeRefreshBus.tick.drop(1).collect {
+            if (offlineMode) return@collect
+            // 刷新时顺带回顶部：停在原位的话，新内容加载出来也看不见
+            runCatching { gridState.scrollToItem(0) }
+            if (isInternational) {
+                vm.refreshYtMusicHome()
+            } else {
+                vm.refreshNeteaseHome()
+            }
+        }
+    }
+
     val hasVisibleBiliMusicSections = showBiliMusic && showOnlineFeeds && (
             ui.biliMusicRank.songs.isNotEmpty() ||
                     ui.biliMusicRank.loading ||
@@ -434,49 +458,13 @@ fun HomeScreen(
                 .fillMaxSize()
                 .statusBarsPadding()
                 .padding(top = if (isTabletDevice) 8.dp else 0.dp)
-                .nestedScroll(scrollBehavior.nestedScrollConnection)
         ) {
-            LargeTopAppBar(
-                title = { Text(appBarTitle, modifier = Modifier.padding(start = appBarTitleInset)) },
-                actions = {
-                    HapticIconButton(
-                        enabled = !offlineMode,
-                        onClick = {
-                            if (isInternational) {
-                                vm.refreshYtMusicHome()
-                            } else {
-                                vm.refreshNeteaseHome()
-                            }
-                        }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Refresh,
-                            contentDescription = stringResource(CoreCommonR.string.recommend_refresh)
-                        )
-                    }
-                },
-                scrollBehavior = scrollBehavior,
-                windowInsets = WindowInsets(0),
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    scrolledContainerColor = Color.Transparent
-                )
-            )
-            val openSearch = LocalHomeOpenSearch.current
-            if (cleanStyle && openSearch != null) {
-                HomeSearchPill(
-                    onClick = openSearch,
-                    modifier = Modifier
-                        .widthIn(max = 1240.dp)
-                        .align(Alignment.CenterHorizontally)
-                        .padding(horizontal = pageHorizontalPadding + gridContentPadding, vertical = 4.dp)
-                )
-            }
-
             Box(
                 modifier = Modifier
-                    .padding(horizontal = pageHorizontalPadding, vertical = 4.dp)
-                    .widthIn(max = 1240.dp)
+                    // 电视：左右留白跟其它页面用同一个值；同时不再套 1240dp 上限——
+                    // 窗口宽度会随用户的缩放变化，这个上限会把整页压成中间的一条。
+                    .padding(horizontal = pageSidePaddingOuterOr(pageHorizontalPadding), vertical = 4.dp)
+                    .then(if (isTelevision) Modifier else Modifier.widthIn(max = 1240.dp))
                     .fillMaxWidth()
                     .weight(1f)
                     .align(Alignment.CenterHorizontally)
@@ -537,8 +525,8 @@ fun HomeScreen(
                     state = gridState,
                     columns = gridColumns,
                     contentPadding = PaddingValues(
-                        start = gridContentPadding,
-                        end = gridContentPadding,
+                        start = if (isTelevision) 8.dp else gridContentPadding,
+                        end = if (isTelevision) 8.dp else gridContentPadding,
                         top = gridContentPadding,
                         bottom = gridContentPadding + miniPlayerHeight
                     ),
@@ -561,8 +549,13 @@ fun HomeScreen(
                             span = { GridItemSpan(maxLineSpan) }
                         ) {
                             if (usageLoaded) {
+                                val continueContext = LocalContext.current
                                 ContinueSection(
-                                    items = usageEntries.take(HomeContinueEntryLimit),
+                                    // 「我喜欢的音乐」钉死在第一个格子，其余按最近打开排序
+                                    items = pinHomeContinueFavorites(
+                                        usageEntries,
+                                        continueContext
+                                    ).take(HomeContinueEntryLimit),
                                     localPlaylistLookup = localPlaylistUsageLookup,
                                     localFilesCoverCandidates = downloadedPlaybackCoverCandidates,
                                     onClick = { entry -> onOpenRecent(entry) },
@@ -911,6 +904,8 @@ fun HomeScreen(
             }
         }
 
+        // 刷新入口不再单独放按钮：电视上它挂在「首页」标签上（焦点在该标签时按确定触发），
+        // 见 NeriTvTopBar / HomeRefreshBus
         NeriOverlaySnackbarHost(
             hostState = snackbarHostState,
             bottomPadding = LocalMiniPlayerHeight.current
@@ -1013,20 +1008,17 @@ private fun LazyGridScope.addNeteasePlaylistSection(
     }
     when {
         sectionState.section.items.isNotEmpty() -> {
-            sectionState.section.items.forEach { playlist ->
-                item(
-                    key = registerKey(
-                        homeNeteasePlaylistScrollKey(sectionKey, playlist.id)
-                    )
-                ) {
-                    PlaylistCard(
-                        playlist = playlist,
-                        isFavorite = favoriteKeys.contains("netease:${playlist.id}"),
-                        onClick = { onItemClick(playlist) },
-                        onShowSnackbar = onShowSnackbar,
-                        offlineMode = offlineMode
-                    )
-                }
+            item(
+                key = registerKey("$sectionKey:content"),
+                span = { GridItemSpan(maxLineSpan) }
+            ) {
+                PlaylistSectionStrip(
+                    playlists = sectionState.section.items,
+                    favoriteKeys = favoriteKeys,
+                    onItemClick = onItemClick,
+                    onShowSnackbar = onShowSnackbar,
+                    offlineMode = offlineMode
+                )
             }
         }
         sectionState.section.loading -> {
@@ -1103,7 +1095,8 @@ private fun SongRowMini(
     isFavorite: Boolean,
     onFavoriteToggle: (SongItem, Boolean) -> Unit,
     onShowSnackbar: (String) -> Unit,
-    offlineMode: Boolean
+    offlineMode: Boolean,
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val composeResources = LocalResources.current
@@ -1111,11 +1104,24 @@ private fun SongRowMini(
     val scope = rememberCoroutineScope()
     val coverUrl = rememberSongDisplayCoverUrl(song)
     var showMenu by remember { mutableStateOf(false) }
+    // 电视上三点按钮不参与焦点，改成「光标停在这一行时按菜单键」
+    val isTelevision = LocalIsTelevision.current
+    val tvRowMenuState = rememberTvRowMenuKeyState()
+    TvRowMenuKeyEffect(state = tvRowMenuState) { showMenu = true }
+    val firstItemFocus = rememberTvMenuFirstItemFocus(showMenu)
+    val tvRingIndication = rememberTvFocusRingIndication(8.dp) ?: LocalIndication.current
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(neriRoundedShape(8.dp))
-            .clickable { onClick() }
+            .tvRowMenuKeyPress(tvRowMenuState, enabled = isTelevision)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = tvRingIndication
+            ) { onClick() }
+            // 内边距必须放在 clickable **之后**：焦点环是画在节点边界上的，
+            // 节点比内容大出多少，环就离内容多远。放前面 = 节点就等于内容，
+            // 环会直接压在序号上（只留 1dp 内缩，视觉上盖住数字）。
             .padding(horizontal = 8.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1195,6 +1201,7 @@ private fun SongRowMini(
                             contentDescription = null
                         )
                     },
+                    modifier = Modifier.focusRequester(firstItemFocus),
                     onClick = {
                         PlayerManager.addToQueueNext(song)
                         showMenu = false
@@ -1265,6 +1272,195 @@ private fun SongRowMini(
     }
 }
 
+/**
+ * 电视：整页翻页的卡片横条（和「继续播放」同一套结构）。
+ *
+ * 为什么不用 LazyRow：
+ * LazyRow 里滚过去之后，屏幕左侧的卡片会被回收，焦点「往左」找不到已经不再组合的节点，
+ * 于是翻到下一页以后就回不去上一页。HorizontalPager 的每一页是一个固定槽位的 Row，
+ * 翻页由分页器自己负责，左右都能正常走。
+ *
+ * 卡片宽度按容器宽度反算（自适应内部间距），保证每一页正好填满一行，
+ * 卡片大小也就和首页雷达卡片一致。
+ */
+@Composable
+private fun PagedCardStrip(
+    itemCount: Int,
+    itemKey: (Int) -> Any,
+    targetCardWidth: Dp,
+    modifier: Modifier = Modifier,
+    content: @Composable (index: Int, cardModifier: Modifier) -> Unit
+) {
+    if (itemCount <= 0) return
+    val spacing = 12.dp
+    val horizontalPadding = 8.dp
+    if (!LocalIsTelevision.current) {
+        // 手机/平板保持原来的自由滚动
+        LazyRow(
+            modifier = modifier.fillMaxWidth(),
+            // vertical 4dp 是给焦点环留的：环外扩在卡片外侧 4dp，不留空间会被滚动容器裁掉
+            contentPadding = PaddingValues(horizontal = horizontalPadding, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(spacing)
+        ) {
+            items(itemCount) { index ->
+                content(index, Modifier.width(targetCardWidth))
+            }
+        }
+        return
+    }
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        val available = (maxWidth - horizontalPadding * 2).coerceAtLeast(1.dp)
+        val perPage = (((available + spacing) / (targetCardWidth + spacing)).toInt()).coerceAtLeast(1)
+        val slotWidth = ((available - spacing * (perPage - 1)) / perPage)
+            .coerceAtLeast(80.dp)
+        // 用户要求卡片整体缩小 10%：槽位不变，卡片画小一点并居中，行距布局不动
+        val cardWidth = slotWidth * 0.9f
+        val pageCount = ceil(itemCount / perPage.toFloat()).toInt().coerceAtLeast(1)
+        val pagerState = rememberPagerState(pageCount = { pageCount })
+        val focus = remember { TvPagerFocus() }
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxWidth(),
+            // vertical 4dp 给外扩的焦点环留空间
+            contentPadding = PaddingValues(horizontal = horizontalPadding, vertical = 4.dp),
+            // 页与页之间留出和卡片之间一样的间距：原来是 0，
+            // 上一页最后一张和下一页第一张会直接贴在一起
+            pageSpacing = spacing
+        ) { page ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(spacing)
+            ) {
+                repeat(perPage) { slot ->
+                    val index = page * perPage + slot
+                    if (index < itemCount) {
+                        Box(
+                            modifier = Modifier.width(slotWidth),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            // 用 itemKey 做稳定身份，翻页时卡片不会重建
+                            androidx.compose.runtime.key(itemKey(index)) {
+                                content(
+                                    index,
+                                    tvPagerItemModifier(
+                                        pagerState = pagerState,
+                                        focus = focus,
+                                        index = index,
+                                        perPage = perPage,
+                                        itemCount = itemCount,
+                                        atPageLeftEdge = index % perPage == 0,
+                                        pageBackTargetIndex = index - 1,
+                                        base = Modifier.width(cardWidth)
+                                    )
+                                )
+                            }
+                        }
+                    } else {
+                        Spacer(Modifier.width(slotWidth))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 电视：分页横条（HorizontalPager）里单张卡片的焦点与翻页。
+ *
+ * 「页首按左」必须显式翻页：Compose 会先把焦点送到上一页最后一张卡上，
+ * 而那张卡正好贴着视口左边缘，bringIntoView 判定「已经可见」→ 页面不翻，
+ * 用户看到的就是「焦点跳到上一页最后一张，再按一下才翻页」。这里直接
+ * `animateScrollToPage(page - 1)` 再把光标放过去，一次按键就翻。
+ *
+ * 全局首尾（index 0 / itemCount - 1）夹住，避免焦点搜索上溯到顶部标签栏。
+ */
+@Composable
+private fun tvPagerItemModifier(
+    pagerState: PagerState,
+    focus: TvPagerFocus,
+    index: Int,
+    perPage: Int,
+    itemCount: Int,
+    /** 这一项是不是所在页最左边那一个（卡片横条 = 页内第一张；多列歌曲区 = 第一列任意一行） */
+    atPageLeftEdge: Boolean,
+    /** 翻回上一页后光标要落在哪一项；-1 表示到头了，直接吞掉左键 */
+    pageBackTargetIndex: Int,
+    base: Modifier = Modifier
+): Modifier {
+    if (!LocalIsTelevision.current) return base
+    val scope = rememberCoroutineScope()
+    val page = index / perPage
+    return base
+        .focusRequester(focus.requester(index))
+        .onPreviewKeyEvent { event ->
+            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+            when (event.key) {
+                Key.DirectionLeft -> when {
+                    index <= 0 -> true
+                    !atPageLeftEdge -> false
+                    pageBackTargetIndex < 0 -> true
+                    else -> {
+                        scope.launch {
+                            if (page <= 0) return@launch
+                            runCatching { pagerState.animateScrollToPage(page - 1) }
+                            repeat(4) {
+                                withFrameNanos { }
+                                if (
+                                    runCatching {
+                                        focus.requester(pageBackTargetIndex).requestFocus()
+                                    }.getOrDefault(false)
+                                ) {
+                                    return@launch
+                                }
+                            }
+                        }
+                        true
+                    }
+                }
+
+                Key.DirectionRight -> index >= itemCount - 1
+                else -> false
+            }
+        }
+}
+
+/** 分页横条里每张卡的 FocusRequester 登记表（按 item index） */
+private class TvPagerFocus {
+    private val requesters = HashMap<Int, FocusRequester>()
+    fun requester(index: Int): FocusRequester =
+        requesters.getOrPut(index) { FocusRequester() }
+}
+
+/**
+ * 「为你推荐 / 我的推荐」这类歌单区块：整页翻页的卡片横条。
+ */
+@Composable
+private fun PlaylistSectionStrip(
+    playlists: List<PlaylistSummary>,
+    favoriteKeys: Set<String>,
+    onItemClick: (PlaylistSummary) -> Unit,
+    onShowSnackbar: (String) -> Unit,
+    offlineMode: Boolean
+) {
+    val cardWidth = if (currentWindowWidthDp() >= 600.dp) 172.dp else 148.dp
+    PagedCardStrip(
+        itemCount = playlists.size,
+        itemKey = { index -> "home:netease:playlist-strip:${playlists[index].id}" },
+        targetCardWidth = cardWidth
+    ) { index, cardModifier ->
+        val playlist = playlists[index]
+        PlaylistCard(
+            playlist = playlist,
+            isFavorite = favoriteKeys.contains("netease:${playlist.id}"),
+            onClick = { onItemClick(playlist) },
+            onShowSnackbar = onShowSnackbar,
+            offlineMode = offlineMode,
+            bringIntoViewOnFocus = false,
+            modifier = cardModifier
+        )
+    }
+}
+
 @Composable
 private fun RadarPlaylistStrip(
     playlists: List<PlaylistSummary>,
@@ -1274,25 +1470,22 @@ private fun RadarPlaylistStrip(
     onShowSnackbar: (String) -> Unit,
     offlineMode: Boolean
 ) {
+    // 电视上改成整页翻页（listState 现在不再用于滚动，保留参数以免改动宿主）
     val cardWidth = if (currentWindowWidthDp() >= 600.dp) 172.dp else 148.dp
-    LazyRow(
-        state = listState,
-        modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        playlists.forEach { playlist ->
-            item(key = homeNeteaseRadarPlaylistScrollKey(playlist.id)) {
-                RadarPlaylistCard(
-                    playlist = playlist,
-                    isFavorite = favoriteKeys.contains("netease:${playlist.id}"),
-                    onClick = { onClick(playlist) },
-                    onShowSnackbar = onShowSnackbar,
-                    offlineMode = offlineMode,
-                    modifier = Modifier.width(cardWidth)
-                )
-            }
-        }
+    PagedCardStrip(
+        itemCount = playlists.size,
+        itemKey = { index -> homeNeteaseRadarPlaylistScrollKey(playlists[index].id) },
+        targetCardWidth = cardWidth
+    ) { index, cardModifier ->
+        val playlist = playlists[index]
+        RadarPlaylistCard(
+            playlist = playlist,
+            isFavorite = favoriteKeys.contains("netease:${playlist.id}"),
+            onClick = { onClick(playlist) },
+            onShowSnackbar = onShowSnackbar,
+            offlineMode = offlineMode,
+            modifier = cardModifier
+        )
     }
 }
 
@@ -1313,13 +1506,22 @@ private fun RadarPlaylistCard(
     val unfavoritedText = stringResource(CoreCommonR.string.home_unfavorited)
     val favoriteSuccessText = stringResource(CoreCommonR.string.favorite_success)
 
+    // 环跟着卡片圆角（卡片 = neriRoundedShape(8.dp)：Material 8dp / 简洁 12dp）
+    val radarCardCorner = if (NeriDesign.isClean) cleanCornerRadiusFor(8.dp) else 8.dp
+    val tvRingIndication = rememberTvFocusRingIndication(
+        radius = radarCardCorner,
+        outset = 4.dp,
+        cleanRadiusBoost = 0.dp
+    ) ?: LocalIndication.current
     Column(
         modifier = modifier
-            .clip(neriRoundedShape(8.dp))
             .combinedClickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = tvRingIndication,
                 onClick = onClick,
                 onLongClick = { showMenu = true }
             )
+            .clip(neriRoundedShape(8.dp))
     ) {
         Box(
             modifier = Modifier
@@ -1439,7 +1641,10 @@ fun PlaylistCard(
     isFavorite: Boolean,
     onClick: () -> Unit,
     onShowSnackbar: (String) -> Unit = {},
-    offlineMode: Boolean = false
+    offlineMode: Boolean = false,
+    /** 横条里的卡片要关掉：bringIntoView 会把卡片滚到屏幕正中 */
+    bringIntoViewOnFocus: Boolean = true,
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1449,13 +1654,27 @@ fun PlaylistCard(
     val unfavoritedText = stringResource(CoreCommonR.string.home_unfavorited)
     val favoriteSuccessText = stringResource(CoreCommonR.string.favorite_success)
 
+    // 卡片圆角 8dp；环外扩 4dp 画在卡片外侧 —— 卡片尺寸一点不变，环也不压封面
+    // 简洁风格是苹果那种大圆角：卡片 20dp，焦点环跟着卡片圆角走（不再额外放大）
+    val cleanStyle = NeriDesign.isClean
+    val cardCorner = if (cleanStyle) 20.dp else 8.dp
+    val cardShape = if (cleanStyle) NeriDesign.tokens.cardShape else neriRoundedShape(8.dp)
+    val tvRingIndication = rememberTvFocusRingIndication(
+        radius = cardCorner,
+        outset = 4.dp,
+        cleanRadiusBoost = 0.dp
+    ) ?: LocalIndication.current
     Column(
-        modifier = Modifier
-            .clip(neriRoundedShape(8.dp))
+        modifier = modifier
+            .then(if (bringIntoViewOnFocus) Modifier.tvBringIntoViewOnFocus() else Modifier)
             .combinedClickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = tvRingIndication,
                 onClick = onClick,
                 onLongClick = { showMenu = true }
             )
+            // 圆角裁剪必须放在 clickable **之后**：放前面它会把外扩到卡片外的焦点环一起切掉
+            .clip(cardShape)
     ) {
         if (NeriDesign.isClean) {
             HomeFeaturedArtwork(
@@ -1758,12 +1977,15 @@ private fun ResponsiveSongPagerList(
 
     val pageCount = ceil(songs.size / perPage.toFloat()).toInt().coerceAtLeast(1)
     val pagerState = rememberPagerState(pageCount = { pageCount })
+    val focus = remember { TvPagerFocus() }
 
     HorizontalPager(
         state = pagerState,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp)
+            .padding(horizontal = 8.dp),
+        // 页间留白，和行内列间距一致（否则上一页最后一列会和下一页第一列贴住）
+        pageSpacing = 12.dp
     ) { page ->
         val start = page * perPage
         val end = min(start + perPage, songs.size)
@@ -1788,7 +2010,20 @@ private fun ResponsiveSongPagerList(
                                 isFavorite = favoriteSongLookup.contains(song),
                                 onFavoriteToggle = onFavoriteToggle,
                                 onShowSnackbar = onShowSnackbar,
-                                offlineMode = offlineMode
+                                offlineMode = offlineMode,
+                                // 电视：第一列任意一行按左 = 本页左边界 → 显式翻回上一页，
+                                // 光标落在上一页同一行的最后一列；整条全局首尾则夹住。
+                                // 以前是「每页第一列都吞左键」，所以翻到第二页就回不去了。
+                                modifier = tvPagerItemModifier(
+                                    pagerState = pagerState,
+                                    focus = focus,
+                                    index = absoluteIndex,
+                                    perPage = perPage,
+                                    itemCount = songs.size,
+                                    atPageLeftEdge = columnIndex == 0,
+                                    pageBackTargetIndex = absoluteIndex - rowsPerColumn,
+                                    base = Modifier
+                                )
                             )
                         } else {
                             Spacer(Modifier.height(0.dp))

@@ -59,6 +59,7 @@ import androidx.compose.runtime.saveable.SaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -103,6 +104,8 @@ import moe.ouom.neriplayer.ui.viewmodel.tab.YouTubeMusicPlaylist
 import moe.ouom.neriplayer.util.format.formatDuration
 import moe.ouom.neriplayer.util.media.fastScrollableImageRequest
 import moe.ouom.neriplayer.util.media.offlineCachedImageRequest
+import moe.ouom.neriplayer.ui.tv.rememberTvInitialFocus
+import moe.ouom.neriplayer.ui.tv.tvInitialFocus
 
 private const val CREATOR_HEADER_BACKDROP_BLUR_RADIUS = 100f
 private const val CREATOR_HEADER_BACKDROP_SIZE_PX = 512
@@ -187,6 +190,7 @@ fun YouTubeMusicCreatorDetailScreen(
     detailViewModelFactory: androidx.lifecycle.ViewModelProvider.Factory? = null
 ) {
     val context = LocalContext.current
+    val tvInitialFocus = rememberTvInitialFocus()
     val resolvedViewModelFactory = detailViewModelFactory ?: viewModelFactory {
         initializer {
             YouTubeMusicCreatorDetailViewModel(context.applicationContext as Application)
@@ -216,6 +220,7 @@ fun YouTubeMusicCreatorDetailScreen(
     Surface(modifier = Modifier.fillMaxSize(), color = Color.Transparent) {
         Column(modifier = Modifier.fillMaxSize()) {
             TopAppBar(
+                modifier = Modifier.padding(horizontal = pageSidePaddingOr(0.dp)),
                 title = {
                     Text(
                         text = uiState.detail?.header?.title?.ifBlank { creator.title }
@@ -225,7 +230,12 @@ fun YouTubeMusicCreatorDetailScreen(
                     )
                 },
                 navigationIcon = {
-                    HapticIconButton(onClick = onBack) {
+                    HapticIconButton(
+                        onClick = onBack,
+                        // 电视：从播放页跳进来时这一页没人要焦点，遥控器直接失灵。
+                        // 进来先把光标放到返回键上。
+                        modifier = Modifier.tvInitialFocus(tvInitialFocus)
+                    ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = stringResource(CoreCommonR.string.cd_back)
@@ -337,8 +347,8 @@ internal fun YouTubeMusicCreatorDetailContent(
                             .fillMaxSize()
                             .testTag("youtubeCreatorWorksList"),
                         contentPadding = PaddingValues(
-                            start = 20.dp,
-                            end = 20.dp,
+                            start = pageSidePaddingOr(20.dp),
+                            end = pageSidePaddingOr(20.dp),
                             top = if (splitLayout) 8.dp else 4.dp,
                             bottom = if (splitLayout) 20.dp else 40.dp + miniPlayerHeight
                         ),

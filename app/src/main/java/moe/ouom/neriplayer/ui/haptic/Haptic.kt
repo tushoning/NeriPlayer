@@ -28,12 +28,18 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import androidx.annotation.RequiresApi
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.tvFocusRing
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 
 private const val VIBRATION_EFFECT_CLICK = 0
 private const val VIBRATION_EFFECT_DOUBLE_CLICK = 1
@@ -106,11 +112,16 @@ fun HapticIconButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    focusRingColor: Color? = null,
     content: @Composable () -> Unit
 ) {
+    val isTelevision = LocalIsTelevision.current
+    val ringColor = focusRingColor ?: MaterialTheme.colorScheme.primary
     IconButton(
         onClick = hapticClick(LocalContext.current, HapticFeedbackEffect.Click, onClick),
-        modifier = modifier,
+        // Material3 的 IconButton 内部硬写 ripple，读不到 LocalIndication，
+        // 电视上必须自己补一圈焦点环，否则播放页看不到光标
+        modifier = if (isTelevision) modifier.tvFocusRing(ringColor) else modifier,
         enabled = enabled,
         content = content
     )
@@ -123,11 +134,32 @@ fun HapticFilledIconButton(
     enabled: Boolean = true,
     shape: Shape = IconButtonDefaults.filledShape,
     colors: IconButtonColors = IconButtonDefaults.filledIconButtonColors(),
+    focusRingColor: Color? = null,
+    /**
+     * 焦点环往里收多少。
+     *
+     * M3 的实心图标按钮**底色固定画在 40dp 的 state layer 上**，外面再套 size(44dp) 时，
+     * 节点是 44dp、可见的圆只有 40dp —— 环画在节点边界上就比圆大一圈。
+     * 这类按钮传 2dp 就能让环落在圆的边缘上。
+     */
+    ringInset: Dp = 0.dp,
     content: @Composable () -> Unit
 ) {
+    val isTelevision = LocalIsTelevision.current
+    // 实心按钮的底色本身就是 primary，环再用 primary 等于什么也看不见，
+    // 所以默认改用前景色，保证在任何底色上都有对比
+    val ringColor = focusRingColor ?: MaterialTheme.colorScheme.onSurface
     FilledIconButton(
         onClick = hapticClick(LocalContext.current, HapticFeedbackEffect.Confirm, onClick),
-        modifier = modifier,
+        modifier = if (isTelevision) {
+            modifier.tvFocusRing(
+                ringColor,
+                insetHorizontal = ringInset,
+                insetVertical = ringInset
+            )
+        } else {
+            modifier
+        },
         enabled = enabled,
         shape = shape,
         colors = colors,
@@ -145,9 +177,11 @@ fun HapticButton(
     contentPadding: PaddingValues = ButtonDefaults.ContentPadding,
     content: @Composable RowScope.() -> Unit
 ) {
+    val isTelevision = LocalIsTelevision.current
+    val ringColor = MaterialTheme.colorScheme.primary
     Button(
         onClick = hapticClick(LocalContext.current, HapticFeedbackEffect.Confirm, onClick),
-        modifier = modifier,
+        modifier = if (isTelevision) modifier.tvFocusRing(ringColor) else modifier,
         enabled = enabled,
         shape = shape,
         colors = colors,
@@ -165,9 +199,11 @@ fun HapticTextButton(
     contentPadding: PaddingValues = ButtonDefaults.TextButtonContentPadding,
     content: @Composable RowScope.() -> Unit
 ) {
+    val isTelevision = LocalIsTelevision.current
+    val ringColor = MaterialTheme.colorScheme.primary
     TextButton(
         onClick = hapticClick(LocalContext.current, HapticFeedbackEffect.Click, onClick),
-        modifier = modifier,
+        modifier = if (isTelevision) modifier.tvFocusRing(ringColor) else modifier,
         enabled = enabled,
         shape = ButtonDefaults.shape,
         colors = colors,
@@ -185,9 +221,11 @@ fun HapticOutlinedButton(
     contentPadding: PaddingValues = ButtonDefaults.ContentPadding,
     content: @Composable RowScope.() -> Unit
 ) {
+    val isTelevision = LocalIsTelevision.current
+    val ringColor = MaterialTheme.colorScheme.primary
     OutlinedButton(
         onClick = hapticClick(LocalContext.current, HapticFeedbackEffect.Click, onClick),
-        modifier = modifier,
+        modifier = if (isTelevision) modifier.tvFocusRing(ringColor) else modifier,
         enabled = enabled,
         shape = shape,
         contentPadding = contentPadding,

@@ -84,6 +84,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
@@ -436,6 +437,9 @@ fun LocalPlaylistDetailScreen(
                     containerColor = Color.Transparent,
                     topBar = {
                         TopAppBar(
+                            modifier = Modifier
+                                .padding(horizontal = pageSidePaddingOr(0.dp))
+                                .tvPlaylistTopBarShape(),
                             title = { Text(stringResource(CoreCommonR.string.playlist_title)) },
                             navigationIcon = {
                                 HapticIconButton(onClick = onBack) {

@@ -32,6 +32,7 @@ import androidx.compose.runtime.structuralEqualityPolicy
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import moe.ouom.neriplayer.ui.tv.tvKeepFocusHorizontally
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -321,6 +322,8 @@ internal fun MainTabLayerHost(
     AdvancedGlassNavigationHandoff(enabled = visibleScenes.size > 1) {
         Box(
             modifier = modifier
+                // 电视：焦点走到本层左右边缘就停住，不要跳到上方标签栏去
+                .tvKeepFocusHorizontally()
                 .clipToBounds()
                 .onSizeChanged { size ->
                     widthPx = size.width

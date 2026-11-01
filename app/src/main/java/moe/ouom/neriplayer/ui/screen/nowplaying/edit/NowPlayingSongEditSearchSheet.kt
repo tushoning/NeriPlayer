@@ -64,7 +64,11 @@ import moe.ouom.neriplayer.ui.theme.neriSearchFieldShape
 import moe.ouom.neriplayer.ui.viewmodel.ManualSearchState
 import moe.ouom.neriplayer.ui.viewmodel.NowPlayingViewModel
 import moe.ouom.neriplayer.util.media.offlineCachedImageRequest
+import androidx.compose.ui.focus.FocusRequester
 import moe.ouom.neriplayer.R as AppR
+import moe.ouom.neriplayer.ui.component.common.rememberTvTextFieldIme
+import moe.ouom.neriplayer.ui.tv.rememberTvInitialFocus
+import moe.ouom.neriplayer.ui.tv.tvInitialFocus
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -76,6 +80,9 @@ internal fun EditSongSearchResultsSheet(
 ) {
     val searchState by viewModel.manualSearchState.collectAsStateWithLifecycle()
     val focusManager = LocalFocusManager.current
+    // 电视：这是「自动填充」点进去的第二层浮层，新窗口不会自动拿到焦点，
+    // 一进来落到搜索框上（再按「下」就是平台选择、结果列表）。
+    val tvInitialFocus = rememberTvInitialFocus()
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -96,7 +103,8 @@ internal fun EditSongSearchResultsSheet(
                 onSearch = {
                     if (canSearchEditSong(searchState)) viewModel.performSearch()
                     focusManager.clearFocus()
-                }
+                },
+                requester = tvInitialFocus
             )
             EditSongSearchPlatforms(
                 selected = searchState.selectedPlatform,
@@ -126,15 +134,18 @@ private fun EditSongSearchHeader(onDismiss: () -> Unit) {
 private fun EditSongSearchInput(
     state: ManualSearchState,
     onKeywordChange: (String) -> Unit,
-    onSearch: () -> Unit
+    onSearch: () -> Unit,
+    requester: FocusRequester? = null
 ) {
     val searchEnabled = canSearchEditSong(state)
+    val ime = rememberTvTextFieldIme(swallowLeft = false, swallowRight = false)
     OutlinedTextField(
         value = state.keyword,
         onValueChange = onKeywordChange,
         label = { Text(stringResource(CoreCommonR.string.music_auto_fill_custom_title)) },
         placeholder = { Text(stringResource(CoreCommonR.string.music_auto_fill_custom_title_hint)) },
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().tvInitialFocus(requester).then(ime.modifier),
+        readOnly = ime.readOnly,
         singleLine = true,
         shape = neriSearchFieldShape(OutlinedTextFieldDefaults.shape),
         colors = neriSearchFieldColors(),

@@ -19,6 +19,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 
 /**
  * Set while a pull is in progress. The collapsing top bar sits outside the refresh gesture in
@@ -46,6 +47,9 @@ internal fun LibraryPullToRefresh(
 ) {
     val state = rememberPullToRefreshState()
     val gate = LocalLibraryPullGate.current
+    // 电视上没有手指下拉这个动作，方向键挪焦点时反而会误触（焦点一往下就刷新）。
+    // 电视上的刷新入口是「在当前标签上再按一次确认键」，见 LibraryMainTabs。
+    val gestureEnabled = enabled && !LocalIsTelevision.current
     val latestRefreshing by rememberUpdatedState(refreshing)
     LaunchedEffect(state, gate) {
         snapshotFlow { state.distanceFraction > 0f && !latestRefreshing }.collect { gate?.pulling = it }
@@ -59,7 +63,7 @@ internal fun LibraryPullToRefresh(
             .pullToRefresh(
                 isRefreshing = refreshing,
                 state = state,
-                enabled = enabled,
+                enabled = gestureEnabled,
                 onRefresh = onRefresh
             )
     ) {

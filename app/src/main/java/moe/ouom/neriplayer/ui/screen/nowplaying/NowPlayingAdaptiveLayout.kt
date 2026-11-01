@@ -27,9 +27,20 @@ import moe.ouom.neriplayer.data.model.settings.playback.PlaybackControlSize
 import moe.ouom.neriplayer.ui.screen.nowplaying.cover.NowPlayingLeadingControls
 import moe.ouom.neriplayer.ui.screen.nowplaying.cover.NowPlayingLeadingProgress
 import moe.ouom.neriplayer.ui.screen.nowplaying.cover.NowPlayingTrailingControls
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 import moe.ouom.neriplayer.util.platform.PHONE_SMALLEST_SCREEN_WIDTH_DP
+import androidx.compose.foundation.layout.requiredWidth
 
 private val NowPlayingCompactLandscapeHeight = 520.dp
+/** 电视把横屏底栏整体上抬这么多，焦点环才不会贴着内容区下边缘被切 */
+/**
+ * 电视上「左侧 5 个辅助按钮」和「右侧 5 个播放控制」共用的行高。
+ *
+ * 两排按钮的触摸目标都是 48dp，但左边那排外层还有工具栏自己的 padding、
+ * 右边那排上面压着进度条，之前两排的中心并不在同一条水平线上。
+ * 统一套一个 48dp 的行容器、内容垂直居中，就能保证左右两排严格齐平。
+ */
+private val NowPlayingTvBottomRowHeight = 48.dp
 private val NowPlayingExpandedPlayerPaneMaxWidth = 500.dp
 private val NowPlayingCompactPlayerPaneMaxWidth = 340.dp
 private val NowPlayingPhoneLandscapeMinimumContentHeight = 240.dp
@@ -435,18 +446,52 @@ private fun NowPlayingPhoneLandscape(
             ) {
                 backBar()
                 cover(Modifier.fillMaxWidth().weight(1f).padding(vertical = spec.coverVerticalPadding))
-                Box(Modifier.fillMaxWidth().testTag("nowPlayingPhoneAuxiliaryActions")) { toolbar(true) }
+                // 电视：这一排和右栏那排播放控制要落在同一条水平线上。
+                // 两边都套同样高度的行容器、内容垂直居中，行高差/触摸目标差就不会把两排错开。
+                Box(
+                    modifier = Modifier.fillMaxWidth()
+                        .then(
+                            if (LocalIsTelevision.current) {
+                                Modifier.height(NowPlayingTvBottomRowHeight)
+                            } else {
+                                Modifier
+                            }
+                        )
+                        .testTag("nowPlayingPhoneAuxiliaryActions"),
+                    contentAlignment = Alignment.Center
+                ) { toolbar(true) }
             }
             Column(
                 modifier = Modifier.weight(1f).fillMaxHeight().testTag("nowPlayingDetailsPane"),
                 horizontalAlignment = Alignment.Start
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().testTag("nowPlayingPhoneHeader"),
-                    verticalAlignment = Alignment.Top
-                ) {
-                    Box(Modifier.weight(1f).padding(end = 8.dp)) { identity(true) }
-                    Box(Modifier.testTag("nowPlayingTopActions")) { topActions() }
+                if (LocalIsTelevision.current) {
+                    // 电视：右栏只占屏幕右边那一半，它的中线比屏幕中线右移了半个
+                    // 「左栏宽 + 栏间距」。所以在右栏里居中之后，再把内容整体左移这一半，
+                    // 中线就正好落回屏幕中线。
+                    // 不用固定像素：左栏宽是按屏幕比例算的，后面改界面缩放也一样成立。
+                    val centerShift = (spec.playerPaneWidth + spec.paneSpacing) / 2
+                    Box(
+                        modifier = Modifier.fillMaxWidth().testTag("nowPlayingPhoneHeader"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier.offset(x = -centerShift),
+                            contentAlignment = Alignment.Center
+                        ) { identity(true) }
+                        Box(
+                            modifier = Modifier.align(Alignment.TopEnd)
+                                .testTag("nowPlayingTopActions")
+                        ) { topActions() }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().testTag("nowPlayingPhoneHeader"),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Box(Modifier.weight(1f).padding(end = 8.dp)) { identity(true) }
+                        Box(Modifier.testTag("nowPlayingTopActions")) { topActions() }
+                    }
                 }
                 Spacer(Modifier.height(spec.sectionSpacing))
                 NowPlayingWideLyricPane(
@@ -460,7 +505,17 @@ private fun NowPlayingPhoneLandscape(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     progress()
-                    controls()
+                    Box(
+                        modifier = Modifier.fillMaxWidth()
+                            .then(
+                                if (LocalIsTelevision.current) {
+                                    Modifier.height(NowPlayingTvBottomRowHeight)
+                                } else {
+                                    Modifier
+                                }
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) { controls() }
                 }
             }
         }

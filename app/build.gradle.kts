@@ -124,6 +124,10 @@ android {
             manifestPlaceholders["listenTogetherInviteScheme"] = inviteScheme
             buildConfigField("String", "LISTEN_TOGETHER_INVITE_SCHEME", "\"$inviteScheme\"")
             enableUnitTestCoverage = true
+            // 调试包只出 armeabi-v7a：目标电视是 32 位，原生库编 4 个 ABI 纯属浪费时间
+            ndk {
+                abiFilters += "armeabi-v7a"
+            }
         }
 
         release {
@@ -142,6 +146,25 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+        }
+
+        // 电视端专用：和 release 一样走 R8 + debuggable=false（安装时 ART 会做 AOT 编译），
+        // 冷启动比 debug 包快一个档。但沿用调试签名、包名后缀仍是 .debug，
+        // 可以直接覆盖安装已有的调试包，设置/登录态不丢。
+        create("tvrelease") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".debug"
+            isDebuggable = false
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release", "debug")
+            val inviteScheme = "neriplayer-debug"
+            manifestPlaceholders["listenTogetherInviteScheme"] = inviteScheme
+            buildConfigField("String", "LISTEN_TOGETHER_INVITE_SCHEME", "\"$inviteScheme\"")
+            ndk {
+                // 目标电视只有 32 位
+                abiFilters.clear()
+                abiFilters += "armeabi-v7a"
+            }
         }
 
         if (providers.gradleProperty("enablePerformanceBenchmark").orNull == "true") {

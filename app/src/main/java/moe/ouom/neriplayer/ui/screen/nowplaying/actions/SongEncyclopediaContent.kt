@@ -1,4 +1,5 @@
 package moe.ouom.neriplayer.ui.screen.nowplaying.actions
+import moe.ouom.neriplayer.R as AppR
 /*
  * NeriPlayer - A unified Android player for streaming music and videos from multiple online platforms.
  * Copyright (C) 2025-2025 NeriPlayer developers
@@ -22,6 +23,7 @@ package moe.ouom.neriplayer.ui.screen.nowplaying.actions
  * Created: 2025/10/16
  */
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -32,6 +34,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -47,8 +50,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import moe.ouom.neriplayer.core.player.PlayerManager
 import moe.ouom.neriplayer.data.model.NeteaseArtistSummary
@@ -56,12 +67,16 @@ import moe.ouom.neriplayer.data.model.comments.CommentSource
 import moe.ouom.neriplayer.data.model.comments.CommentPlatform
 import moe.ouom.neriplayer.platform.comments.resolveCommentSource
 import moe.ouom.neriplayer.ui.component.sheet.HalfExpandableSheetPanel
+import moe.ouom.neriplayer.ui.tv.tvScrollPane
 import moe.ouom.neriplayer.ui.theme.NeriDesign
 import moe.ouom.neriplayer.ui.viewmodel.tab.PlaylistSummary
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import moe.ouom.neriplayer.common.R as CoreCommonR
 import moe.ouom.neriplayer.data.model.SongItem
@@ -72,7 +87,6 @@ import moe.ouom.neriplayer.ui.component.sheet.bottomSheetScrollGuard
 import moe.ouom.neriplayer.ui.viewmodel.NowPlayingViewModel
 import moe.ouom.neriplayer.ui.viewmodel.SongEncyclopediaUiState
 import androidx.compose.ui.Alignment
-import moe.ouom.neriplayer.R as AppR
 internal const val SONG_ENCYCLOPEDIA_TEST_TAG = "song_encyclopedia_content"
 /**
  * 歌曲百科二级页。
@@ -137,6 +151,7 @@ private fun SongEncyclopediaStateContent(
 ) {
     // 半屏 / 全屏 / 关闭三档由公共组件 HalfExpandableSheetPanel 提供，
     // 与评论面板共用同一套拖拽与吸附实现，避免两处各写一遍。
+    val contentScrollState = rememberScrollState()
     HalfExpandableSheetPanel(
         onDismiss = onCloseSheet,
         panelTestTag = SONG_ENCYCLOPEDIA_TEST_TAG,
@@ -145,7 +160,8 @@ private fun SongEncyclopediaStateContent(
                 onDismiss = onDismiss,
                 landscape = landscape,
                 isFullScreen = isFullScreen,
-                onToggleFullScreen = toggleFullScreen
+                onToggleFullScreen = toggleFullScreen,
+                contentScrollState = contentScrollState
             )
         }
     ) {
@@ -154,7 +170,9 @@ private fun SongEncyclopediaStateContent(
                 .fillMaxWidth()
                 .weight(1f)
                 .bottomSheetScrollGuard { false }
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(contentScrollState)
+                // 电视：焦点组 + 滚动兜底 + 到底后不许回绕到顶部返回键，都在这个修饰符里。
+                .tvScrollPane(contentScrollState)
                 .padding(
                     horizontal = NeriDesign.tokens.pageHorizontalPadding,
                     vertical = if (NeriDesign.isClean) 12.dp else 8.dp
@@ -197,13 +215,28 @@ private fun SongEncyclopediaHeader(
     onDismiss: () -> Unit,
     landscape: Boolean,
     isFullScreen: Boolean,
-    onToggleFullScreen: () -> Unit
+    onToggleFullScreen: () -> Unit,
+    contentScrollState: ScrollState
 ) {
+    // 电视：光标落到这一排的返回键上，正文自动回到顶部 ——
+    // 页面顶部那段纯文字拿不到焦点，不这样处理就永远滚不回去。
+    val headerScope = rememberCoroutineScope()
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        IconButton(onClick = onDismiss) {
+        IconButton(
+            onClick = onDismiss,
+            modifier = Modifier.onFocusChanged { focus ->
+                if (focus.isFocused && contentScrollState.value > 0) {
+                    // 瞬时到位：用动画的话，光标紧接着按下会被焦点项的 bringIntoView
+                    // 抢一次滚动，看起来就是页面先升上去、又降下来抖一下。
+                    headerScope.launch {
+                        runCatching { contentScrollState.scrollTo(0) }
+                    }
+                }
+            }
+        ) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                 contentDescription = stringResource(CoreCommonR.string.action_back)

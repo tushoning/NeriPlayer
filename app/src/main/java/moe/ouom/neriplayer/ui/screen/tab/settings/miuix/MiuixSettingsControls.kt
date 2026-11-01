@@ -1,6 +1,8 @@
 package moe.ouom.neriplayer.ui.screen.tab.settings.miuix
 
 import moe.ouom.neriplayer.ui.theme.NeriMotion
+import moe.ouom.neriplayer.ui.screen.tab.settings.component.rememberSettingsRingIndication
+import moe.ouom.neriplayer.ui.tv.tvClampLeft
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.animation.core.animateFloatAsState
@@ -84,13 +86,23 @@ import moe.ouom.neriplayer.ui.theme.NeriDesign
 import androidx.compose.ui.window.DialogProperties
 import moe.ouom.neriplayer.ui.haptic.performHapticFeedback
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.IndicationNodeFactory
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.node.DelegatableNode
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 
 private val MiuixControlShape = RoundedCornerShape(16.dp)
 private val MiuixDialogShape = RoundedCornerShape(28.dp)
@@ -481,28 +493,69 @@ internal fun MiuixSettingsSlider(
         CleanSettingsSlider(value, onValueChange, modifier, enabled, valueRange, steps, showTicks, onValueChangeFinished)
         return
     }
-    Slider(
-        value = value,
-        onValueChange = onValueChange,
-        modifier = modifier.fillMaxWidth(),
-        enabled = enabled,
-        valueRange = valueRange,
-        steps = steps,
-        onValueChangeFinished = onValueChangeFinished,
-        colors = SliderDefaults.colors(
-            thumbColor = MaterialTheme.colorScheme.onPrimary,
-            activeTrackColor = MaterialTheme.colorScheme.primary,
-            inactiveTrackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-            activeTickColor = if (showTicks) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.55f) else Color.Transparent,
-            inactiveTickColor = if (showTicks) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f) else Color.Transparent,
-            disabledActiveTickColor = if (showTicks) Color.Unspecified else Color.Transparent,
-            disabledInactiveTickColor = if (showTicks) Color.Unspecified else Color.Transparent
+    val isTelevision = LocalIsTelevision.current
+    var tvFocused by remember { mutableStateOf(false) }
+    val ringColor = MaterialTheme.colorScheme.primary
+    val thumbFill = if (enabled) {
+        MaterialTheme.colorScheme.onPrimary
+    } else {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.28f)
+    }
+    TvSliderIndicationGate(isTelevision) {
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = modifier
+                .fillMaxWidth()
+                .then(
+                    if (isTelevision) Modifier.onFocusChanged { tvFocused = it.hasFocus } else Modifier
+                ),
+            enabled = enabled,
+            valueRange = valueRange,
+            steps = steps,
+            onValueChangeFinished = onValueChangeFinished,
+            colors = SliderDefaults.colors(
+                thumbColor = MaterialTheme.colorScheme.onPrimary,
+                activeTrackColor = MaterialTheme.colorScheme.primary,
+                inactiveTrackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                activeTickColor = if (showTicks) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.55f) else Color.Transparent,
+                inactiveTickColor = if (showTicks) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f) else Color.Transparent,
+                disabledActiveTickColor = if (showTicks) Color.Unspecified else Color.Transparent,
+                disabledInactiveTickColor = if (showTicks) Color.Unspecified else Color.Transparent
+            ),
+            thumb = {
+                Box(
+                    Modifier
+                        .size(CleanSliderThumbSize)
+                        .shadow(3.dp, CircleShape, clip = false)
+                        .background(thumbFill, CircleShape)
+                        .drawWithContent {
+                            drawContent()
+                            if (tvFocused) {
+                                val stroke = TvSliderFocusRingStroke.toPx()
+                                drawCircle(
+                                    color = ringColor,
+                                    radius = size.minDimension / 2f - stroke / 2f,
+                                    style = Stroke(width = stroke)
+                                )
+                            }
+                        }
+                )
+            }
         )
-    )
+    }
 }
 
 private val CleanSliderTrackHeight = 6.dp
 private val CleanSliderThumbSize = 24.dp
+
+/**
+ * 电视焦点环的粗细。
+ *
+ * 环是画在 24dp 的小圆点内侧的（画到外面会被 thumb 的布局边界裁掉），
+ * 2dp 在电视上隔着一米看太细了，基本认不出光标在滑条上。
+ */
+private val TvSliderFocusRingStroke = 3.5.dp
 
 /**
  * Native-style slider: a round white knob over a soft capsule track. The expressive Material
@@ -524,6 +577,9 @@ private fun CleanSettingsSlider(
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsDraggedAsState()
+    // 电视：焦点环只圈住小圆点，不把整条滑轨框起来（见 thumb 里的 drawWithContent）
+    val isTelevision = LocalIsTelevision.current
+    var tvFocused by remember { mutableStateOf(false) }
     val knobScale by animateFloatAsState(
         targetValue = if (pressed) 1.12f else 1f,
         animationSpec = NeriMotion.snappy(),
@@ -531,27 +587,45 @@ private fun CleanSettingsSlider(
     )
     val active = if (enabled) colors.primary else colors.onSurface.copy(alpha = 0.28f)
     val inactive = colors.onSurface.copy(alpha = if (colors.surface.luminance() < 0.5f) 0.16f else 0.10f)
+    TvSliderIndicationGate(isTelevision) {
     Slider(
         value = value,
         onValueChange = onValueChange,
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .then(
+                if (isTelevision) Modifier.onFocusChanged { tvFocused = it.hasFocus } else Modifier
+            ),
         enabled = enabled,
         onValueChangeFinished = onValueChangeFinished,
         interactionSource = interactionSource,
         steps = steps,
         valueRange = valueRange,
-        thumb = {
-            Box(
-                Modifier
-                    .size(CleanSliderThumbSize)
-                    .graphicsLayer {
-                        scaleX = knobScale
-                        scaleY = knobScale
-                    }
-                    .shadow(3.dp, CircleShape, clip = false)
-                    .background(if (enabled) Color.White else Color(0xFFD8D8DC), CircleShape)
-            )
-        },
+            thumb = {
+                Box(
+                    Modifier
+                        .size(CleanSliderThumbSize)
+                        .graphicsLayer {
+                            scaleX = knobScale
+                            scaleY = knobScale
+                        }
+                        .shadow(3.dp, CircleShape, clip = false)
+                        .background(if (enabled) Color.White else Color(0xFFD8D8DC), CircleShape)
+                        // 焦点环画在最后（盖在白圆点最外一圈上），既一定看得见，也不会被 thumb 的
+                        // 尺寸裁掉——thumb 只能这么小，往外套环会被布局边界切掉。
+                        .drawWithContent {
+                            drawContent()
+                            if (tvFocused) {
+                                val stroke = TvSliderFocusRingStroke.toPx()
+                                drawCircle(
+                                    color = colors.primary,
+                                    radius = size.minDimension / 2f - stroke / 2f,
+                                    style = Stroke(width = stroke)
+                                )
+                            }
+                        }
+                )
+            },
         track = { state ->
             val span = (state.valueRange.endInclusive - state.valueRange.start).takeIf { it > 0f } ?: 1f
             val fraction = ((state.value - state.valueRange.start) / span).coerceIn(0f, 1f)
@@ -587,6 +661,28 @@ private fun CleanSettingsSlider(
             }
         }
     )
+    }
+}
+
+/**
+ * 电视上的滑块：把默认的焦点指示（整条滑轨套一个大圆角框）关掉，
+ * 只留 thumb 里自己画的小圆环。
+ */
+@Composable
+private fun TvSliderIndicationGate(isTelevision: Boolean, content: @Composable () -> Unit) {
+    if (!isTelevision) {
+        content()
+        return
+    }
+    CompositionLocalProvider(LocalIndication provides TvSliderNoIndication) { content() }
+}
+
+private object TvSliderNoIndication : IndicationNodeFactory {
+    override fun create(interactionSource: InteractionSource): DelegatableNode =
+        object : Modifier.Node() {}
+
+    override fun equals(other: Any?): Boolean = other === this
+    override fun hashCode(): Int = TvSliderNoIndication::class.hashCode()
 }
 
 @Composable
@@ -687,7 +783,14 @@ internal fun MiuixSettingsChoiceRow(
         modifier = modifier
             .fillMaxWidth()
             .clip(MiuixControlShape)
-            .clickable(enabled = enabled) {
+            // 电视：整行占满宽度，按左不能穿到页面外的主标签栏
+            .tvClampLeft()
+            // 和二级页面的普通条目同一套：环圆角跟底盘一致（MiuixControlShape = 16dp），不内缩
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = rememberSettingsRingIndication(16.dp),
+                enabled = enabled
+            ) {
                 context.performHapticFeedback()
                 onClick()
             }

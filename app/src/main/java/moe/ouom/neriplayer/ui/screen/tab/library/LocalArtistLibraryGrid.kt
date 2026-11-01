@@ -1,11 +1,16 @@
 package moe.ouom.neriplayer.ui.screen.tab.library
 
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.remember
+import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -45,6 +50,7 @@ import moe.ouom.neriplayer.data.model.playlist.LocalArtistSummary
 import moe.ouom.neriplayer.ui.navigation.LocalMiniPlayerHeight
 import moe.ouom.neriplayer.ui.util.currentWindowWidthDp
 import moe.ouom.neriplayer.ui.util.rememberLocalArtistDisplayCoverUrl
+import moe.ouom.neriplayer.ui.tv.tvBringIntoViewOnFocus
 import moe.ouom.neriplayer.util.media.fastScrollableImageRequest
 import moe.ouom.neriplayer.R as AppR
 
@@ -69,8 +75,8 @@ internal fun LocalArtistLibraryGrid(
         state = gridState,
         columns = GridCells.Adaptive(gridMinCellSize),
         contentPadding = PaddingValues(
-            start = 8.dp,
-            end = 8.dp,
+            start = pageSidePaddingOr(8.dp),
+            end = pageSidePaddingOr(8.dp),
             top = 8.dp,
             bottom = 8.dp + miniPlayerHeight
         ),
@@ -150,10 +156,19 @@ internal fun LocalArtistGridCard(
 ) {
     val context = LocalContext.current
     val coverUrl = rememberLocalArtistDisplayCoverUrl(artist)
+    // 和首页「继续播放」卡片同一套焦点框：8dp 圆角 + 外扩 4dp（卡片尺寸不变）
+    val tvRingIndication = rememberTvFocusRingIndication(8.dp, outset = 4.dp)
+        ?: LocalIndication.current
     Column(
         modifier = Modifier
+            .tvBringIntoViewOnFocus()
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = tvRingIndication,
+                onClick = onClick
+            )
+            // 裁剪放在 clickable 之后，否则会把外扩的焦点环一起切掉
             .clip(neriRoundedShape(12.dp))
-            .clickable(onClick = onClick)
     ) {
         if (!coverUrl.isNullOrBlank()) {
             AsyncImage(

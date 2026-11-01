@@ -28,6 +28,7 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -43,19 +44,28 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import moe.ouom.neriplayer.ui.animation.AMBIENT_ANIMATION_FRAME_INTERVAL_NANOS
 import moe.ouom.neriplayer.ui.animation.isNewAmbientFrameSlot
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.pow
@@ -72,6 +82,18 @@ private const val WAITING_PULSE_ANIMATION_DURATION_NS = 1_400_000_000L
 private const val WAITING_PULSE_RADIUS_SEGMENTS = 4f
 private const val MIN_WAITING_PULSE_SEGMENTS = 1
 private const val MAX_WAITING_PULSE_SEGMENTS = 72
+
+/** 遥控器按一下左右键跳多远（按 5 秒折算成进度百分比，再夹到合理区间） */
+private const val TV_SEEK_STEP_MS = 5_000f
+private const val TV_SEEK_MIN_FRACTION = 0.005f
+private const val TV_SEEK_MAX_FRACTION = 0.05f
+
+/** 长按方向键时连续 KeyDown，停手这么久之后才真正提交 seek */
+private const val TV_SEEK_COMMIT_DELAY_MS = 320L
+
+private fun tvSeekStepFraction(durationMs: Long): Float =
+    if (durationMs <= 0L) 0.02f
+    else (TV_SEEK_STEP_MS / durationMs.toFloat()).coerceIn(TV_SEEK_MIN_FRACTION, TV_SEEK_MAX_FRACTION)
 private val WaveInactiveStroke = androidx.compose.ui.graphics.drawscope.Stroke(
     width = 4f,
     cap = StrokeCap.Round
@@ -184,6 +206,50 @@ fun WaveformSlider(
         }
     }
 
+    // ── 电视遥控支持 ────────────────────────────────────────────────
+    // 进度条在电视上要能聚焦：聚焦后左右键调整进度（消费按键），
+    // 上下键和返回键不消费，交给 Compose 正常移出焦点。
+    // 长按方向键会连续触发 KeyDown，所以真正 seek 延后到停手之后，
+    // 否则会连续 seekTo 把播放器拖死。
+    val isTelevision = LocalIsTelevision.current
+    var tvFocused by remember { mutableStateOf(false) }
+    var tvPendingSeek by remember { mutableStateOf<Float?>(null) }
+    LaunchedEffect(tvPendingSeek) {
+        if (tvPendingSeek == null) return@LaunchedEffect
+        delay(TV_SEEK_COMMIT_DELAY_MS)
+        if (tvFocused) {
+            onValueChangeFinished()
+            isDragging = false
+        }
+        tvPendingSeek = null
+    }
+    val tvSeekModifier = if (isTelevision && enabled) {
+        Modifier
+            // 焦点环不套整条进度条了：环直接画在小圆点上（见 Canvas 里的 tvFocused 分支），
+            // 一整条框起来看着像「选中了一整行」，指不清当前进度在哪。
+            .onFocusChanged { tvFocused = it.isFocused }
+            .onKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                val direction = when (event.key) {
+                    Key.DirectionLeft -> -1f
+                    Key.DirectionRight -> 1f
+                    else -> return@onKeyEvent false
+                }
+                val step = tvSeekStepFraction(durationMs)
+                val target = (clampedValue + direction * step).coerceIn(0f, 1f)
+                if (!isDragging) {
+                    isDragging = true
+                    onValueChangeStarted(target)
+                }
+                onValueChange(target)
+                tvPendingSeek = target
+                true
+            }
+            .focusable()
+    } else {
+        Modifier
+    }
+
     val dragModifier = if (enabled) {
         Modifier.pointerInput(
             onValueChange,
@@ -224,6 +290,7 @@ fun WaveformSlider(
         modifier = modifier
             .fillMaxWidth()
             .height(48.dp)
+            .then(tvSeekModifier)
             .then(dragModifier)
     ) {
         val centerY = size.height / 2
@@ -273,6 +340,14 @@ fun WaveformSlider(
                 radius = 16f,
                 center = Offset(progressPx, centerY)
             )
+            if (tvFocused) {
+                drawCircle(
+                    color = activeTint,
+                    radius = 16f + 6.dp.toPx(),
+                    center = Offset(progressPx, centerY),
+                    style = Stroke(width = 2.dp.toPx())
+                )
+            }
             return@Canvas
         }
 
@@ -308,6 +383,15 @@ fun WaveformSlider(
             radius = 16f,
             center = Offset(progressPx, thumbY)
         )
+        // 电视焦点环：跟着小圆点走
+        if (tvFocused) {
+            drawCircle(
+                color = activeTint,
+                radius = 16f + 6.dp.toPx(),
+                center = Offset(progressPx, thumbY),
+                style = Stroke(width = 2.dp.toPx())
+            )
+        }
     }
 }
 

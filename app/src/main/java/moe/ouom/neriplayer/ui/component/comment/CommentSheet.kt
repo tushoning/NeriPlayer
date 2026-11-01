@@ -53,6 +53,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -63,6 +64,13 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -84,6 +92,7 @@ import moe.ouom.neriplayer.ui.viewmodel.CommentUiState
 import moe.ouom.neriplayer.ui.viewmodel.CommentViewModel
 import moe.ouom.neriplayer.util.format.formatPlayCount
 import moe.ouom.neriplayer.R as AppR
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 
 /**
  * 评论弹窗。
@@ -223,6 +232,13 @@ internal fun CommentSheetContent(
     val sortLoadingDescription = stringResource(AppR.string.comment_sort_loading)
     val listState = rememberLazyListState()
     var replyFocusRequest by remember(ui.source) { mutableIntStateOf(0) }
+    // 电视：评论行上按右键 → 落到下面输入框；按菜单键 → 落到右上角排序（「热门」）并点开
+    var composerJumpTick by remember(ui.source) { mutableIntStateOf(0) }
+    var sortJumpTick by remember(ui.source) { mutableIntStateOf(0) }
+    val commentRowTvKeys = Modifier.commentRowTvKeys(
+        onRight = { composerJumpTick++ },
+        onMenu = { sortJumpTick++ }
+    )
     val requestReply: (CommentReplyTarget?) -> Unit = { target ->
         onReply(target)
         if (target != null) replyFocusRequest++
@@ -292,7 +308,7 @@ internal fun CommentSheetContent(
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                CommentSortMenu(ui, onSort)
+                CommentSortMenu(ui, onSort, sortJumpTick)
                 if (landscape) HapticIconButton(onClick = onDismiss) {
                     Icon(Icons.Outlined.Close, stringResource(CoreCommonR.string.action_close))
                 } else HapticIconButton(onClick = toggleFullScreen) {
@@ -316,16 +332,14 @@ internal fun CommentSheetContent(
             }
         }
 
-        PullToRefreshBox(
-            isRefreshing = ui.isRefreshing,
-            onRefresh = onRefresh,
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .testTag("comment-list-viewport")
-            // 这里不再挂「列表下拉降档」手势: 全屏 / 半屏档位下列表下拉都要能刷新评论 (真机反馈 #1),
-            // 档位切换交给横条拖拽与标题栏的全屏按钮
-        ) {
+        // 电视：遥控器上没有「下拉」，焦点往上走时列表回弹却会被当成下拉手势，
+        // 表现就是「焦点一往上就整屏抖一下、重新刷一遍评论」。电视直接不套这一层。
+        val tvNoPullToRefresh = LocalIsTelevision.current
+        val listModifier = Modifier
+            .fillMaxWidth()
+            .weight(1f)
+            .testTag("comment-list-viewport")
+        val listContent: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {
             when (ui.status) {
                 CommentListStatus.IDLE -> Unit
                 CommentListStatus.LOADING -> CommentLoadingBlock()
@@ -368,7 +382,8 @@ internal fun CommentSheetContent(
                                 hasReplyThread = thread != null,
                                 replyEnabled = replyEnabled,
                                 likingIds = ui.likingIds,
-                                onLikeReply = onLike
+                                onLikeReply = onLike,
+                                modifier = commentRowTvKeys
                             )
                         }
                         if (thread?.expanded == true) {
@@ -378,7 +393,7 @@ internal fun CommentSheetContent(
                                     rootId = comment.id,
                                     replyEnabled = replyEnabled,
                                     onReply = requestReply,
-                                    modifier = Modifier.padding(start = 24.dp),
+                                    modifier = Modifier.padding(start = 24.dp).then(commentRowTvKeys),
                                     offlineMode = offlineMode,
                                     isLiking = reply.id in ui.likingIds,
                                     likeEnabled = likeEnabled,
@@ -463,8 +478,51 @@ internal fun CommentSheetContent(
             }
         }
 
+        if (tvNoPullToRefresh) {
+            Box(modifier = listModifier) { listContent() }
+        } else {
+            PullToRefreshBox(
+                isRefreshing = ui.isRefreshing,
+                onRefresh = onRefresh,
+                modifier = listModifier
+            ) { listContent() }
+        }
+
         CommentComposer(ui, offlineMode, onDraft, requestReply, onSend, replyFocusRequest,
-            compact = landscape)
+            compact = landscape, jumpFocusRequest = composerJumpTick)
+    }
+}
+
+/**
+ * 电视：评论行上的按键约定。
+ *
+ * 每一行本身可聚焦，但它右边的点赞 / 回复按钮才是真正的落点。遥控器用户想写评论得往下走好几行，
+ * 想换排序得一路按到右上角，所以这里直接接管两个键：
+ *  - 右键 → 光标跳到下方输入框（[onRight]）
+ *  - 菜单键 → 光标跳到右上角排序按钮并点开它（[onMenu]）
+ * 非电视环境原样返回，不改变手机 / 平板的行为。
+ */
+@Composable
+private fun Modifier.commentRowTvKeys(
+    onRight: () -> Unit,
+    onMenu: () -> Unit
+): Modifier {
+    if (!LocalIsTelevision.current) return this
+    val latestRight by androidx.compose.runtime.rememberUpdatedState(onRight)
+    val latestMenu by androidx.compose.runtime.rememberUpdatedState(onMenu)
+    return this.onPreviewKeyEvent { event ->
+        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+        when (event.key) {
+            Key.DirectionRight -> {
+                latestRight()
+                true
+            }
+            Key.Menu, Key.Settings -> {
+                latestMenu()
+                true
+            }
+            else -> false
+        }
     }
 }
 
@@ -478,14 +536,31 @@ internal fun CommentSheetContent(
  * @param onSort 选中某个排序时回调
  */
 @Composable
-private fun CommentSortMenu(ui: CommentUiState, onSort: (CommentSort) -> Unit) {
+private fun CommentSortMenu(ui: CommentUiState, onSort: (CommentSort) -> Unit, jumpTick: Int = 0) {
     var expanded by remember(ui.source) { mutableStateOf(false) }
     val description = stringResource(AppR.string.comment_sort)
+    // 电视：评论行上按菜单键 → 光标送到这里并直接点开排序菜单
+    val sortFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(jumpTick) {
+        if (jumpTick <= 0) return@LaunchedEffect
+        repeat(6) {
+            if (runCatching { sortFocusRequester.requestFocus() }.getOrDefault(false)) {
+                expanded = true
+                return@LaunchedEffect
+            }
+            withFrameNanos { }
+        }
+    }
     Box {
         HapticTextButton(
             onClick = { expanded = true },
             enabled = ui.source != null && ui.likingIds.isEmpty() && !ui.isSending,
-            modifier = Modifier.semantics { contentDescription = description },
+            modifier = Modifier
+                .then(
+                    if (LocalIsTelevision.current) Modifier.focusRequester(sortFocusRequester)
+                    else Modifier
+                )
+                .semantics { contentDescription = description },
             colors = ButtonDefaults.textButtonColors(
                 containerColor = if (NeriDesign.isClean) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
                     else MaterialTheme.colorScheme.secondaryContainer,

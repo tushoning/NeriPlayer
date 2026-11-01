@@ -123,6 +123,12 @@ import moe.ouom.neriplayer.ui.screen.nowplaying.lyrics.LyricsEditorSheet
 import moe.ouom.neriplayer.util.media.offlineCachedImageRequest
 import moe.ouom.neriplayer.ui.util.rememberSongDisplayCoverUrl
 import moe.ouom.neriplayer.util.platform.PHONE_SMALLEST_SCREEN_WIDTH_DP
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import moe.ouom.neriplayer.ui.tv.TvRestoreFocusWhenClosed
+import moe.ouom.neriplayer.ui.tv.tvInitialFocus
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.component.common.rememberTvTextFieldIme
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -219,6 +225,14 @@ fun EditSongInfoSheet(
     }
 
     val scrollState = rememberScrollState()
+
+    // 电视：底部三个动作按钮 + 编辑歌词入口各留一个焦点请求器。
+    // 这一页弹出去的每个浮层（搜索结果、填充选项、歌词编辑器、写回确认）都是独立窗口，
+    // 关掉之后焦点不会自己回来，得主动交还给按下它的那个按钮。
+    val tvAutoFillFocus = remember { FocusRequester() }
+    val tvRestoreAllFocus = remember { FocusRequester() }
+    val tvSaveFocus = remember { FocusRequester() }
+    val tvLyricsFocus = remember { FocusRequester() }
 
     LaunchedEffect(actualSong) {
         owner.syncUneditedSong(actualSong, resolvedDisplayCoverUrl)
@@ -372,6 +386,7 @@ fun EditSongInfoSheet(
                 EditSongLyricsButton(
                     busy = owner.isLyricsButtonBusy(),
                     enabled = owner.canOpenLyricsEditor(),
+                    modifier = Modifier.focusRequester(tvLyricsFocus),
                     onClick = {
                         clearEditSongInfoFocus()
                         owner.openLyricsEditor(
@@ -391,6 +406,9 @@ fun EditSongInfoSheet(
                     isRestoring = isOriginalInfoRestoring,
                     isSaving = isSaving,
                     isCoverImporting = isCoverImporting,
+                    autoFillRequester = tvAutoFillFocus,
+                    restoreAllRequester = tvRestoreAllFocus,
+                    saveRequester = tvSaveFocus,
                     onSearch = {
                         viewModel.prepareForSearch(songName)
                         viewModel.performSearch()
@@ -519,6 +537,19 @@ fun EditSongInfoSheet(
         )
     }
 
+    // 自动填充整条链路（搜索结果面板 → 填充选项）关掉之后，光标回到「自动填充」按钮
+    TvRestoreFocusWhenClosed(
+        visible = showSearchResults || selectedSongForFill != null,
+        requester = tvAutoFillFocus
+    )
+    // 歌词编辑器关掉之后回到「编辑歌词」
+    TvRestoreFocusWhenClosed(visible = lyricsEditorSeed != null, requester = tvLyricsFocus)
+    // 保存 / 还原跑完（按钮重新可用）之后回到「保存修改」
+    TvRestoreFocusWhenClosed(
+        visible = isSaving || isOriginalInfoRestoring,
+        requester = tvSaveFocus
+    )
+
     if (showSearchResults) {
         EditSongSearchResultsSheet(
             viewModel = viewModel,
@@ -646,23 +677,41 @@ internal fun EditSongActionRow(
     isCoverImporting: Boolean,
     onSearch: () -> Unit,
     onRestoreAll: () -> Unit,
-    onSave: () -> Unit
+    onSave: () -> Unit,
+    autoFillRequester: FocusRequester? = null,
+    restoreAllRequester: FocusRequester? = null,
+    saveRequester: FocusRequester? = null
 ) {
     val width = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.width.toDp() }
     val fontSize = editSongActionFontSize(width)
     val availability = editSongActionAvailability(isRestoring, isSaving, isCoverImporting)
+    // 电视：这三个按钮在「保存/还原进行中」会被禁用，而**禁用的按钮会丢焦点** ——
+    // 按下去之后光标就悬空了，看起来就是「点了保存/还原之后遥控器失灵」。
+    // 电视上让它们始终保持可聚焦（外观也不变灰），只在忙碌时忽略点击。
+    val tv = LocalIsTelevision.current
+    val busy = isRestoring || isSaving || isCoverImporting
+    val editEnabled = if (tv) true else availability.edit
+    val saveEnabled = if (tv) true else availability.save
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        EditSongSearchAction(availability.edit, fontSize, Modifier.weight(1f), onSearch)
-        EditSongRestoreAction(availability.edit, fontSize, Modifier.weight(1f), onRestoreAll)
+        EditSongSearchAction(
+            editEnabled, fontSize,
+            Modifier.weight(1f).tvInitialFocus(autoFillRequester),
+            { if (!busy) onSearch() }
+        )
+        EditSongRestoreAction(
+            editEnabled, fontSize,
+            Modifier.weight(1f).tvInitialFocus(restoreAllRequester),
+            { if (!busy) onRestoreAll() }
+        )
         EditSongSaveAction(
-            enabled = availability.save,
+            enabled = saveEnabled,
             isSaving = isSaving,
             fontSize = fontSize,
-            modifier = Modifier.weight(1f),
-            onClick = onSave
+            modifier = Modifier.weight(1f).tvInitialFocus(saveRequester),
+            onClick = { if (!busy || isSaving) onSave() }
         )
     }
 }
@@ -740,6 +789,9 @@ internal fun EditSongEditableTextField(
     modifier: Modifier,
     placeholder: @Composable (() -> Unit)? = null
 ) {
+    // 电视：按确认键才弹键盘（项目里已有的做法：未进入输入状态时把输入框设成只读，
+    // 只读不会启动输入法，所以既不会闪一下键盘、也不会让整页跟着 imePadding 抬一下）。
+    val ime = rememberTvTextFieldIme(swallowLeft = false, swallowRight = false)
     val restoreIcon: @Composable () -> Unit = {
         HapticIconButton(enabled = enabled, onClick = onRestore) {
             Icon(Icons.Outlined.Refresh, contentDescription = restoreDescription)
@@ -757,10 +809,13 @@ internal fun EditSongEditableTextField(
             onValueChange = onValueChange,
             label = { Text(label) },
             placeholder = placeholder,
-            modifier = modifier.fillMaxWidth().border(
-                1.dp, if (focused) colors.primary.copy(alpha = 0.5f) else Color.Transparent, shape
-            ),
+            modifier = modifier.fillMaxWidth()
+                .then(ime.modifier)
+                .border(
+                    1.dp, if (focused) colors.primary.copy(alpha = 0.5f) else Color.Transparent, shape
+                ),
             enabled = enabled,
+            readOnly = ime.readOnly,
             singleLine = true,
             interactionSource = interactionSource,
             shape = shape,
@@ -781,8 +836,9 @@ internal fun EditSongEditableTextField(
         onValueChange = onValueChange,
         label = { Text(label) },
         placeholder = placeholder,
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().then(ime.modifier),
         enabled = enabled,
+        readOnly = ime.readOnly,
         singleLine = true,
         shape = neriSearchFieldShape(OutlinedTextFieldDefaults.shape),
         trailingIcon = restoreIcon
@@ -881,11 +937,16 @@ private fun editSongCoverDescription(canReplaceFromFile: Boolean): String? =
     stringResource(CoreCommonR.string.music_edit_cover).takeIf { canReplaceFromFile }
 
 @Composable
-internal fun EditSongLyricsButton(busy: Boolean, enabled: Boolean, onClick: () -> Unit) {
+internal fun EditSongLyricsButton(
+    busy: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     HapticTextButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier.fillMaxWidth()
+        modifier = modifier.fillMaxWidth()
     ) {
         if (busy) {
             CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)

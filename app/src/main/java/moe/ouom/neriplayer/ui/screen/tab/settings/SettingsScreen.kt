@@ -25,6 +25,8 @@ package moe.ouom.neriplayer.ui.screen.tab.settings
 
 import moe.ouom.neriplayer.ui.settings.SettingRowIcon
 import moe.ouom.neriplayer.data.ltw.validation.format
+import androidx.compose.runtime.withFrameNanos
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
@@ -77,6 +79,7 @@ import moe.ouom.neriplayer.ui.settings.AutoSettingsSwitchItems
 import moe.ouom.neriplayer.ui.settings.route.AppSettingsHostBindings
 import moe.ouom.neriplayer.ui.component.settings.LanguageSettingItem
 import moe.ouom.neriplayer.ui.effect.glass.LocalAdvancedGlassController
+import moe.ouom.neriplayer.ui.screen.tab.settings.component.settingsItemClickable
 import moe.ouom.neriplayer.ui.screen.tab.settings.component.LazyAnimatedVisibility
 import moe.ouom.neriplayer.ui.screen.tab.settings.component.playback.PlaybackServiceIdleShutdownSetting
 import moe.ouom.neriplayer.ui.screen.tab.settings.component.playback.SettingsAudioQualitySection
@@ -151,6 +154,10 @@ import moe.ouom.neriplayer.ui.screen.tab.settings.storage.settingsStorageCacheDe
 import moe.ouom.neriplayer.ui.screen.tab.settings.storage.settingsStoragePageItems
 import moe.ouom.neriplayer.ui.screen.tab.settings.storage.settingsStorageProcessingItem
 import moe.ouom.neriplayer.ui.screen.tab.settings.navigation.canNavigateBackFromSettingsPage
+import moe.ouom.neriplayer.ui.screen.tab.settings.page.SettingsEntryFocus
+import moe.ouom.neriplayer.ui.component.navigation.TvTopBarFocus
+import moe.ouom.neriplayer.navigation.Destinations
+import moe.ouom.neriplayer.ui.tv.TvTabConfirmBus
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -294,10 +301,32 @@ internal fun SettingsScreen(
     LaunchedEffect(activeSettingsPage) {
         storageDetailsController.requestIfDetailsPage(activeSettingsPage)
     }
+    // 电视：设置内部的二级页面不是独立路由，切换时路由不会变，Compose 无法自己把
+    // 光标还回去。返回设置首页时把光标送还给「刚才点进去的那个入口」（比如「通用」）。
+    if (LocalIsTelevision.current) {
+        LaunchedEffect(activeSettingsPage) {
+            if (activeSettingsPage != null) return@LaunchedEffect
+            withFrameNanos { }
+            withFrameNanos { }
+            if (!SettingsEntryFocus.request(SettingsEntryFocus.lastFocusedPage)) {
+                TvTopBarFocus.requestTab(Destinations.Settings.route)
+            }
+        }
+    }
     ObserveSettingsBackupPlaylistCount(activeSettingsPage, context, backupTransfer)
     val homeTopAppBarState = navigation.homeTopAppBarState
     val detailTopAppBarStates = navigation.detailTopAppBarStates
     val detailListStates = navigation.detailListStates
+    // 电视：停在「设置」标签上再按一次确定键 = 回到顶部
+    //（一级页回到设置首页列表顶部，二级页回到当前二级页列表顶部）。
+    // 设置里没有可刷新的远端数据，所以这里只做滚动。
+    LaunchedEffect(listState, detailListStates, activeSettingsPage) {
+        TvTabConfirmBus.events.collect { route ->
+            if (route != Destinations.Settings.route) return@collect
+            val target = activeSettingsPage?.let { detailListStates[it] } ?: listState
+            runCatching { target.scrollToItem(0) }
+        }
+    }
     val settingsHighlightTargetId by navigation.highlightTargetState
     val settingsHighlightPulse by navigation.highlightPulseState
     val onSettingsHighlightFinished: () -> Unit = navigation::clearHighlight
@@ -404,12 +433,19 @@ internal fun SettingsScreen(
                                     onLanguageChanged = environment.onLanguageChanged
                                 )
                                 ListItem(
-                                    modifier = Modifier.settingsHighlightTarget(
-                                        targetId = "manual:internationalization",
-                                        highlightTargetId = settingsHighlightTargetId,
-                                        highlightPulse = settingsHighlightPulse,
-                                        onHighlightFinished = onSettingsHighlightFinished
-                                    ),
+                                    // 和「播放源 → 本地音频兜底」同一套：整行可聚焦、可点，右侧开关同步
+                                    modifier = Modifier
+                                        .settingsHighlightTarget(
+                                            targetId = "manual:internationalization",
+                                            highlightTargetId = settingsHighlightTargetId,
+                                            highlightPulse = settingsHighlightPulse,
+                                            onHighlightFinished = onSettingsHighlightFinished
+                                        )
+                                        .settingsItemClickable {
+                                            appearanceActions.onInternationalizationEnabledChange(
+                                                !otherState.internationalizationEnabled
+                                            )
+                                        },
                                     leadingContent = {
                                         SettingRowIcon(
                                             key = "internationalization",

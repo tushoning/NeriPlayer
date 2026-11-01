@@ -3,6 +3,8 @@ package moe.ouom.neriplayer.ui.screen.tab.explore
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import moe.ouom.neriplayer.ui.tv.tvStripItemFocus
+import moe.ouom.neriplayer.ui.tv.tvStripClamp
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +27,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -39,6 +42,13 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import moe.ouom.neriplayer.ui.tv.tvGridClampHorizontal
+import moe.ouom.neriplayer.ui.tv.rememberTvGridRowNavigation
+import moe.ouom.neriplayer.ui.tv.tvGridRowNav
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.tvGridColumnsForCardWidth
+import moe.ouom.neriplayer.ui.util.currentWindowWidthDp
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -55,6 +65,7 @@ import moe.ouom.neriplayer.ui.viewmodel.tab.PlaylistSummary
 import moe.ouom.neriplayer.ui.viewmodel.tab.YouTubeMusicPlaylist
 import moe.ouom.neriplayer.ui.haptic.HapticTextButton
 import moe.ouom.neriplayer.ui.screen.tab.home.PlaylistCard
+import moe.ouom.neriplayer.ui.tv.tvBringIntoViewOnFocus
 import moe.ouom.neriplayer.util.media.fastScrollableImageRequest
 import moe.ouom.neriplayer.R as AppR
 
@@ -95,10 +106,23 @@ internal fun NeteaseDefaultContent(
     isTabletLayout: Boolean = false
 ) {
     val miniPlayerHeight = LocalMiniPlayerHeight.current
-    val gridHorizontalPadding = if (isTabletLayout) 56.dp else 16.dp
+    val isTelevision = LocalIsTelevision.current
+    val gridHorizontalPadding = pageSidePaddingOr(if (isTabletLayout) 56.dp else 16.dp)
     val gridMinCellSize = if (isTabletLayout) 170.dp else 150.dp
     val gridSpacing = if (isTabletLayout) 16.dp else 12.dp
+    // 电视上按首页「雷达歌单」那一档卡片宽度（172dp）反算列数，
+    // 否则 Adaptive 会把单元格撑到 200dp，比首页卡片大一圈
+    val tvColumns = if (isTelevision) {
+        tvGridColumnsForCardWidth(
+            availableWidth = currentWindowWidthDp() - gridHorizontalPadding * 2,
+            spacing = 12.dp
+        )
+    } else {
+        0
+    }
     val tagListState = rememberLazyListState()
+    // 电视：上下键自己按行搬焦点，见 TvGridRowNavigation
+    val gridRowNav = rememberTvGridRowNavigation(gridState)
     val showTagStartFade by remember(tagListState) {
         derivedStateOf { tagListState.canScrollBackward }
     }
@@ -107,12 +131,12 @@ internal fun NeteaseDefaultContent(
     }
     LazyVerticalGrid(
         state = gridState,
-        columns = GridCells.Adaptive(gridMinCellSize),
+        columns = if (isTelevision) GridCells.Fixed(tvColumns) else GridCells.Adaptive(gridMinCellSize),
         verticalArrangement = Arrangement.spacedBy(gridSpacing),
         horizontalArrangement = Arrangement.spacedBy(gridSpacing),
         contentPadding = PaddingValues(
-            start = gridHorizontalPadding,
-            end = gridHorizontalPadding,
+            start = pageSidePaddingOr(gridHorizontalPadding),
+            end = pageSidePaddingOr(gridHorizontalPadding),
             top = 16.dp,
             bottom = 16.dp + miniPlayerHeight
         ),
@@ -140,7 +164,12 @@ internal fun NeteaseDefaultContent(
                             onClick = { if (!selected) onTagSelected(tagKey) },
                             selectedAlpha = tagChipSelectedAlpha,
                             unselectedAlpha = tagChipUnselectedAlpha,
-                            borderAlpha = tagChipBorderAlpha
+                            borderAlpha = tagChipBorderAlpha,
+                            modifier = Modifier
+                                // 电视：焦点走到哪滚到哪，且走到尽头不再往右跑
+                                // （不夹住的话会翻到分页器的下一页，画面整块左移）
+                                .tvStripItemFocus(tagListState, index)
+                                .tvStripClamp(tagListState, index, displayKeys.lastIndex)
                         )
                     }
                 }
@@ -158,12 +187,26 @@ internal fun NeteaseDefaultContent(
             }
         }
         if (browse.playlists.isNotEmpty()) {
-            items(items = browse.playlists, key = { it.id }) { playlist ->
-                PlaylistCard(
-                    playlist = playlist,
-                    isFavorite = favoriteKeys.contains("netease:${playlist.id}"),
-                    onClick = { onPlay(playlist) }
-                )
+            itemsIndexed(
+                items = browse.playlists,
+                key = { _, playlist -> playlist.id }
+            ) { _, playlist ->
+                // 电视：卡片整体缩小 10%（格位不变、居中），焦点导航仍按格位算
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    PlaylistCard(
+                        playlist = playlist,
+                        isFavorite = favoriteKeys.contains("netease:${playlist.id}"),
+                        onClick = { onPlay(playlist) },
+                        // 电视：最左/最右一列再按方向键就停住，别让焦点跑出网格；
+                        // 上下键按「同一列」逐行移动（视口外那一行还没组合，Compose 自己搜会掉到第一个卡片）
+                        modifier = Modifier.fillMaxWidth(if (isTelevision) 0.9f else 1f)
+                            .tvGridRowNav(gridRowNav, playlist.id)
+                            .tvGridClampHorizontal(gridState, playlist.id)
+                    )
+                }
             }
         } else if (browse.loading) {
             item(span = { GridItemSpan(maxLineSpan) }) {
@@ -192,18 +235,24 @@ internal fun ExploreTagChip(
     selectedAlpha: Float,
     unselectedAlpha: Float,
     borderAlpha: Float,
-    icon: ImageVector? = null
+    icon: ImageVector? = null,
+    chipHeight: Dp = 32.dp,
+    /** 电视（遥控器）关掉 48dp 最小触控尺寸，标签行才压得下和搜索框配平的高度 */
+    enforceMinInteractiveSize: Boolean = true,
+    modifier: Modifier = Modifier
 ) {
     ExploreGlassPillSurface(
         fallbackColor = tagContainerColor(selected, selectedAlpha, unselectedAlpha),
         tintColor = tagTintColor(selected),
         contentColor = tagContentColor(selected),
         border = BorderStroke(1.dp, tagBorderColor(selected, borderAlpha)),
-        onClick = onClick
+        onClick = onClick,
+        enforceMinInteractiveSize = enforceMinInteractiveSize,
+        modifier = modifier
     ) {
         Row(
             modifier = Modifier
-                .height(32.dp)
+                .height(chipHeight)
                 .padding(horizontal = 14.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
@@ -308,11 +357,12 @@ internal fun YouTubeMusicExploreContent(
             }
         }
         else -> {
+            val gridRowNav = rememberTvGridRowNavigation(gridState)
             LazyVerticalGrid(
                 state = gridState,
                 columns = GridCells.Adaptive(gridMinCellSize),
                 contentPadding = PaddingValues(
-                    start = gridHorizontalPadding, end = gridHorizontalPadding,
+                    start = pageSidePaddingOr(gridHorizontalPadding), end = pageSidePaddingOr(gridHorizontalPadding),
                     top = 8.dp,
                     bottom = 16.dp + miniPlayerHeight
                 ),
@@ -327,7 +377,10 @@ internal fun YouTubeMusicExploreContent(
                     YtMusicExploreCard(
                         playlist = playlist,
                         onClick = { onClick(playlist) },
-                        offlineMode = offlineMode
+                        offlineMode = offlineMode,
+                        modifier = Modifier
+                            .tvGridRowNav(gridRowNav, playlist.browseId)
+                            .tvGridClampHorizontal(gridState, playlist.browseId)
                     )
                 }
             }
@@ -339,12 +392,14 @@ internal fun YouTubeMusicExploreContent(
 private fun YtMusicExploreCard(
     playlist: YouTubeMusicPlaylist,
     onClick: () -> Unit,
-    offlineMode: Boolean
+    offlineMode: Boolean,
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     Column(
-        modifier = Modifier
+        modifier = modifier
             .clip(neriRoundedShape(12.dp))
+            .tvBringIntoViewOnFocus()
             .clickable(onClick = onClick)
     ) {
         AsyncImage(

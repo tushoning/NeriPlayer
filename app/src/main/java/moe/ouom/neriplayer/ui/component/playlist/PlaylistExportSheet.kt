@@ -1,5 +1,6 @@
 package moe.ouom.neriplayer.ui.component.playlist
 
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -7,6 +8,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -30,6 +32,7 @@ import moe.ouom.neriplayer.ui.component.overlay.DensityScaledModalBottomSheet as
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,6 +59,7 @@ import moe.ouom.neriplayer.ui.haptic.HapticTextButton
 import moe.ouom.neriplayer.ui.haptic.performHapticFeedback
 import moe.ouom.neriplayer.ui.screen.tab.settings.miuix.MiuixSettingsButton
 import moe.ouom.neriplayer.ui.screen.tab.settings.miuix.MiuixSettingsTextField
+import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
 import java.util.concurrent.atomic.AtomicBoolean
 import moe.ouom.neriplayer.R as AppR
 
@@ -245,16 +249,18 @@ private fun PlaylistExportRow(
     onClick: () -> Unit
 ) {
     val shape = RoundedCornerShape(18.dp)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.62f))
-            .playlistExportRowClick(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
+    // 电视：焦点环的圆角必须跟这一行自己的圆角（18dp）一致。
+    // 全局环是 12dp（Material）/ 20dp（简洁），跟 18dp 的卡片对不上，
+    // 环的弧就会在四个角「切」进卡片的圆角里 —— 看着就是四个角被削掉了。
+    val ringIndication = rememberTvFocusRingIndication(radius = 18.dp, cleanRadiusBoost = 0.dp)
+    val rowModifier = Modifier
+        .fillMaxWidth()
+        .padding(vertical = 4.dp)
+        .clip(shape)
+        .background(MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.62f))
+        .playlistExportRowClick(enabled = enabled, onClick = onClick)
+        .padding(horizontal = 14.dp, vertical = 12.dp)
+    val rowContent: @Composable RowScope.() -> Unit = {
         Icon(
             imageVector = Icons.AutoMirrored.Outlined.PlaylistPlay,
             contentDescription = null,
@@ -277,6 +283,13 @@ private fun PlaylistExportRow(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+    if (ringIndication != null) {
+        CompositionLocalProvider(LocalIndication provides ringIndication) {
+            Row(rowModifier, verticalAlignment = Alignment.CenterVertically, content = rowContent)
+        }
+    } else {
+        Row(rowModifier, verticalAlignment = Alignment.CenterVertically, content = rowContent)
     }
 }
 

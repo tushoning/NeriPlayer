@@ -68,6 +68,7 @@ import moe.ouom.neriplayer.ui.theme.NeriDesign
 import moe.ouom.neriplayer.ui.theme.neriSearchFieldColors
 import moe.ouom.neriplayer.ui.theme.neriSearchFieldShape
 import moe.ouom.neriplayer.R as AppR
+import moe.ouom.neriplayer.ui.component.common.rememberTvTextFieldIme
 
 private const val MAX_BILI_VIDEO_SKIP_TIMESTAMP_MS = 24L * 60L * 60L * 1_000L
 internal const val BILI_VIDEO_SKIP_SMALL_SEEK_STEP_MS = 1_000L
@@ -368,6 +369,8 @@ internal fun BiliVideoSkipIntervalsContent(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    val imeStart = rememberTvTextFieldIme(swallowLeft = false, swallowRight = false)
+                    val imeEnd = rememberTvTextFieldIme(swallowLeft = false, swallowRight = false)
                     OutlinedTextField(
                         value = startText,
                         shape = neriSearchFieldShape(OutlinedTextFieldDefaults.shape),
@@ -379,9 +382,11 @@ internal fun BiliVideoSkipIntervalsContent(
                             inputError = null
                         },
                         label = { Text(stringResource(CoreCommonR.string.bili_video_skip_start)) },
+                        readOnly = imeStart.readOnly,
                         singleLine = true,
                         modifier = Modifier
                             .weight(1f)
+                            .then(imeStart.modifier)
                             .testTag(BILI_VIDEO_SKIP_START_INPUT_TEST_TAG)
                     )
                     OutlinedTextField(
@@ -395,9 +400,11 @@ internal fun BiliVideoSkipIntervalsContent(
                             inputError = null
                         },
                         label = { Text(stringResource(CoreCommonR.string.bili_video_skip_end)) },
+                        readOnly = imeEnd.readOnly,
                         singleLine = true,
                         modifier = Modifier
                             .weight(1f)
+                            .then(imeEnd.modifier)
                             .testTag(BILI_VIDEO_SKIP_END_INPUT_TEST_TAG)
                     )
                 }

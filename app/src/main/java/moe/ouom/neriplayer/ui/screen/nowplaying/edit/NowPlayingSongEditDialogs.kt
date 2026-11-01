@@ -34,6 +34,8 @@ import moe.ouom.neriplayer.ui.component.overlay.DensityScaledAlertDialog as Aler
 import moe.ouom.neriplayer.ui.haptic.HapticTextButton
 import moe.ouom.neriplayer.ui.theme.NeriDesign
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
+import moe.ouom.neriplayer.ui.tv.rememberTvInitialFocus
+import moe.ouom.neriplayer.ui.tv.tvInitialFocus
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -43,6 +45,9 @@ internal fun EditSongLocalMetadataWriteBackConfirmDialog(
     onSaveInAppOnly: () -> Unit,
     onCancel: () -> Unit
 ) {
+    // 电视：这个对话框是在「保存修改」里弹出来的，弹出前编辑面板刚被清过焦点，
+    // 不给它初始焦点的话遥控器就按不动了。
+    val tvInitialFocus = rememberTvInitialFocus()
     AlertDialog(
         onDismissRequest = onCancel,
         title = { Text(stringResource(CoreCommonR.string.local_song_metadata_write_confirm_title)) },
@@ -50,7 +55,8 @@ internal fun EditSongLocalMetadataWriteBackConfirmDialog(
         confirmButton = {
             HapticTextButton(
                 enabled = !isSaving,
-                onClick = onWriteToLocal
+                onClick = onWriteToLocal,
+                modifier = Modifier.tvInitialFocus(tvInitialFocus)
             ) {
                 Text(stringResource(CoreCommonR.string.local_song_metadata_write_confirm_write))
             }
@@ -76,12 +82,17 @@ internal fun EditSongLyricsSourceChoiceDialog(
     onChooseSidecar: () -> Unit,
     onChooseEmbedded: () -> Unit
 ) {
+    val tvInitialFocus = rememberTvInitialFocus()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(CoreCommonR.string.local_lyrics_source_choice_title)) },
         text = { Text(stringResource(CoreCommonR.string.local_lyrics_source_choice_message)) },
         confirmButton = {
-            HapticTextButton(enabled = enabled, onClick = onChooseSidecar) {
+            HapticTextButton(
+                enabled = enabled,
+                onClick = onChooseSidecar,
+                modifier = Modifier.tvInitialFocus(tvInitialFocus)
+            ) {
                 Text(stringResource(CoreCommonR.string.local_lyrics_source_sidecar))
             }
         },
@@ -118,12 +129,17 @@ internal fun EditSongFillLyricsWriteBackDialog(
     onWriteToLocal: () -> Unit,
     onSaveInAppOnly: () -> Unit
 ) {
+    val tvInitialFocus = rememberTvInitialFocus()
     AlertDialog(
         onDismissRequest = onSaveInAppOnly,
         title = { Text(stringResource(CoreCommonR.string.local_song_metadata_write_confirm_title)) },
         text = { Text(stringResource(CoreCommonR.string.local_lyrics_fill_write_confirm_message)) },
         confirmButton = {
-            HapticTextButton(enabled = enabled, onClick = onWriteToLocal) {
+            HapticTextButton(
+                enabled = enabled,
+                onClick = onWriteToLocal,
+                modifier = Modifier.tvInitialFocus(tvInitialFocus)
+            ) {
                 Text(stringResource(CoreCommonR.string.local_song_metadata_write_confirm_write))
             }
         },
@@ -143,6 +159,7 @@ fun FillOptionsDialog(
     onConfirm: (fillCover: Boolean, fillTitle: Boolean, fillArtist: Boolean, fillLyrics: Boolean) -> Unit,
     enabled: Boolean = true
 ) {
+    val tvInitialFocus = rememberTvInitialFocus()
     var fillCover by remember { mutableStateOf(true) }
     var fillTitle by remember { mutableStateOf(true) }
     var fillArtist by remember { mutableStateOf(true) }
@@ -193,6 +210,9 @@ fun FillOptionsDialog(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        // 电视：这个对话框的选项行是唯一的可聚焦项，
+                        // 一进来就把焦点放到第一行「封面」，否则遥控器按不动。
+                        .tvInitialFocus(tvInitialFocus)
                         .clickable(enabled = enabled) { fillCover = !fillCover }
                         .padding(vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically

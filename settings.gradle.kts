@@ -1,5 +1,9 @@
 pluginManagement {
     repositories {
+        // 本地构建加速：阿里云镜像优先，原仓库兜底
+        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
+        maven { url = uri("https://maven.aliyun.com/repository/google") }
+        maven { url = uri("https://maven.aliyun.com/repository/public") }
         google {
             content {
                 includeGroupByRegex("com\\.android.*")
@@ -15,6 +19,8 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
+        maven { url = uri("https://maven.aliyun.com/repository/google") }
+        maven { url = uri("https://maven.aliyun.com/repository/public") }
         google()
         mavenCentral()
         maven { url = uri("https://jitpack.io") }

@@ -23,6 +23,7 @@ package moe.ouom.neriplayer.ui.screen.nowplaying.lyrics
  */
 
 import moe.ouom.neriplayer.ui.component.common.NeriChoiceChip
+import moe.ouom.neriplayer.ui.component.common.rememberTvTextFieldIme
 import moe.ouom.neriplayer.data.identity.stableKey
 import android.content.ClipData
 import android.content.Context
@@ -140,6 +141,8 @@ import moe.ouom.neriplayer.ui.theme.neriSearchFieldShape
 import moe.ouom.neriplayer.common.logging.NPLogger
 import moe.ouom.neriplayer.ui.screen.nowplaying.edit.EditSongLyricsDraft
 import moe.ouom.neriplayer.util.format.formatDuration
+import moe.ouom.neriplayer.ui.tv.rememberTvInitialFocus
+import moe.ouom.neriplayer.ui.tv.tvInitialFocus
 
 internal class NowPlayingLyricsEditorOwner(
     private val song: SongItem,
@@ -617,6 +620,9 @@ internal fun LyricsEditorContent(
     val scrollState = rememberScrollState()
     val fontScale = LocalDensity.current.fontScale
     val isSaving by owner.isSavingState
+    // 电视：歌词编辑器是一层独立窗口，进来不会自动拿到焦点（遥控器按什么都没反应）。
+    // 进来自动落到这一层里第一个可操作项（顶部「取消」/「匹配」那一排）。
+    val tvInitialFocus = rememberTvInitialFocus()
     val actions = LyricsEditorChromeActions(owner::clearSelectedText, onPaste, onSave, onDismiss, onMatch)
     BoxWithConstraints(
         modifier = modifier
@@ -635,6 +641,7 @@ internal fun LyricsEditorContent(
             .testTag("lyrics-editor-content")
             .lyricsEditorScrollModifier(layout, scrollState)
             .padding(horizontal = layout.horizontalPadding, vertical = layout.spacing)
+            .tvInitialFocus(tvInitialFocus)
         Column(contentModifier, verticalArrangement = Arrangement.spacedBy(layout.spacing)) {
             layout.sections.forEach { section ->
                 key(section) { slots.content.getValue(section)(this) }
@@ -884,13 +891,16 @@ private fun LyricsEditorTextInput(owner: NowPlayingLyricsEditorOwner, modifier: 
         CoreCommonR.string.lyrics_editor_hint_translation,
         CoreCommonR.string.lyrics_editor_hint_romanized
     )[selectedTab.coerceIn(0, 2)]
+    // 电视：这个大输入框同样「确认键才弹键盘」，进去时光标停在这里但不会把整屏顶上去
+    val ime = rememberTvTextFieldIme(swallowLeft = false, swallowRight = false)
     OutlinedTextField(
         value = textState.value,
         onValueChange = owner::replaceSelectedText,
         enabled = !owner.isSavingState.value,
+        readOnly = ime.readOnly,
         shape = neriSearchFieldShape(OutlinedTextFieldDefaults.shape),
         colors = neriSearchFieldColors(),
-        modifier = modifier.testTag("lyrics-editor-input"),
+        modifier = modifier.testTag("lyrics-editor-input").then(ime.modifier),
         placeholder = {
             Text(
                 text = stringResource(hint),

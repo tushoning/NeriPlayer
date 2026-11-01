@@ -68,6 +68,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -79,10 +80,18 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
@@ -122,6 +131,15 @@ import moe.ouom.neriplayer.ui.haptic.HapticIconButton
 import moe.ouom.neriplayer.ui.haptic.HapticTextButton
 import moe.ouom.neriplayer.util.media.offlineCachedImageRequest
 import moe.ouom.neriplayer.ui.haptic.performHapticFeedback
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.LocalTvRowMenuKeyState
+import moe.ouom.neriplayer.ui.tv.rememberTvMenuFirstItemFocus
+import moe.ouom.neriplayer.ui.tv.TvRowMenuKeyEffect
+import moe.ouom.neriplayer.ui.tv.rememberTvRowMenuKeyState
+import moe.ouom.neriplayer.ui.tv.rememberTvInitialFocus
+import moe.ouom.neriplayer.ui.tv.tvBringIntoViewOnFocus
+import moe.ouom.neriplayer.ui.tv.tvInitialFocus
+import moe.ouom.neriplayer.ui.tv.tvRowMenuKeyPress
 import moe.ouom.neriplayer.ui.util.rememberSongDisplayCoverUrl
 import org.burnoutcrew.reorderable.ItemPosition
 import org.burnoutcrew.reorderable.ReorderableItem
@@ -411,7 +429,8 @@ private fun NowPlayingQueueRow(
     onAddToEnd: () -> Unit,
     onFavoriteToggle: () -> Unit,
     onRemoveFromQueue: () -> Unit,
-    dragHandle: @Composable (() -> Unit)?
+    dragHandle: @Composable (() -> Unit)?,
+    rightFocusRequester: FocusRequester? = null
 ) {
     val colors = MaterialTheme.colorScheme
     val containerColor = queueRowContainerColor(
@@ -422,37 +441,61 @@ private fun NowPlayingQueueRow(
         colors.surfaceVariant
     )
     val onClick = queueRowClick(selectionMode, onToggleSelect, onPlay)
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .heightIn(min = 72.dp)
-            .clip(neriRoundedShape(20.dp))
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onLongPress
-            ),
-        shape = neriRoundedShape(20.dp),
-        color = containerColor
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
+    val isTelevision = LocalIsTelevision.current
+    // 电视上三点按钮不可聚焦，改用「光标停在这一行时按菜单键」
+    val tvRowMenuState = rememberTvRowMenuKeyState()
+    CompositionLocalProvider(LocalTvRowMenuKeyState provides tvRowMenuState) {
+        Surface(
+            modifier = modifier
+                .fillMaxWidth()
+                .heightIn(min = 72.dp)
+                .clip(neriRoundedShape(20.dp))
+                .tvBringIntoViewOnFocus()
+            .tvRowMenuKeyPress(tvRowMenuState, enabled = isTelevision && !selectionMode)
+                .then(
+                    // 电视：这一行有焦点时按右键 → 光标直接进右下角那个悬浮的三点（快捷操作）
+                    if (isTelevision && !selectionMode && rightFocusRequester != null) {
+                        Modifier.onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown ||
+                                event.key != Key.DirectionRight
+                            ) {
+                                return@onPreviewKeyEvent false
+                            }
+                            // 请求失败（面板没显示这个按钮）就交回默认的方向搜索
+                            runCatching { rightFocusRequester.requestFocus() }
+                                .getOrDefault(false)
+                        }
+                    } else {
+                        Modifier
+                    }
+                )
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = onLongPress
+                ),
+            shape = neriRoundedShape(20.dp),
+            color = containerColor
         ) {
-            QueueRowSelectionIndicator(visible = selectionMode, selected = selected)
-            QueueRowNumber(index = index, isCurrent = isCurrent)
-            QueueRowArtwork(song = song, offlineMode = offlineMode)
-            Spacer(Modifier.width(12.dp))
-            QueueRowSongText(song = song, modifier = Modifier.weight(1f))
-            QueueRowCurrentMarker(visible = shouldShowQueueCurrentMarker(isCurrent, selectionMode))
-            QueueRowTrailingActions(
-                selectionMode = selectionMode,
-                isFavoriteSong = isFavoriteSong,
-                onPlayNext = onPlayNext,
-                onAddToEnd = onAddToEnd,
-                onFavoriteToggle = onFavoriteToggle,
-                onRemoveFromQueue = onRemoveFromQueue,
-                dragHandle = dragHandle
-            )
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                QueueRowSelectionIndicator(visible = selectionMode, selected = selected)
+                QueueRowNumber(index = index, isCurrent = isCurrent)
+                QueueRowArtwork(song = song, offlineMode = offlineMode)
+                Spacer(Modifier.width(12.dp))
+                QueueRowSongText(song = song, modifier = Modifier.weight(1f))
+                QueueRowCurrentMarker(visible = shouldShowQueueCurrentMarker(isCurrent, selectionMode))
+                QueueRowTrailingActions(
+                    selectionMode = selectionMode,
+                    isFavoriteSong = isFavoriteSong,
+                    onPlayNext = onPlayNext,
+                    onAddToEnd = onAddToEnd,
+                    onFavoriteToggle = onFavoriteToggle,
+                    onRemoveFromQueue = onRemoveFromQueue,
+                    dragHandle = dragHandle
+                )
+            }
         }
     }
 }
@@ -647,6 +690,10 @@ private fun QueueRowMoreMenu(
     onRemoveFromQueue: () -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
+    // 电视上这行被按下菜单键时展开同一个菜单
+    TvRowMenuKeyEffect { expanded = true }
+    // 弹出后光标直接落在第一个按钮上
+    val firstItemFocus = rememberTvMenuFirstItemFocus(expanded)
     Box {
         IconButton(onClick = { expanded = true }) {
             Icon(
@@ -659,6 +706,7 @@ private fun QueueRowMoreMenu(
             QueueRowMenuAction(
                 label = stringResource(CoreCommonR.string.local_playlist_play_next),
                 icon = Icons.Outlined.SkipNext,
+                modifier = Modifier.focusRequester(firstItemFocus),
                 onClick = { onPlayNext(); expanded = false }
             )
             QueueRowMenuAction(
@@ -692,10 +740,16 @@ private fun queueFavoriteIcon(isFavoriteSong: Boolean): ImageVector =
     if (isFavoriteSong) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder
 
 @Composable
-private fun QueueRowMenuAction(label: String, icon: ImageVector, onClick: () -> Unit) {
+private fun QueueRowMenuAction(
+    label: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     DropdownMenuItem(
         text = { Text(label) },
         leadingIcon = { Icon(imageVector = icon, contentDescription = null) },
+        modifier = modifier,
         onClick = onClick
     )
 }
@@ -750,14 +804,30 @@ private fun NowPlayingQueueQuickActionsFab(
     onLocateCurrent: () -> Unit,
     onOpenSource: () -> Unit,
     onEnterSelection: () -> Unit,
-    modifier: Modifier
+    modifier: Modifier,
+    toggleFocusRequester: FocusRequester? = null,
+    onExitLeft: (() -> Boolean)? = null
 ) {
     if (!shouldShowNowPlayingQueueQuickActions(queueSize, currentIndex, hasSourceRoute)) return
 
     var expanded by remember { mutableStateOf(false) }
 
     Column(
-        modifier = modifier,
+        modifier = modifier.then(
+            // 电视：光标在这个悬浮三点上（含展开出来的选项）按左，直接回到刚才那一行歌曲
+            if (onExitLeft != null) {
+                Modifier.onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionLeft) {
+                        return@onPreviewKeyEvent false
+                    }
+                    if (!onExitLeft()) return@onPreviewKeyEvent false
+                    expanded = false
+                    true
+                }
+            } else {
+                Modifier
+            }
+        ),
         horizontalAlignment = Alignment.End,
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -775,7 +845,7 @@ private fun NowPlayingQueueQuickActionsFab(
             )
         }
 
-        QueueQuickActionToggle(expanded) { expanded = !expanded }
+        QueueQuickActionToggle(expanded, { expanded = !expanded }, toggleFocusRequester)
     }
 }
 
@@ -825,8 +895,16 @@ private fun QueueLocateAction(currentIndex: Int, onClick: () -> Unit) {
 }
 
 @Composable
-private fun QueueQuickActionToggle(expanded: Boolean, onClick: () -> Unit) {
-    HapticFloatingActionButton(onClick = onClick, hapticEffect = HapticFeedbackEffect.Click) {
+private fun QueueQuickActionToggle(
+    expanded: Boolean,
+    onClick: () -> Unit,
+    focusRequester: FocusRequester? = null
+) {
+    HapticFloatingActionButton(
+        onClick = onClick,
+        modifier = if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier,
+        hapticEffect = HapticFeedbackEffect.Click
+    ) {
         Icon(
             imageVector = if (expanded) Icons.Outlined.Close else Icons.Filled.MoreVert,
             contentDescription = stringResource(CoreCommonR.string.cd_queue_quick_actions)
@@ -1016,6 +1094,19 @@ internal fun NowPlayingQueueSheet(
     }
 
     var dismissingQueue by remember { mutableStateOf(false) }
+
+    // 电视：面板一打开光标就落在列表可见的第一行上，不用再按一次方向键。
+    // 列表可能被定位到正在播放那首，所以取「打开时第一行的 index」，不是写死 0。
+    val initialRowFocus = rememberTvInitialFocus()
+    val initialFocusIndex = remember { initialQueueScrollTarget ?: 0 }
+    // 行上按右键要落到的目标：右下角那个悬浮的三点（快捷操作）
+    val quickActionsFocus = remember { FocusRequester() }
+    // 每一行一个 requester：从悬浮三点按左要能回到「刚才那一行」
+    val rowFocusRequesters = remember { mutableMapOf<Any, FocusRequester>() }
+    fun rowRequesterOf(key: Any): FocusRequester =
+        rowFocusRequesters.getOrPut(key) { FocusRequester() }
+    // 光标最后停在哪一行 —— 从三点按左就回这一行
+    var lastRowKey by remember { mutableStateOf<Any?>(null) }
 
     fun dismissQueue() {
         if (dismissingQueue) return
@@ -1245,7 +1336,18 @@ internal fun NowPlayingQueueSheet(
                                     .graphicsLayer {
                                         scaleX = rowScale
                                         scaleY = rowScale
-                                    },
+                                    }
+                                    .focusRequester(rowRequesterOf(entry.key))
+                                    .onFocusChanged { focus ->
+                                        if (focus.isFocused) lastRowKey = entry.key
+                                    }
+                                    .then(
+                                        if (index == initialFocusIndex) {
+                                            Modifier.tvInitialFocus(initialRowFocus)
+                                        } else {
+                                            Modifier
+                                        }
+                                    ),
                                 index = index,
                                 song = entry.song,
                                 isCurrent = entry.key == currentEntryKey,
@@ -1264,6 +1366,7 @@ internal fun NowPlayingQueueSheet(
                                 onToggleSelect = { toggleItem(entry.key) },
                                 onPlayNext = { PlayerManager.addToQueueNext(entry.song) },
                                 onAddToEnd = { PlayerManager.addToQueueEnd(entry.song) },
+                                rightFocusRequester = quickActionsFocus,
                                 onFavoriteToggle = {
                                     toggleQueueSongFavorite(entry.song, isFavoriteSong)
                                 },
@@ -1303,6 +1406,17 @@ internal fun NowPlayingQueueSheet(
                     onEnterSelection = {
                         selectionMode = true
                         selectedKeys = emptySet()
+                    },
+                    toggleFocusRequester = quickActionsFocus,
+                    onExitLeft = if (LocalIsTelevision.current) {
+                        {
+                            val key = lastRowKey
+                            val requester = key?.let { rowFocusRequesters[it] }
+                            requester != null &&
+                                runCatching { requester.requestFocus() }.getOrDefault(false)
+                        }
+                    } else {
+                        null
                     },
                     modifier = Modifier
                         .align(Alignment.BottomEnd)

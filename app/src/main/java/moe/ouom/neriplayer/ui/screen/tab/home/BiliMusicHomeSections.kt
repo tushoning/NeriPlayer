@@ -2,10 +2,14 @@ package moe.ouom.neriplayer.ui.screen.tab.home
 
 import moe.ouom.neriplayer.ui.i18n.asString
 import androidx.compose.foundation.background
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
+import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -32,6 +36,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import moe.ouom.neriplayer.ui.tv.tvStripClamp
+import moe.ouom.neriplayer.ui.tv.tvStripItemFocus
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -55,6 +62,7 @@ import moe.ouom.neriplayer.ui.viewmodel.playlist.BiliVideoItem
 import moe.ouom.neriplayer.ui.viewmodel.tab.HomeBiliMusicRankState
 import moe.ouom.neriplayer.ui.viewmodel.tab.HomeSectionState
 import moe.ouom.neriplayer.ui.theme.NeriDesign
+import moe.ouom.neriplayer.ui.theme.cleanCornerRadiusFor
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
 import moe.ouom.neriplayer.util.format.formatDurationSec
 import moe.ouom.neriplayer.util.format.formatPlayCount
@@ -297,17 +305,22 @@ private fun BiliMusicRankStrip(
 ) {
     val context = LocalContext.current
     val playableVideos = remember(state.songs) { state.songs.toPlayableRankVideoItems() }
+    val stripState = rememberLazyListState()
     LazyRow(
+        state = stripState,
         contentPadding = PaddingValues(horizontal = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         itemsIndexed(
             items = state.songs,
             key = { index, song -> song.musicId.ifBlank { "rank-$index-${song.creationBvid}" } }
-        ) { _, song ->
+        ) { index, song ->
             BiliMusicRankSongCard(
                 song = song,
                 offlineMode = offlineMode,
+                modifier = Modifier
+                    .tvStripItemFocus(stripState, index)
+                    .tvStripClamp(stripState, index, state.songs.lastIndex),
                 onClick = {
                     val target = song.toPlayableBiliVideoItem()
                     val index = if (target == null) {
@@ -334,7 +347,8 @@ private fun BiliMusicRankStrip(
 private fun BiliMusicRankSongCard(
     song: BiliMusicRankSong,
     offlineMode: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     // 沿用哔哩哔哩收藏夹的缩略图方案：统一走 buildBiliThumbnailUrl（@WxH_1c.webp 裁剪），
@@ -351,11 +365,27 @@ private fun BiliMusicRankSongCard(
             offlineMode = offlineMode
         )
     }
+    // 环半径跟卡片圆角绑定，并且保持「环比卡片圆 4dp」这层关系：
+    // 卡片 neriRoundedShape(8.dp) → Material 8dp / 简洁 12dp，环就是 12 / 16。
+    // 以前写死 8dp，简洁下靠全局 +8 刚好成了 16，切回 Material 却掉回 8，
+    // 和简洁时的观感不一致。
+    val biliCardCorner = if (NeriDesign.isClean) cleanCornerRadiusFor(8.dp) else 8.dp
+    val tvRingIndication = rememberTvFocusRingIndication(
+        radius = biliCardCorner + 4.dp,
+        cleanRadiusBoost = 0.dp
+    ) ?: LocalIndication.current
     Column(
-        modifier = Modifier
+        modifier = modifier
             .width(168.dp)
-            .clip(neriRoundedShape(12.dp))
-            .clickable(enabled = song.isPlayable, onClick = onClick)
+            // 卡片圆角与封面一致（8dp），焦点环才和封面四角重合；
+            // 内边距放在 clickable 之后 —— 环画在节点边界上，靠它和封面之间留间隙。
+            .clip(neriRoundedShape(8.dp))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = tvRingIndication,
+                enabled = song.isPlayable,
+                onClick = onClick
+            )
             .padding(4.dp)
     ) {
         Box(
@@ -447,7 +477,9 @@ private fun BiliMusicHotStrip(
 ) {
     val context = LocalContext.current
     val playableVideos = remember(videos) { videos.toPlayableHotVideoItems() }
+    val stripState = rememberLazyListState()
     LazyRow(
+        state = stripState,
         contentPadding = PaddingValues(horizontal = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -459,6 +491,9 @@ private fun BiliMusicHotStrip(
                 video = video,
                 index = index,
                 offlineMode = offlineMode,
+                modifier = Modifier
+                    .tvStripItemFocus(stripState, index)
+                    .tvStripClamp(stripState, index, videos.lastIndex),
                 onClick = {
                     val target = playableVideos.indexOfFirst {
                         it.id == video.aid && it.bvid == video.bvid
@@ -483,7 +518,8 @@ private fun BiliMusicHotVideoCard(
     video: BiliMusicHotVideo,
     index: Int,
     offlineMode: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     // 与榜单卡片统一：同一缩略图裁剪方案、同一卡片尺寸与排版层级
@@ -499,11 +535,25 @@ private fun BiliMusicHotVideoCard(
             offlineMode = offlineMode
         )
     }
+    // 环半径跟卡片圆角绑定，并且保持「环比卡片圆 4dp」这层关系：
+    // 卡片 neriRoundedShape(8.dp) → Material 8dp / 简洁 12dp，环就是 12 / 16。
+    // 以前写死 8dp，简洁下靠全局 +8 刚好成了 16，切回 Material 却掉回 8，
+    // 和简洁时的观感不一致。
+    val biliCardCorner = if (NeriDesign.isClean) cleanCornerRadiusFor(8.dp) else 8.dp
+    val tvRingIndication = rememberTvFocusRingIndication(
+        radius = biliCardCorner + 4.dp,
+        cleanRadiusBoost = 0.dp
+    ) ?: LocalIndication.current
     Column(
-        modifier = Modifier
+        modifier = modifier
             .width(168.dp)
-            .clip(neriRoundedShape(12.dp))
-            .clickable(enabled = video.isPlayable, onClick = onClick)
+            .clip(neriRoundedShape(8.dp))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = tvRingIndication,
+                enabled = video.isPlayable,
+                onClick = onClick
+            )
             .padding(4.dp)
     ) {
         Box(

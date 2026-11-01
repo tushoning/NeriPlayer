@@ -26,12 +26,26 @@ package moe.ouom.neriplayer.ui.screen.tab.explore
 import moe.ouom.neriplayer.ui.i18n.UiText
 import moe.ouom.neriplayer.ui.i18n.asString
 import moe.ouom.neriplayer.ui.component.common.NeriSearchFieldGlass
+import moe.ouom.neriplayer.ui.component.common.rememberTvTextFieldIme
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.foundation.shape.CircleShape
 import moe.ouom.neriplayer.ui.component.common.CleanSegmentedTabs
 import moe.ouom.neriplayer.ui.theme.NeriDesign
+import moe.ouom.neriplayer.ui.tv.tvStripItemFocus
+import moe.ouom.neriplayer.ui.tv.tvStripClamp
+import moe.ouom.neriplayer.ui.tv.TvTabConfirmBus
+import moe.ouom.neriplayer.ui.screen.tab.library.LibraryPrimaryTabShape
+import moe.ouom.neriplayer.ui.tv.TvChipHeight
+import moe.ouom.neriplayer.ui.tv.TvChipHorizontalPadding
+import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
+import moe.ouom.neriplayer.ui.tv.tvChipLabelStyle
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 import moe.ouom.neriplayer.ui.screen.playlist.FavoriteSongLookup
 import moe.ouom.neriplayer.data.identity.stableKey
 import moe.ouom.neriplayer.data.sync.mapping.toSongItem
@@ -121,8 +135,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
@@ -137,6 +155,7 @@ import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -184,6 +203,7 @@ import moe.ouom.neriplayer.ui.feedback.showNeriSnackbar
 import moe.ouom.neriplayer.data.model.SongItem
 import moe.ouom.neriplayer.ui.viewmodel.tab.ExploreSearchResult
 import moe.ouom.neriplayer.ui.viewmodel.tab.ExploreViewModel
+import moe.ouom.neriplayer.navigation.Destinations
 import moe.ouom.neriplayer.ui.viewmodel.tab.BiliPlaylist
 import moe.ouom.neriplayer.ui.viewmodel.tab.NeteaseExploreSearchType
 import moe.ouom.neriplayer.ui.viewmodel.tab.PlaylistSummary
@@ -306,8 +326,8 @@ internal fun ExploreSearchResultsList(
     LazyColumn(
         state = state,
         contentPadding = PaddingValues(
-            start = horizontalPadding,
-            end = horizontalPadding,
+            start = pageSidePaddingOr(horizontalPadding),
+            end = pageSidePaddingOr(horizontalPadding),
             top = 8.dp,
             bottom = exploreSearchResultsBottomPadding(miniPlayerHeight)
         ),
@@ -522,6 +542,25 @@ fun ExploreScreen(
         if (ui.playlists.isEmpty()) vm.loadHighQuality()
     }
 
+    // 电视：停在「探索」标签上再按一次确定键 = 刷新当前浏览内容 + 回到顶部。
+    // 浏览区按来源分成两块（网易云高质量歌单 / YT Music 歌单），各自有自己的网格状态。
+    LaunchedEffect(Unit) {
+        TvTabConfirmBus.events.collect { route ->
+            if (route != Destinations.Explore.route) return@collect
+            when (ui.selectedSearchSource) {
+                SearchSource.NETEASE -> {
+                    runCatching { gridState.scrollToItem(0) }
+                    vm.loadHighQuality()
+                }
+                SearchSource.YOUTUBE_MUSIC -> {
+                    runCatching { youtubeGridState.scrollToItem(0) }
+                    vm.loadYtMusicPlaylists()
+                }
+                else -> Unit
+            }
+        }
+    }
+
     LaunchedEffect(ui.selectedSearchSource, orderedSearchSources) {
         val targetPage = orderedSearchSources.indexOf(ui.selectedSearchSource)
             .takeIf { it >= 0 }
@@ -723,7 +762,12 @@ fun ExploreScreen(
     Scaffold(
         modifier = Modifier
             .fillMaxSize()
-            .nestedScroll(scrollBehavior.nestedScrollConnection),
+            .then(
+                // 电视上没有可折叠的大标题，这个 scrollBehavior 却仍然挂在嵌套滚动链上，
+                // 会把列表的滚动吃掉（表现为焦点能走出屏幕、页面不动）。电视上不接。
+                if (LocalIsTelevision.current) Modifier
+                else Modifier.nestedScroll(scrollBehavior.nestedScrollConnection)
+            ),
         containerColor = Color.Transparent,
         // 底部避让由导航宿主和列表留白负责，滚动视口应延伸到系统导航区
         contentWindowInsets = ScaffoldDefaults.contentWindowInsets.only(
@@ -736,14 +780,23 @@ fun ExploreScreen(
             )
         },
         topBar = {
-            LargeTopAppBar(
-                title = { Text(stringResource(AppR.string.nav_explore)) },
-                scrollBehavior = scrollBehavior,
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    scrolledContainerColor = Color.Transparent
+            // 电视上顶部已经有标签栏，再顶一条大标题只会白占屏幕。
+            // 注意不能留空 lambda：topBar 为空时 Scaffold 传给内容的高度约束会出问题，
+            // 列表被一次性铺开、自己不再滚动（表现为焦点能走出屏幕但页面不动）。
+            // 给一个 0 尺寸占位。
+            if (!LocalIsTelevision.current) {
+                LargeTopAppBar(
+                    modifier = Modifier.padding(horizontal = pageSidePaddingOr(0.dp)),
+                    title = { Text(stringResource(AppR.string.nav_explore)) },
+                    scrollBehavior = scrollBehavior,
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        scrolledContainerColor = Color.Transparent
+                    )
                 )
-            )
+            } else {
+                Spacer(Modifier)
+            }
         }
     ) { innerPadding ->
         Column(
@@ -760,6 +813,16 @@ fun ExploreScreen(
                     .padding(horizontal = searchPanelHorizontalPadding, vertical = 8.dp)
             ) {
                     val cleanSearchField = NeriDesign.isClean
+                    val isTelevision = LocalIsTelevision.current
+                    // 搜索框右边是上下两排（来源标签 / 歌曲·歌单·歌手），
+                    // 几何搜索会挑到下面那排小分类上，所以右键直接指定落到来源标签
+                    val sourceTabFocusRequester = remember { FocusRequester() }
+                    // 右边就是来源标签行，左右键要能过去，所以两个方向都不吞
+                    val searchIme = rememberTvTextFieldIme(
+                        swallowLeft = false,
+                        swallowRight = false,
+                        rightFocusTarget = sourceTabFocusRequester.takeIf { isTelevision }
+                    )
                     val searchFieldLabel = stringResource(
                         if (ui.selectedSearchSource == SearchSource.LINK_RECOGNITION) {
                             CoreCommonR.string.explore_link_input_label
@@ -767,6 +830,11 @@ fun ExploreScreen(
                             CoreCommonR.string.search_keyword
                         }
                     )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                    Box(modifier = if (isTelevision) Modifier.fillMaxWidth(0.5f) else Modifier.fillMaxWidth()) {
                     NeriSearchFieldGlass(
                         modifier = Modifier.fillMaxWidth(),
                         shape = if (cleanSearchField) NeriDesign.tokens.groupShape else ExploreSearchFieldShape
@@ -776,6 +844,8 @@ fun ExploreScreen(
                         onValueChange = {
                             onSearchQueryChange(it)
                         },
+                        // 「自动弹出软键盘」关掉时只是不弹输入法，焦点框仍是输入框自己的
+                        readOnly = searchIme.readOnly,
                         label = if (cleanSearchField) null else {
                             { Text(searchFieldLabel) }
                         },
@@ -815,8 +885,51 @@ fun ExploreScreen(
                         }),
                         singleLine = true,
                         shape = if (cleanSearchField) NeriDesign.tokens.groupShape else ExploreSearchFieldShape,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusProperties {
+                                // 「自动弹出软键盘」开着时输入框仍可编辑，方向键被光标吃掉，
+                                // 这里只在没编辑时生效：右键明确落到来源标签那一行
+                                if (isTelevision) right = sourceTabFocusRequester
+                            }
+                            .then(searchIme.modifier)
                     )
+                    }
+                    }
+                    if (isTelevision) {
+                        // 右半边再上下分两截：上面是来源（网易云/哔哩哔哩…），
+                        // 下面是选中来源后对应的小分类。
+                        // 两截整体靠右，但各自都从左边缘开始排 —— 小分类的第一个
+                        // 要和「网易云音乐」左对齐；两截的高度加起来正好等于搜索框。
+                        Box(
+                            modifier = Modifier.weight(1f),
+                            // 垂直居中：两截加起来 56dp，正好等于左边搜索框的高度
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                ExploreSearchSourceTabs(
+                                    sources = orderedSearchSources,
+                                    selectedIndex = pagerState.currentPage,
+                                    onSelected = { index ->
+                                        scope.launch { pagerState.scrollToPage(index) }
+                                    },
+                                    modifier = Modifier.height(ExploreTvSourceRowHeight),
+                                    firstItemFocusRequester = sourceTabFocusRequester
+                                )
+                                ExploreSearchTypeBar(
+                                    source = searchTypeBarSource,
+                                    selectedNeteaseSearchType = ui.selectedNeteaseSearchType,
+                                    selectedYouTubeSearchType = ui.selectedYouTubeMusicSearchType,
+                                    onNeteaseSearchTypeClick = vm::setNeteaseSearchType,
+                                    onYouTubeSearchTypeClick = vm::setYouTubeMusicSearchType,
+                                    selectedAlpha = tagChipSelectedAlpha,
+                                    unselectedAlpha = tagChipUnselectedAlpha,
+                                    borderAlpha = tagChipBorderAlpha,
+                                    modifier = Modifier.height(ExploreTvTypeRowHeight)
+                                )
+                            }
+                        }
+                    }
                     }
                     // only the search field stays pinned; everything below scrolls with the list
                     Column(Modifier.fillMaxWidth().exploreCollapsingHeader(collapsingHeader)) {
@@ -852,7 +965,8 @@ fun ExploreScreen(
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
-                    Spacer(Modifier.height(8.dp))
+                    if (!isTelevision) {
+                                        Spacer(Modifier.height(8.dp))
                     if (NeriDesign.isClean) {
                         val sourceLabels = orderedSearchSources.map { searchSourceLabel(it) }
                         CleanSegmentedTabs(
@@ -895,6 +1009,8 @@ fun ExploreScreen(
                             }
                         }
                     }
+                    }
+                    if (!isTelevision) {
                     ExploreSearchTypeBar(
                         source = searchTypeBarSource,
                         selectedNeteaseSearchType = ui.selectedNeteaseSearchType,
@@ -905,6 +1021,7 @@ fun ExploreScreen(
                         unselectedAlpha = tagChipUnselectedAlpha,
                         borderAlpha = tagChipBorderAlpha
                     )
+                    }
                     }
                 }
 
@@ -1197,6 +1314,7 @@ fun ExploreScreen(
                 AnimatedVisibility(visible = partsSelectionMode) {
                     val allSelected = selectedParts.size == currentPartsInfo.pages.size
                     TopAppBar(
+                        modifier = Modifier.padding(horizontal = pageSidePaddingOr(0.dp)),
                     title = {
                         Text(
                             pluralStringResource(
@@ -1388,20 +1506,34 @@ private fun ExploreOfflineContent(topAppBarState: TopAppBarState) {
     Scaffold(
         modifier = Modifier
             .fillMaxSize()
-            .nestedScroll(scrollBehavior.nestedScrollConnection),
+            .then(
+                // 电视上没有可折叠的大标题，这个 scrollBehavior 却仍然挂在嵌套滚动链上，
+                // 会把列表的滚动吃掉（表现为焦点能走出屏幕、页面不动）。电视上不接。
+                if (LocalIsTelevision.current) Modifier
+                else Modifier.nestedScroll(scrollBehavior.nestedScrollConnection)
+            ),
         containerColor = Color.Transparent,
         contentWindowInsets = ScaffoldDefaults.contentWindowInsets.only(
             WindowInsetsSides.Top + WindowInsetsSides.Horizontal
         ),
         topBar = {
-            LargeTopAppBar(
-                title = { Text(stringResource(AppR.string.nav_explore)) },
-                scrollBehavior = scrollBehavior,
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    scrolledContainerColor = Color.Transparent
+            // 电视上顶部已经有标签栏，再顶一条大标题只会白占屏幕。
+            // 注意不能留空 lambda：topBar 为空时 Scaffold 传给内容的高度约束会出问题，
+            // 列表被一次性铺开、自己不再滚动（表现为焦点能走出屏幕但页面不动）。
+            // 给一个 0 尺寸占位。
+            if (!LocalIsTelevision.current) {
+                LargeTopAppBar(
+                    modifier = Modifier.padding(horizontal = pageSidePaddingOr(0.dp)),
+                    title = { Text(stringResource(AppR.string.nav_explore)) },
+                    scrollBehavior = scrollBehavior,
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        scrolledContainerColor = Color.Transparent
+                    )
                 )
-            )
+            } else {
+                Spacer(Modifier)
+            }
         }
     ) { innerPadding ->
         Box(
@@ -1642,11 +1774,15 @@ internal fun ExploreSearchTypeBar(
     onYouTubeSearchTypeClick: (YouTubeExploreSearchType) -> Unit,
     selectedAlpha: Float,
     unselectedAlpha: Float,
-    borderAlpha: Float
+    borderAlpha: Float,
+    modifier: Modifier = Modifier
 ) {
+    val isTelevision = LocalIsTelevision.current
+    val neteaseTypeState = rememberLazyListState()
+    val youtubeTypeState = rememberLazyListState()
     AnimatedContent(
         targetState = source,
-        modifier = Modifier.testTag(EXPLORE_SEARCH_TYPE_BAR_CONTAINER_TAG),
+        modifier = modifier.testTag(EXPLORE_SEARCH_TYPE_BAR_CONTAINER_TAG),
         transitionSpec = {
             val sourceSwap = isExploreSearchTypeBarSourceSwap(initialState, targetState)
             val enter = if (sourceSwap) {
@@ -1728,13 +1864,17 @@ internal fun ExploreSearchTypeBar(
         when (displayedSource) {
             SearchSource.NETEASE -> {
                 LazyRow(
+                    state = neteaseTypeState,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 8.dp)
+                        .padding(top = if (isTelevision) 0.dp else 8.dp)
                         .testTag(EXPLORE_NETEASE_SEARCH_TYPE_BAR_TAG),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(
+                        if (isTelevision) 18.dp else 8.dp,
+                        if (isTelevision) Alignment.CenterHorizontally else Alignment.Start
+                    )
                 ) {
-                    itemsIndexed(NeteaseExploreSearchType.entries) { _, type ->
+                    itemsIndexed(NeteaseExploreSearchType.entries) { index, type ->
                         ExploreTagChip(
                             label = neteaseSearchTypeLabel(type),
                             icon = neteaseSearchTypeIcon(type),
@@ -1746,7 +1886,19 @@ internal fun ExploreSearchTypeBar(
                             },
                             selectedAlpha = selectedAlpha,
                             unselectedAlpha = unselectedAlpha,
-                            borderAlpha = borderAlpha
+                            borderAlpha = borderAlpha,
+                            chipHeight = if (isTelevision) ExploreTvTypeRowHeight else 32.dp,
+                            // 电视不需要 48dp 最小触控尺寸，不关掉这一行压不到 26dp
+                            enforceMinInteractiveSize = !isTelevision,
+                            modifier = Modifier
+                                .tvStripItemFocus(neteaseTypeState, index)
+                                // 左端不夹：左边就是搜索框，光标要能走过去
+                                .tvStripClamp(
+                                    neteaseTypeState,
+                                    index,
+                                    NeteaseExploreSearchType.entries.lastIndex,
+                                    clampStart = false
+                                )
                         )
                     }
                 }
@@ -1754,13 +1906,17 @@ internal fun ExploreSearchTypeBar(
 
             SearchSource.YOUTUBE_MUSIC -> {
                 LazyRow(
+                    state = youtubeTypeState,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 8.dp)
+                        .padding(top = if (isTelevision) 0.dp else 8.dp)
                         .testTag(EXPLORE_YOUTUBE_SEARCH_TYPE_BAR_TAG),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(
+                        if (isTelevision) 18.dp else 8.dp,
+                        if (isTelevision) Alignment.CenterHorizontally else Alignment.Start
+                    )
                 ) {
-                    itemsIndexed(YouTubeExploreSearchType.entries) { _, type ->
+                    itemsIndexed(YouTubeExploreSearchType.entries) { index, type ->
                         ExploreTagChip(
                             label = youtubeSearchTypeLabel(type),
                             icon = youtubeSearchTypeIcon(type),
@@ -1772,7 +1928,18 @@ internal fun ExploreSearchTypeBar(
                             },
                             selectedAlpha = selectedAlpha,
                             unselectedAlpha = unselectedAlpha,
-                            borderAlpha = borderAlpha
+                            borderAlpha = borderAlpha,
+                            chipHeight = if (isTelevision) ExploreTvTypeRowHeight else 32.dp,
+                            // 电视不需要 48dp 最小触控尺寸，不关掉这一行压不到 26dp
+                            enforceMinInteractiveSize = !isTelevision,
+                            modifier = Modifier
+                                .tvStripItemFocus(youtubeTypeState, index)
+                                .tvStripClamp(
+                                    youtubeTypeState,
+                                    index,
+                                    YouTubeExploreSearchType.entries.lastIndex,
+                                    clampStart = false
+                                )
                         )
                     }
                 }
@@ -1790,6 +1957,112 @@ private val EXPLORE_SEARCH_TYPE_BAR_SOURCES = setOf(
 )
 private const val EXPLORE_SEARCH_TYPE_BAR_ENTER_DURATION_MS = 180
 private const val EXPLORE_SEARCH_TYPE_BAR_EXIT_DURATION_MS = 140
+/**
+ * 搜索来源（网易云音乐 / 哔哩哔哩 / YT Music / 链接识别）。
+ * 电视上和搜索框并排显示，用自绘的紧凑标签：宽度跟着文字走、整体靠右，
+ * 不能用 PrimaryScrollableTabRow（它内部 fillMaxWidth，会把标签均分撑满）。
+ */
+@Composable
+private fun ExploreSearchSourceTabs(
+    sources: List<SearchSource>,
+    selectedIndex: Int,
+    onSelected: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    /** 第一个标签的焦点位：搜索框按右键直接送到这里 */
+    firstItemFocusRequester: FocusRequester? = null
+) {
+    if (LocalIsTelevision.current) {
+        Row(
+            modifier = modifier.fillMaxWidth(),
+            // 居中：以前是靠右/靠左排，换个来源标签数量就会整排左右横跳
+            // 间距放大：标签居中但两侧原来留白太多，一排显得空
+            horizontalArrangement = Arrangement.spacedBy(18.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            sources.forEachIndexed { index, source ->
+                val selected = selectedIndex == index
+                // 和媒体库那排主标签（本地/收藏/…）完全同一套：
+                // 圆角 20dp 的同一形状、选中只铺一层淡底色（不描边）、焦点环贴着标签边缘走
+                val colors = MaterialTheme.colorScheme
+                val tvRingIndication = rememberTvFocusRingIndication(20.dp)
+                    ?: LocalIndication.current
+                Box(
+                    modifier = Modifier
+                        .then(
+                            if (index == 0 && firstItemFocusRequester != null) {
+                                Modifier.focusRequester(firstItemFocusRequester)
+                            } else {
+                                Modifier
+                            }
+                        )
+                        .height(TvChipHeight)
+                        .clip(LibraryPrimaryTabShape)
+                        .background(
+                            if (selected) colors.primary.copy(alpha = 0.18f) else Color.Transparent
+                        )
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = tvRingIndication
+                        ) { onSelected(index) }
+                        .padding(horizontal = TvChipHorizontalPadding),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = searchSourceLabel(source),
+                        style = tvChipLabelStyle(),
+                        maxLines = 1,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                        color = if (selected) colors.primary else colors.onSurfaceVariant
+                    )
+                }
+            }
+        }
+        return
+    }
+    if (NeriDesign.isClean) {
+        CleanSegmentedTabs(
+            labels = sources.map { searchSourceLabel(it) },
+            selectedIndex = selectedIndex,
+            onSelected = onSelected,
+            modifier = modifier
+        )
+        return
+    }
+    AdvancedGlassSurface(
+        role = AdvancedGlassRole.ScreenTopTab,
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(ExplorePrimaryTabShape),
+        shape = ExplorePrimaryTabShape
+    ) {
+        PrimaryScrollableTabRow(
+            selectedTabIndex = selectedIndex,
+            edgePadding = 0.dp,
+            containerColor = Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.primary
+        ) {
+            sources.forEachIndexed { index, source ->
+                Tab(
+                    selected = selectedIndex == index,
+                    onClick = { onSelected(index) },
+                    text = {
+                        Text(
+                            text = searchSourceLabel(source),
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                )
+            }
+        }
+    }
+}
+
+// 两截加起来必须等于搜索框的高度（OutlinedTextField 的最小高度 56dp），
+// 否则右边这一组会比左边高/矮一截，看着就是「上下不齐」。
+internal val ExploreTvSourceRowHeight = 30.dp
+internal val ExploreTvTypeRowHeight = 26.dp
 private const val EXPLORE_SEARCH_TYPE_BAR_SIZE_DURATION_MS = 220
 private const val EXPLORE_SEARCH_TYPE_BAR_SLIDE_DIVISOR = 5
 internal const val EXPLORE_SEARCH_TYPE_BAR_CONTAINER_TAG = "explore_search_type_bar"

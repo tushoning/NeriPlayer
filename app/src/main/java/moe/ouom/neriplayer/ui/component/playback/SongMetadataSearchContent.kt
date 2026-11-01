@@ -92,6 +92,8 @@ import moe.ouom.neriplayer.ui.screen.playlist.curation.rememberLocalCurationWrit
 import moe.ouom.neriplayer.util.media.offlineCachedImageRequest
 import kotlin.time.Duration.Companion.milliseconds
 import moe.ouom.neriplayer.R as AppR
+import moe.ouom.neriplayer.ui.component.common.rememberTvTextFieldIme
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 
 private const val PlaybackStartupSearchWaitTimeoutMs = 2_000L
 private const val PlaybackStartupSettleDelayMs = 260L
@@ -174,13 +176,16 @@ fun SongMetadataSearchContent(
         viewModel.performSearch()
     }
 
+    val isTelevision = LocalIsTelevision.current
     val canFocusSearch = enabled && !isWaitingForPlayback && selectedForApplication == null &&
         pendingWriteApplication == null && !application.isRunning && !application.completed
     LaunchedEffect(songKey, autoShowKeyboard, canFocusSearch) {
         if (autoShowKeyboard && canFocusSearch) {
             delay(220.milliseconds)
             focusRequester.requestFocus()
-            keyboardController?.show()
+            // 电视：只把焦点放到搜索框上，不主动拉键盘 —— 遥控器上键盘一弹出来就挡掉半屏，
+            // 方向键还会被输入法吃掉。要输入时按一次确认键（rememberTvTextFieldIme 负责）。
+            if (!isTelevision) keyboardController?.show()
         }
     }
 
@@ -296,16 +301,19 @@ private fun MetadataSearchInput(
     onSearch: () -> Unit,
     onSearchSubmitted: () -> Unit
 ) {
+    val ime = rememberTvTextFieldIme(swallowLeft = false, swallowRight = false)
     OutlinedTextField(
         value = state.keyword,
         onValueChange = onKeywordChange,
         enabled = enabled && !state.isApplyingMetadata,
+        readOnly = ime.readOnly,
         shape = neriSearchFieldShape(OutlinedTextFieldDefaults.shape),
         colors = neriSearchFieldColors(),
         label = { Text(stringResource(CoreCommonR.string.search_keywords)) },
         modifier = Modifier
             .fillMaxWidth()
             .focusRequester(focusRequester)
+            .then(ime.modifier)
             .padding(horizontal = 16.dp, vertical = 8.dp),
         trailingIcon = {
             HapticIconButton(

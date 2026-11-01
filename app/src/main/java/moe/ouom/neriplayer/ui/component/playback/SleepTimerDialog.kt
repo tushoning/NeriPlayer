@@ -23,7 +23,9 @@ package moe.ouom.neriplayer.ui.component.playback
  * Created: 2026/1/6
  */
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -42,9 +44,12 @@ import moe.ouom.neriplayer.core.di.AppContainer
 import moe.ouom.neriplayer.core.player.PlayerManager
 import moe.ouom.neriplayer.data.model.playback.SleepTimerMode
 import moe.ouom.neriplayer.common.R as CoreCommonR
+import moe.ouom.neriplayer.ui.component.overlay.DensityScaledModalBottomSheet
+import moe.ouom.neriplayer.ui.screen.tab.settings.miuix.MiuixSettingsSlider
 import moe.ouom.neriplayer.ui.theme.NeriDesign
 import moe.ouom.neriplayer.R as AppR
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SleepTimerDialog(
     onDismiss: () -> Unit
@@ -54,17 +59,47 @@ fun SleepTimerDialog(
         .sleepTimerFinishCurrentOnExpiryFlow
         .collectAsStateWithLifecycle(initialValue = false)
     var sliderValue by remember { mutableFloatStateOf(30f) }
+    // 一打开就全展开；小白条由内容顶部自绘（自带那条会变成焦点落点）
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    AlertDialog(
+    // 版式和「三点菜单 → 歌词字体大小」一致：底部弹出、标题居中在最上方，
+    // 内容一栏从上往下排，没有底部按钮栏（关闭靠返回键 / 点外面）。
+    DensityScaledModalBottomSheet(
         onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Default.Timer, contentDescription = null) },
-        title = { Text(stringResource(CoreCommonR.string.sleep_timer_title)) },
-        text = {
-            Column(
+        sheetState = sheetState,
+        sheetGesturesEnabled = false,
+        dragHandle = null
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    horizontal = if (NeriDesign.isClean) NeriDesign.tokens.pageHorizontalPadding else 24.dp,
+                    vertical = 16.dp
+                )
+                .windowInsetsPadding(WindowInsets.navigationBars),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // 顶部小白条：自己画一条，不接 BottomSheet 的 dragHandle ——
+            // 自带的那条被包了一层 clickable，在电视上会变成一个可聚焦的落点。
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 500.dp)
-                    .verticalScroll(rememberScrollState()),
+                    .padding(bottom = 14.dp)
+                    .size(width = 32.dp, height = 4.dp)
+                    .background(MaterialTheme.colorScheme.onSurfaceVariant, CircleShape)
+            )
+            Text(
+                text = stringResource(CoreCommonR.string.sleep_timer_title),
+                style = if (NeriDesign.isClean) {
+                    MaterialTheme.typography.titleLarge
+                } else {
+                    MaterialTheme.typography.titleMedium
+                }
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Column(
+                modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 // 当前状态显示
@@ -73,8 +108,11 @@ fun SleepTimerDialog(
                         modifier = Modifier.fillMaxWidth(),
                         shape = if (NeriDesign.isClean) NeriDesign.tokens.cardShape else CardDefaults.shape,
                         colors = CardDefaults.cardColors(
-                            containerColor = if (NeriDesign.isClean) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f)
-                                else MaterialTheme.colorScheme.primaryContainer
+                            containerColor = if (NeriDesign.isClean) {
+                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f)
+                            } else {
+                                MaterialTheme.colorScheme.primaryContainer
+                            }
                         )
                     ) {
                         Column(
@@ -117,29 +155,41 @@ fun SleepTimerDialog(
                             }
                         }
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
+                    TextButton(onClick = {
+                        PlayerManager.sleepTimerManager.cancel()
+                        onDismiss()
+                    }) {
+                        Text(stringResource(CoreCommonR.string.sleep_timer_cancel))
+                    }
                 }
 
                 // 倒计时滑块
                 Text(
                     text = stringResource(CoreCommonR.string.sleep_timer_countdown),
+                    modifier = Modifier.fillMaxWidth(),
                     style = MaterialTheme.typography.titleSmall,
-                    color = if (NeriDesign.isClean) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary
+                    color = if (NeriDesign.isClean) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    }
                 )
 
                 Text(
-                            text = pluralStringResource(
-                                AppR.plurals.sleep_timer_minutes,
-                                sliderValue.toInt(),
-                                sliderValue.toInt()
-                            ),
+                    text = pluralStringResource(
+                        AppR.plurals.sleep_timer_minutes,
+                        sliderValue.toInt(),
+                        sliderValue.toInt()
+                    ),
                     style = MaterialTheme.typography.headlineSmall,
                     modifier = Modifier.align(Alignment.CenterHorizontally)
                 )
 
-                Slider(
+                // 和播放页「倍速与音调」用同一条滑条：简洁风格是白圆点 + 细轨，
+                // 换主题风格时外观自动跟着变（见 MiuixSettingsSlider 里的两套实现）
+                MiuixSettingsSlider(
                     value = sliderValue,
-                    onValueChange = { sliderValue = (it / 5f).toInt() * 5f },
+                    onValueChange = { sliderValue = ((it / 5f).toInt() * 5f).toFloat() },
                     valueRange = 5f..120f,
                     steps = 22,
                     modifier = Modifier.fillMaxWidth()
@@ -163,8 +213,13 @@ fun SleepTimerDialog(
                 // 其他模式
                 Text(
                     text = stringResource(CoreCommonR.string.sleep_timer_other_modes),
+                    modifier = Modifier.fillMaxWidth(),
                     style = MaterialTheme.typography.titleSmall,
-                    color = if (NeriDesign.isClean) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary
+                    color = if (NeriDesign.isClean) {
+                        MaterialTheme.colorScheme.onSurface
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    }
                 )
 
                 OutlinedButton(
@@ -199,21 +254,6 @@ fun SleepTimerDialog(
                     Text(stringResource(CoreCommonR.string.sleep_timer_finish_playlist))
                 }
             }
-        },
-        confirmButton = {
-            if (timerState.isActive) {
-                TextButton(onClick = {
-                    PlayerManager.sleepTimerManager.cancel()
-                    onDismiss()
-                }) {
-                    Text(stringResource(CoreCommonR.string.sleep_timer_cancel))
-                }
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(CoreCommonR.string.sleep_timer_close))
-            }
         }
-    )
+    }
 }

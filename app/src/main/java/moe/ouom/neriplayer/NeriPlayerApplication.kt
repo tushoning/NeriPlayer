@@ -206,7 +206,10 @@ class NeriPlayerApplication : Application(), WorkConfiguration.Provider {
             YouTubeMusicUiGatewayInitializer.initialize()
 
             // 长期不开 App 时没有任何前台流程会去续期, 靠这个周期任务把会话保活
-            YouTubeAuthRotationWorker.schedulePeriodicRotation(this)
+            // 排任务要碰 WorkManager 的数据库, 放到后台线程, 别挡住首帧
+            AppContainer.launchBackgroundIo {
+                YouTubeAuthRotationWorker.schedulePeriodicRotation(this@NeriPlayerApplication)
+            }
 
             // 初始化全局下载管理器
             GlobalDownloadManager.initialize(this)

@@ -36,11 +36,21 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusTarget
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalView
+import moe.ouom.neriplayer.ui.component.navigation.TvTopBarFocus
+import kotlinx.coroutines.delay
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -67,6 +77,9 @@ import moe.ouom.neriplayer.data.local.media.displayArtist
 import moe.ouom.neriplayer.data.local.media.displayName
 import moe.ouom.neriplayer.navigation.Destinations
 import moe.ouom.neriplayer.ui.component.navigation.NeriBottomBar
+import moe.ouom.neriplayer.ui.component.navigation.NeriTvTopBar
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.tvDirectionKeyGate
 import moe.ouom.neriplayer.ui.component.navigation.resolveBottomBarSelectionAlpha
 import moe.ouom.neriplayer.ui.component.playback.NeriMiniPlayer
 import moe.ouom.neriplayer.ui.component.playback.NeriMiniPlayerDefaults
@@ -101,22 +114,6 @@ internal data class AppBottomBarPresentation(
     val hasCustomBackground: Boolean get() = backgroundImageUri != null
 }
 
-internal data class AppMiniPlayerPresentation(
-    val song: SongItem?,
-    val coverUrl: String?,
-    val visualCoverUrl: String?,
-    val songVisualKey: String?,
-    val visualCoverSongKey: String?,
-    val enableBlur: Boolean
-) {
-    val hasSong: Boolean get() = song != null
-
-    fun title(resources: Resources): String =
-        if (song == null) resources.getString(CoreCommonR.string.nowplaying_no_playback) else song.displayName()
-
-    fun artist(): String = if (song == null) "" else song.displayArtist()
-}
-
 internal fun shouldShowMiniPlayer(hasSong: Boolean, showNowPlaying: Boolean): Boolean =
     hasSong && !showNowPlaying
 
@@ -145,33 +142,56 @@ internal fun appSnackbarStartInset(useNavigationRail: Boolean, playbackOverlayVi
 private fun positiveBottomBarHeight(nextHeight: Int, previousHeight: Int): Int =
     if (nextHeight > 0) nextHeight else previousHeight
 
+/**
+ * 电视上焦点整个丢失后，等这么久再把光标拉回顶部标签栏。
+ * 留出这段时间是让 Compose 自己的焦点重分配（列表项回收、页面切换）先完成。
+ */
+private const val TV_FOCUS_RESTORE_DEBOUNCE_MS = 220L
+
 @Composable
 internal fun AppNavigationScaffold(
     bottomBar: AppBottomBarPresentation,
-    miniPlayer: AppMiniPlayerPresentation,
+    hasCurrentSong: Boolean,
+    isPlaying: Boolean,
     baseBlurRequested: Boolean,
     snackbarHostState: SnackbarHostState,
     onMainTabSelected: (String) -> Unit,
-    onExpandNowPlaying: () -> Unit,
-    onOpenCurrentPlaybackSource: (() -> Unit)? = null,
+    onOpenNowPlaying: () -> Unit,
+    onTabConfirm: (String) -> Unit = {},
     content: @Composable (BottomBarLayoutInsets) -> Unit
 ) {
     val configuration = LocalConfiguration.current
     val dragBoundsOwner = remember { AppDragBoundsOwner() }
     val yieldsToIme = cleanFloatingChromeYieldsToIme()
-    val miniPlayerReservesSpace = miniPlayer.hasSong && !yieldsToIme
-    val reservedMiniPlayerHeight = reservedMiniPlayerHeight(
-        miniPlayerReservesSpace,
-        bottomBar.showNowPlaying,
-        configuration.smallestScreenWidthDp
-    )
-    CompositionLocalProvider(LocalMiniPlayerHeight provides reservedMiniPlayerHeight) {
+    // 底部迷你播放条已经删掉，播放入口改为顶部标签栏的第一个格子
+    CompositionLocalProvider(LocalMiniPlayerHeight provides 0.dp) {
         AppFeedbackHostEffect(snackbarHostState)
-        BoxWithConstraints(Modifier.fillMaxSize()) {
-            val useNavigationRail = shouldUseAppNavigationRail(configuration.smallestScreenWidthDp, maxWidth)
+        // 电视机上底栏在滚动容器下面，遥控器永远走不到，改由顶部固定标签栏承担导航
+        val isTelevision = LocalIsTelevision.current
+        // 电视上这里**不做任何自动拉焦点**。
+        // 之前的实现会在失焦后「请求本页标签 → moveFocus(Down)」，效果是光标被
+        // 反复拽回页面第一个按钮（很多时候就是「正在播放」），按一下方向键就跳走。
+        // 现在只让页面自己决定落点：路由切换由 NeriApp 校准一次，控件消失由打开
+        // 该控件的页面自己把光标还回去。
+        BoxWithConstraints(Modifier.fillMaxSize().tvDirectionKeyGate()) {
+            val useNavigationRail =
+                !isTelevision && shouldUseAppNavigationRail(configuration.smallestScreenWidthDp, maxWidth)
             Scaffold(
                 containerColor = Color.Transparent,
                 contentColor = MaterialTheme.colorScheme.onSurface,
+                topBar = {
+                    if (isTelevision) {
+                        NeriTvTopBar(
+                            items = bottomBar.items,
+                            currentDestination = bottomBar.currentDestination,
+                            hasCurrentSong = hasCurrentSong,
+                            isPlaying = isPlaying,
+                            onItemSelected = { onMainTabSelected(it.route) },
+                            onOpenNowPlaying = onOpenNowPlaying,
+                            onTabConfirm = onTabConfirm
+                        )
+                    }
+                },
                 snackbarHost = {
                     NeriSnackbarHost(
                         hostState = snackbarHostState,
@@ -182,7 +202,7 @@ internal fun AppNavigationScaffold(
                     )
                 },
                 bottomBar = {
-                    if (!useNavigationRail) {
+                    if (!useNavigationRail && !isTelevision) {
                         AppScaffoldBottomBar(
                             bottomBar = bottomBar,
                             yieldsToIme = yieldsToIme,
@@ -192,43 +212,36 @@ internal fun AppNavigationScaffold(
                     }
                 }
             ) { innerPadding ->
-                // pages keep their bottom reserve while Now Playing covers them; dropping it made a
-                // list scrolled to its end jump as the player opened
-                val pageReservedMiniPlayerHeight = reservedMiniPlayerHeight(
-                    miniPlayerReservesSpace,
-                    showNowPlaying = false,
-                    configuration.smallestScreenWidthDp
-                )
                 val layoutInsets = resolveAppNavigationLayoutInsets(
                     useNavigationRail = useNavigationRail,
                     baseBlurRequested = baseBlurRequested,
                     bottomBarInset = innerPadding.calculateBottomPadding().coerceAtLeast(0.dp),
-                    reservedMiniPlayerHeight = pageReservedMiniPlayerHeight
+                    reservedMiniPlayerHeight = 0.dp
                 )
                 val dragBounds = dragBoundsOwner.visibleBounds(
-                    miniPlayer.hasSong,
+                    false,
                     bottomBar.showNowPlaying || yieldsToIme
                 )
                 CompositionLocalProvider(
                     LocalMiniPlayerHeight provides layoutInsets.screenBottomInset,
                     LocalMiniPlayerBoundsInRoot provides dragBounds.miniPlayer,
-                    LocalBottomTabBarBoundsInRoot provides dragBounds.bottomTabBar.takeUnless { useNavigationRail }
+                    LocalBottomTabBarBoundsInRoot provides dragBounds.bottomTabBar.takeUnless {
+                        useNavigationRail || isTelevision
+                    }
                 ) {
                     AppAdaptiveNavigationContent(
                         useNavigationRail = useNavigationRail,
                         showNowPlaying = bottomBar.showNowPlaying,
                         offlineMode = bottomBar.offlineMode,
                         railContent = { AppNavigationRail(bottomBar, onMainTabSelected) },
-                        modifier = Modifier.fillMaxSize()
+                        // 电视上标签栏占了顶部一条，页面内容整体下移，避免被它盖住
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(top = if (isTelevision) innerPadding.calculateTopPadding() else 0.dp)
                     ) {
                         AppManagedProcessingLayer(
                             layoutInsets = layoutInsets,
-                            miniPlayer = miniPlayer,
                             showNowPlaying = bottomBar.showNowPlaying,
-                            offlineMode = bottomBar.offlineMode,
-                            onExpandNowPlaying = onExpandNowPlaying,
-                            onOpenCurrentPlaybackSource = onOpenCurrentPlaybackSource,
-                            onMiniPlayerBoundsChanged = dragBoundsOwner::updateMiniPlayerBounds,
                             content = content
                         )
                     }
@@ -366,12 +379,7 @@ private fun rememberManagedProcessingBannerSession(): Pair<
 @Composable
 private fun AppManagedProcessingLayer(
     layoutInsets: BottomBarLayoutInsets,
-    miniPlayer: AppMiniPlayerPresentation,
     showNowPlaying: Boolean,
-    offlineMode: Boolean,
-    onExpandNowPlaying: () -> Unit,
-    onOpenCurrentPlaybackSource: (() -> Unit)?,
-    onMiniPlayerBoundsChanged: (Rect) -> Unit,
     content: @Composable (BottomBarLayoutInsets) -> Unit
 ) {
     val (owner, presentation) = rememberManagedProcessingBannerSession()
@@ -397,19 +405,9 @@ private fun AppManagedProcessingLayer(
     ) {
         AppManagedProcessingBanner(presentation, owner::collapse)
         Box(modifier = Modifier.fillMaxSize().clipToBounds()) {
-            // 页面和拖拽歌曲一起进入底栏模糊取样，播放器自身保持在取样层外
             AppDragOverlayHost(modifier = Modifier.fillMaxSize().then(contentCaptureModifier)) {
                 content(layoutInsets)
             }
-            AppMiniPlayerOverlay(
-                miniPlayer = miniPlayer,
-                showNowPlaying = showNowPlaying,
-                offlineMode = offlineMode,
-                bottomPadding = layoutInsets.miniPlayerBottomPadding,
-                onExpandNowPlaying = onExpandNowPlaying,
-                onOpenCurrentPlaybackSource = onOpenCurrentPlaybackSource,
-                onBoundsChanged = onMiniPlayerBoundsChanged
-            )
         }
     }
 }
@@ -458,111 +456,5 @@ private fun BoxScope.AppManagedProcessingBanner(
             interactive = presentation.visible,
             onCollapsedChange = onCollapsedChange
         )
-    }
-}
-
-private data class AppMiniPlayerPlaybackControls(
-    val playbackRequested: Boolean,
-    val playing: Boolean,
-    val usbPreparing: Boolean,
-    val routeMuted: Boolean
-)
-
-@Composable
-private fun rememberMiniPlayerPlaybackControls(): AppMiniPlayerPlaybackControls {
-    val playbackRequested by PlayerManager.playbackControlPlayingFlow.collectAsStateWithLifecycle()
-    val playing by PlayerManager.isPlayingFlow.collectAsStateWithLifecycle()
-    val usbPreparing by PlayerManager.usbExclusivePlaybackPreparingFlow.collectAsStateWithLifecycle()
-    val routeMuted by PlayerManager.audioRouteMuteSuppressedFlow.collectAsStateWithLifecycle()
-    return AppMiniPlayerPlaybackControls(
-        playbackRequested = playbackRequested,
-        playing = playing,
-        usbPreparing = usbPreparing,
-        routeMuted = routeMuted
-    )
-}
-
-@Composable
-private fun rememberAdaptiveMiniPlayerActions(
-    visible: Boolean,
-    offlineMode: Boolean,
-    onOpenCurrentPlaybackSource: (() -> Unit)?
-): MiniPlayerTabletControls? {
-    if (LocalConfiguration.current.smallestScreenWidthDp < PHONE_SMALLEST_SCREEN_WIDTH_DP) {
-        return null
-    }
-    return rememberMiniPlayerTabletActions(
-        visible = visible,
-        offlineMode = offlineMode,
-        onOpenCurrentPlaybackSource = onOpenCurrentPlaybackSource
-    )
-}
-
-@Composable
-private fun AppMiniPlayerOverlay(
-    miniPlayer: AppMiniPlayerPresentation,
-    showNowPlaying: Boolean,
-    offlineMode: Boolean,
-    bottomPadding: Dp,
-    onExpandNowPlaying: () -> Unit,
-    onOpenCurrentPlaybackSource: (() -> Unit)?,
-    onBoundsChanged: (Rect) -> Unit
-) {
-    val controls = rememberMiniPlayerPlaybackControls()
-    val resources = LocalResources.current
-    val miniPlayerVisible = floatingPlaybackChromeVisible(
-        requested = shouldShowMiniPlayer(miniPlayer.hasSong, showNowPlaying)
-    )
-    val tabletControls = rememberAdaptiveMiniPlayerActions(
-        visible = miniPlayerVisible,
-        offlineMode = offlineMode,
-        onOpenCurrentPlaybackSource = onOpenCurrentPlaybackSource
-    )
-    Box(modifier = Modifier.fillMaxSize()) {
-        AnimatedVisibility(
-            visible = miniPlayerVisible,
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(bottom = bottomPadding)
-                .zIndex(MINI_PLAYER_OVERLAY_Z_INDEX),
-            enter = slideInVertically(
-                animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
-                initialOffsetY = { it / 2 }
-            ) + fadeIn(animationSpec = tween(durationMillis = 180)),
-            exit = slideOutVertically(
-                animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
-                targetOffsetY = { it / 2 }
-            ) + fadeOut(animationSpec = tween(durationMillis = 120))
-        ) {
-            NeriMiniPlayer(
-                title = miniPlayer.title(resources),
-                artist = miniPlayer.artist(),
-                coverUrl = miniPlayer.coverUrl,
-                visualCoverUrl = miniPlayer.visualCoverUrl,
-                coverIdentityKey = miniPlayer.songVisualKey,
-                visualCoverIdentityKey = miniPlayer.visualCoverSongKey,
-                hasCurrentSong = miniPlayer.hasSong,
-                clearCover = miniPlayer.song.hasKnownEmptyLocalCover(),
-                isPlaying = controls.playbackRequested,
-                playPauseEnabled = !controls.usbPreparing,
-                modifier = Modifier.testTag("appMiniPlayer")
-                    .onGloballyPositioned { coordinates ->
-                        onBoundsChanged(coordinates.boundsInRoot())
-                    },
-                onPlayPause = { PlayerManager.togglePlayPause() },
-                onPrevious = { PlayerManager.previous() },
-                onNext = { PlayerManager.next() },
-                onExpand = onExpandNowPlaying,
-                enableBlur = miniPlayer.enableBlur,
-                offlineMode = offlineMode,
-                isPlaybackWaiting = resolvePlaybackWaiting(
-                    playbackRequested = controls.playbackRequested,
-                    isPlaying = controls.playing,
-                    usbPlaybackPreparing = controls.usbPreparing
-                ),
-                isAudioRouteMuted = controls.routeMuted,
-                tabletControls = tabletControls
-            )
-        }
     }
 }

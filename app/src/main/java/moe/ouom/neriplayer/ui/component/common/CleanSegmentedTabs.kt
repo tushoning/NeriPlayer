@@ -29,6 +29,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import moe.ouom.neriplayer.ui.tv.tvClampRowEnds
+import moe.ouom.neriplayer.ui.tv.tvFocusRing
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -77,7 +79,12 @@ fun CleanSegmentedTabs(
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
     maxFixedItems: Int = SEGMENTED_MAX_FIXED_ITEMS,
-    badged: (Int) -> Boolean = { false }
+    badged: (Int) -> Boolean = { false },
+    /**
+     * 电视上是否把焦点夹在这一行两端（默认夹：防止按左右跑到页面上别的地方）。
+     * 播放统计那一条要放行，焦点可以自由按左右相邻元素移动。
+     */
+    clampRowEnds: Boolean = true
 ) {
     if (labels.isEmpty()) return
     val density = LocalDensity.current
@@ -91,7 +98,15 @@ fun CleanSegmentedTabs(
         with(density) { labelHeight.toDp() } + (SegmentedInset + SegmentedLabelVerticalPadding) * 2
     )
     if (labels.size <= maxFixedItems) {
-        FixedSegmentedTabs(labels, selectedIndex, onSelected, modifier.padding(contentPadding), height, badged)
+        FixedSegmentedTabs(
+            labels = labels,
+            selectedIndex = selectedIndex,
+            onSelected = onSelected,
+            modifier = modifier.padding(contentPadding),
+            height = height,
+            badged = badged,
+            clampRowEnds = clampRowEnds
+        )
     } else {
         ScrollableCapsuleTabs(labels, selectedIndex, onSelected, modifier, contentPadding, height, badged)
     }
@@ -104,7 +119,8 @@ private fun FixedSegmentedTabs(
     onSelected: (Int) -> Unit,
     modifier: Modifier,
     height: Dp,
-    badged: (Int) -> Boolean
+    badged: (Int) -> Boolean,
+    clampRowEnds: Boolean
 ) {
     val colors = MaterialTheme.colorScheme
     val context = LocalContext.current
@@ -145,6 +161,16 @@ private fun FixedSegmentedTabs(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
+                        // 电视：这一行走到两端就停住，不要跳到上面的标签栏（调用方可关闭）
+                        .then(
+                            if (clampRowEnds) {
+                                Modifier.tvClampRowEnds(index, labels.lastIndex)
+                            } else {
+                                Modifier
+                            }
+                        )
+                        // 电视焦点框（这个分段控件原来 indication = null，完全没有焦点提示）
+                        .tvFocusRing(color = colors.primary)
                         .semantics {
                             role = Role.Tab
                             this.selected = selected

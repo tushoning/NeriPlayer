@@ -49,7 +49,9 @@ internal fun CommentComposer(
     onReply: (CommentReplyTarget?) -> Unit,
     onSend: () -> Unit,
     focusRequest: Int = 0,
-    compact: Boolean = false
+    compact: Boolean = false,
+    /** 电视：评论行上按右键时 +1，光标直接跳到这个输入框（和「回复某条」无关） */
+    jumpFocusRequest: Int = 0
 ) {
     val source = ui.source ?: return
     val limit = source.platform.commentLengthLimit()
@@ -76,6 +78,14 @@ internal fun CommentComposer(
     }
     LaunchedEffect(ui.sendSucceeded) {
         if (ui.sendSucceeded) focusManager.clearFocus()
+    }
+    // 电视：评论行上按右键 → 光标落到输入框（不区分是不是回复某条）
+    val handledJump = remember { mutableIntStateOf(0) }
+    LaunchedEffect(jumpFocusRequest) {
+        if (jumpFocusRequest <= handledJump.intValue) return@LaunchedEffect
+        withFrameNanos { }
+        runCatching { focusRequester.requestFocus() }
+        handledJump.intValue = jumpFocusRequest
     }
     Column(Modifier.fillMaxWidth().testTag("comment-composer")
         .padding(horizontal = 16.dp, vertical = if (compact) 4.dp else 8.dp),

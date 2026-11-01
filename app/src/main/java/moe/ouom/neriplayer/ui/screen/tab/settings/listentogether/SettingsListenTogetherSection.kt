@@ -126,6 +126,7 @@ private fun SettingsListenTogetherIdentityItem(controller: SettingsListenTogethe
     )
 }
 
+@Composable
 private fun Modifier.listenTogetherRoomActionModifier(isInRoom: Boolean, onClick: () -> Unit): Modifier =
     if (isInRoom) this.alpha(0.5f) else this.settingsItemClickable(onClick = onClick)
 

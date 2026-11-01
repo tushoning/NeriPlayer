@@ -7,6 +7,11 @@
         android:name="android.hardware.usb.host"
         android:required="false" />
 
+    <!-- 电视/盒子没有触摸屏，声明为非必需，否则部分电视商店会判定不兼容 -->
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false" />
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -67,6 +72,8 @@
                 <action android:name="android.intent.action.MAIN" />
 
                 <category android:name="android.intent.category.LAUNCHER" />
+                <!-- 让应用出现在 Android TV 桌面（Leanback Launcher）里 -->
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
             <meta-data
                 android:name="android.app.shortcuts"

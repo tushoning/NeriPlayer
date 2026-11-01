@@ -27,8 +27,13 @@ import android.os.Build
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material.ripple.RippleAlpha
 import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LocalRippleConfiguration
+import androidx.compose.material3.RippleConfiguration
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
@@ -38,16 +43,25 @@ import androidx.compose.material3.Typography
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import moe.ouom.neriplayer.data.model.settings.appearance.UiStyle
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.CleanTvRingRadius
+import moe.ouom.neriplayer.ui.tv.DefaultTvRingRadius
+import moe.ouom.neriplayer.ui.tv.TvFocusIndication
+import moe.ouom.neriplayer.ui.tv.TvMinimalBringIntoViewSpec
+import moe.ouom.neriplayer.ui.tv.TvPerf
+import moe.ouom.neriplayer.ui.tv.rememberIsTelevision
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.core.graphics.toColorInt
 import com.materialkolor.PaletteStyle
 import com.materialkolor.dynamiccolor.ColorSpec
@@ -63,6 +77,7 @@ internal val LocalNeriTargetColorScheme = staticCompositionLocalOf {
     lightColorScheme()
 }
 
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun NeriTheme(
     followSystemDark: Boolean,
@@ -109,9 +124,11 @@ fun NeriTheme(
             accentColorScheme
         }
     }
-    val colorScheme = if (animateColors) {
+    val colorScheme = if (animateColors && !rememberIsTelevision()) {
         animateColorScheme(targetColorScheme)
     } else {
+        // 电视上不做整套配色的逐帧插值：冷启动和切歌都要把几十个颜色槽各跑一遍动画，
+        // 弱 SoC 上纯属浪费
         targetColorScheme
     }
     val baseTokens = neriDesignTokensFor(uiStyle)
@@ -133,8 +150,51 @@ fun NeriTheme(
             val materialIndication = LocalIndication.current
             val highlight = rememberUpdatedState(colorScheme.onSurface)
             val cleanIndication = remember { CleanPressIndication(highlight) }
+            // 电视上没有触摸屏，必须让焦点可见，否则遥控器无法判断当前选中项
+            val isTelevision = rememberIsTelevision()
+            val density = LocalDensity.current
+            val tvRingColor = rememberUpdatedState(colorScheme.primary)
+            // 焦点环圆角跟随 app 自己的卡片圆角，避免切线跟底板对不上
+            // 卡片绝大多数是 12dp 圆角，环写 16dp 会比卡片圆一圈，看着就是「框和边没对齐」
+            val tvRingRadius = if (uiStyle == UiStyle.Clean) CleanTvRingRadius else DefaultTvRingRadius
+            val tvIndication = remember(tvRingRadius) {
+                TvFocusIndication(tvRingColor, cornerRadius = tvRingRadius)
+            }
+            // 电视上关掉所有装饰性动效（标签切换、页面进出场），只保留播放页动画
+            SideEffect { TvPerf.reduceMotion = isTelevision }
+            // Material3 的组件（Surface/Card/Button/列表项）内部硬写 ripple()，不读 LocalIndication，
+            // 所以额外把 ripple 的焦点态叠加强化，否则电视上看不出光标停在哪
+            val tvRipple = remember(colorScheme.primary) {
+                RippleConfiguration(
+                    color = colorScheme.primary,
+                    rippleAlpha = RippleAlpha(
+                        draggedAlpha = 0.20f,
+                        focusedAlpha = 0.34f,
+                        hoveredAlpha = 0.10f,
+                        pressedAlpha = 0.28f
+                    )
+                )
+            }
             CompositionLocalProvider(
-                LocalIndication provides if (uiStyle == UiStyle.Clean) cleanIndication else materialIndication,
+                LocalIndication provides when {
+                    isTelevision -> tvIndication
+                    uiStyle == UiStyle.Clean -> cleanIndication
+                    else -> materialIndication
+                },
+                LocalIsTelevision provides isTelevision,
+                LocalRippleConfiguration provides if (isTelevision) tvRipple else null,
+                // 电视上把「焦点滚进可视区」改成最小滚动。
+                // 系统默认在 leanback 设备上用的是 Pivot 规范（把焦点项拽到视口中间），
+                // 那正是「焦点框钉在第三格 / 卡片往回挪」的根源。
+                LocalBringIntoViewSpec provides if (isTelevision) {
+                    // 多留 12dp：卡片滚动停住时会被推进屏幕内部一段，
+                    // 外扩的焦点环不再贴着视口边缘被裁掉
+                    remember(density) {
+                        TvMinimalBringIntoViewSpec(with(density) { TvFocusScrollMargin.toPx() })
+                    }
+                } else {
+                    LocalBringIntoViewSpec.current
+                },
                 content = content
             )
         }
@@ -142,6 +202,9 @@ fun NeriTheme(
 }
 
 private const val AchromaticSeedChromaThreshold = 0.06f
+
+/** 电视上焦点滚动时额外留出的边距：卡片会被推进屏幕内部这么多，外扩的环不会被裁（24 太远，减半） */
+private val TvFocusScrollMargin = 12.dp
 
 internal fun isAchromaticSeed(seed: Color): Boolean {
     val maxChannel = maxOf(seed.red, seed.green, seed.blue)

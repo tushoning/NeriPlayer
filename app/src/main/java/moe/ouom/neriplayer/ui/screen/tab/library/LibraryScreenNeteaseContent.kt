@@ -24,6 +24,7 @@ package moe.ouom.neriplayer.ui.screen.tab.library
  */
 
 import moe.ouom.neriplayer.ui.component.common.NeriSearchFieldGlass
+import moe.ouom.neriplayer.ui.component.common.rememberTvTextFieldIme
 import moe.ouom.neriplayer.ui.theme.neriSearchFieldColors
 import moe.ouom.neriplayer.ui.theme.neriSearchFieldShape
 import androidx.compose.ui.graphics.Shape
@@ -59,6 +60,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -71,6 +73,8 @@ import moe.ouom.neriplayer.common.R as CoreCommonR
 import moe.ouom.neriplayer.ui.navigation.LocalMiniPlayerHeight
 import moe.ouom.neriplayer.ui.viewmodel.tab.AlbumSummary
 import moe.ouom.neriplayer.ui.viewmodel.tab.PlaylistSummary
+import moe.ouom.neriplayer.ui.tv.tvClampLeft
+import moe.ouom.neriplayer.ui.tv.tvBringIntoViewOnFocus
 import moe.ouom.neriplayer.util.format.formatPlayCount
 import moe.ouom.neriplayer.util.media.offlineCachedImageRequest
 import moe.ouom.neriplayer.R as AppR
@@ -112,8 +116,8 @@ internal fun NeteaseLibraryList(
     LazyColumn(
         state = listState,
         contentPadding = PaddingValues(
-            start = 8.dp,
-            end = 8.dp,
+            start = pageSidePaddingOr(8.dp),
+            end = pageSidePaddingOr(8.dp),
             top = 8.dp,
             bottom = 8.dp + miniPlayerHeight
         ),
@@ -288,6 +292,9 @@ internal fun NeteasePlaylistRow(
         modifier = Modifier
             .padding(horizontal = 8.dp, vertical = 4.dp)
             .clip(cardShape)
+            // 整行占满宽度：按左会一路跑到上面的「最近播放/本地」标签上
+            .tvClampLeft()
+            .tvBringIntoViewOnFocus()
             .clickable(onClick = onClick)
     ) {
         ListItem(
@@ -338,6 +345,9 @@ internal fun NeteaseAlbumRow(
         modifier = Modifier
             .padding(horizontal = 8.dp, vertical = 4.dp)
             .clip(cardShape)
+            // 整行占满宽度：按左会一路跑到上面的「最近播放/本地」标签上
+            .tvClampLeft()
+            .tvBringIntoViewOnFocus()
             .clickable(onClick = onClick)
     ) {
         ListItem(
@@ -392,7 +402,7 @@ internal fun NeteaseAlbumList(
     val cardShape = neriRoundedShape(12.dp)
     LazyColumn(
         state = listState,
-        contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 8.dp + miniPlayerHeight),
+        contentPadding = PaddingValues(start = pageSidePaddingOr(8.dp), end = pageSidePaddingOr(8.dp), top = 8.dp, bottom = 8.dp + miniPlayerHeight),
         verticalArrangement = Arrangement.spacedBy(4.dp),
         modifier = Modifier.fillMaxSize()
     ) {
@@ -403,6 +413,7 @@ internal fun NeteaseAlbumList(
             )
         }
         item(key = "netease_album_search") {
+            val searchIme = rememberTvTextFieldIme()
             NeriSearchFieldGlass(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -412,7 +423,10 @@ internal fun NeteaseAlbumList(
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                modifier = Modifier.fillMaxWidth(),
+                readOnly = searchIme.readOnly,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(searchIme.modifier),
                 placeholder = { Text(stringResource(CoreCommonR.string.library_netease_search_hint)) },
                 singleLine = true,
                 shape = neriSearchFieldShape(LibrarySearchFieldShape),

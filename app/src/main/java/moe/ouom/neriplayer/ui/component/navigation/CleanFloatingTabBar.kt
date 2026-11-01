@@ -63,6 +63,8 @@ import moe.ouom.neriplayer.ui.effect.glass.AdvancedGlassRole
 import moe.ouom.neriplayer.ui.effect.glass.AdvancedGlassSurface
 import moe.ouom.neriplayer.ui.haptic.performHapticFeedback
 import moe.ouom.neriplayer.ui.theme.LocalHasCustomBackground
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.tvFocusRing
 import kotlin.math.roundToInt
 
 private val FloatingBarHeight = 64.dp
@@ -84,6 +86,7 @@ internal fun CleanFloatingTabBar(
 ) {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
+    val isTelevision = LocalIsTelevision.current
     val dark = colors.surface.luminance() < 0.5f
     val overBackground = LocalHasCustomBackground.current
     val selectedIndex = items.indexOfFirst { (dest, _) ->
@@ -165,6 +168,17 @@ internal fun CleanFloatingTabBar(
                                 role = Role.Tab
                                 this.selected = selected
                             }
+                            .then(
+                                if (isTelevision) {
+                                    Modifier.tvFocusRing(
+                                        color = colors.primary,
+                                        cornerRadius = 26.dp,
+                                        strokeWidth = 2.dp
+                                    )
+                                } else {
+                                    Modifier
+                                }
+                            )
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null

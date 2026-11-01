@@ -48,6 +48,8 @@ import moe.ouom.neriplayer.data.model.comments.CommentQuote
 import moe.ouom.neriplayer.data.model.comments.CommentReplyTarget
 import moe.ouom.neriplayer.data.model.comments.SongComment
 import moe.ouom.neriplayer.ui.haptic.HapticTextButton
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.theme.CleanDesignTokens
 import moe.ouom.neriplayer.ui.theme.NeriDesign
 import moe.ouom.neriplayer.ui.theme.cleanTintedAccent
 import moe.ouom.neriplayer.util.format.formatPlayCount
@@ -79,7 +81,13 @@ internal fun CommentActionBox(
     replyEnabled: Boolean,
     onReply: (CommentReplyTarget) -> Unit,
     modifier: Modifier = Modifier,
-    shape: Shape = if (NeriDesign.isClean) NeriDesign.tokens.cardShape else MaterialTheme.shapes.extraLarge,
+    // 电视统一按「简洁风格」的卡片圆角。这里才是真正生效的那一处：
+    // 下面 Box 用 clip(shape) 包住整行，焦点环画在里面，会被这个圆角裁出来。
+    shape: Shape = if (NeriDesign.isClean || LocalIsTelevision.current) {
+        CleanDesignTokens.cardShape
+    } else {
+        MaterialTheme.shapes.extraLarge
+    },
     showReplyAction: Boolean = true,
     content: @Composable () -> Unit
 ) {

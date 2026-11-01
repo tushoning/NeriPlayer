@@ -71,6 +71,7 @@ import moe.ouom.neriplayer.ui.screen.tab.home.HomeScreen
 import moe.ouom.neriplayer.ui.effect.glass.AdvancedGlassSceneMotion
 import moe.ouom.neriplayer.ui.effect.glass.advancedGlassHostNavigationTransition
 import moe.ouom.neriplayer.ui.effect.glass.animateAdvancedGlassSceneMotion
+import moe.ouom.neriplayer.ui.component.navigation.TvTopBarFocus
 import moe.ouom.neriplayer.ui.navigation.animateMainTabDetailCloseRootRevealFraction
 import moe.ouom.neriplayer.ui.navigation.clipMainTabDetailCloseRoot
 import moe.ouom.neriplayer.ui.navigation.rememberMainTabSceneRestoredEntry
@@ -481,7 +482,9 @@ fun HomeHostScreen(
                                             playlistId = entry.playlistId,
                                             subtype = entry.subtype,
                                             subtitle = entry.subtitle,
-                                            updateLastOpened = false
+                                            // 再从「继续播放」点进去也要把这张卡提到最前面，
+                                            // 之前传 false，结果只有新出现的歌单才会排到前面
+                                            updateLastOpened = true
                                         )
                                     }
                                     openRecent(entry, context, ::openHomeSelectedItem)

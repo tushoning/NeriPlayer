@@ -24,6 +24,7 @@ package moe.ouom.neriplayer.ui.screen.tab.library
  */
 
 import moe.ouom.neriplayer.ui.component.common.NeriSearchFieldGlass
+import moe.ouom.neriplayer.ui.component.common.rememberTvTextFieldIme
 import moe.ouom.neriplayer.ui.component.common.CleanSearchField
 import moe.ouom.neriplayer.ui.theme.NeriDesign
 import moe.ouom.neriplayer.ui.theme.neriSearchFieldColors
@@ -35,8 +36,13 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -85,6 +91,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
@@ -120,6 +127,12 @@ import moe.ouom.neriplayer.data.local.media.displayArtist
 import moe.ouom.neriplayer.data.local.media.displayName
 import moe.ouom.neriplayer.ui.navigation.LocalMiniPlayerHeight
 import moe.ouom.neriplayer.ui.util.rememberPlaylistDisplayCoverUrl
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.tvBringIntoViewOnFocus
+import moe.ouom.neriplayer.ui.tv.rememberTvMenuFirstItemFocus
+import moe.ouom.neriplayer.ui.tv.rememberTvRowMenuKeyState
+import moe.ouom.neriplayer.ui.tv.tvRowMenuKeyPress
+import moe.ouom.neriplayer.ui.tv.TvRowMenuKeyEffect
 import moe.ouom.neriplayer.util.media.fastScrollableImageRequest
 import moe.ouom.neriplayer.ui.haptic.HapticIconButton
 import moe.ouom.neriplayer.ui.haptic.HapticTextButton
@@ -127,6 +140,9 @@ import moe.ouom.neriplayer.ui.screen.playlist.reorder.LocalPlaylistReorderableIt
 import moe.ouom.neriplayer.ui.screen.playlist.reorder.localPlaylistDetectReorder
 import moe.ouom.neriplayer.ui.screen.playlist.reorder.localPlaylistReorderable
 import moe.ouom.neriplayer.ui.screen.playlist.reorder.rememberLocalPlaylistReorderState
+import moe.ouom.neriplayer.ui.screen.tab.home.ContinueStyleCardSpacingDp
+import moe.ouom.neriplayer.ui.screen.tab.home.ContinueStyleHorizontalInsetDp
+import moe.ouom.neriplayer.ui.screen.tab.home.resolveContinueStyleColumns
 import moe.ouom.neriplayer.ui.screen.tab.settings.miuix.MiuixSettingsButton
 import moe.ouom.neriplayer.ui.screen.tab.settings.miuix.MiuixSettingsDialog
 import moe.ouom.neriplayer.ui.screen.tab.settings.miuix.MiuixSettingsDialogContent
@@ -318,8 +334,20 @@ internal fun LocalPlaylistList(
         }
     }
     val windowWidthDp = currentWindowWidthDp()
-    val localArtistColumnCount = remember(windowWidthDp) {
-        ((windowWidthDp.value - 16f + 10f) / 130f).toInt().coerceAtLeast(1)
+    val isTelevision = LocalIsTelevision.current
+    // 电视：卡片大小 / 间距都按首页「继续播放」那一档来。
+    // 左右多留 ContinueStyleHorizontalInsetDp，卡片左右边缘就和继续播放那一行对齐；
+    // 列数用同一个公式反算，单格宽度自然和继续播放卡片完全相等。
+    val localGridSidePadding = pageSidePaddingOr(8.dp) +
+        (if (isTelevision) ContinueStyleHorizontalInsetDp else 0.dp)
+    val localGridSpacing = if (isTelevision) ContinueStyleCardSpacingDp else 10.dp
+    val localArtistColumnCount = remember(windowWidthDp, isTelevision, localGridSidePadding) {
+        if (isTelevision) {
+            resolveContinueStyleColumns((windowWidthDp - localGridSidePadding * 2).value)
+                .coerceAtLeast(1)
+        } else {
+            ((windowWidthDp.value - 16f + 10f) / 130f).toInt().coerceAtLeast(1)
+        }
     }
     val localArtistRows = remember(displayedLocalArtists, localArtistColumnCount) {
         displayedLocalArtists.orEmpty().chunked(localArtistColumnCount)
@@ -329,8 +357,8 @@ internal fun LocalPlaylistList(
     LazyColumn(
         state = reorderState.listState,
         contentPadding = PaddingValues(
-            start = 8.dp,
-            end = 8.dp,
+            start = localGridSidePadding,
+            end = localGridSidePadding,
             top = 8.dp,
             bottom = 8.dp + miniPlayerHeight
         ),
@@ -388,7 +416,7 @@ internal fun LocalPlaylistList(
                 key = { row -> row.joinToString(separator = "|") { artist -> artist.stableKey } }
             ) { rowArtists ->
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(localGridSpacing),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 5.dp)
@@ -592,6 +620,40 @@ internal fun LocalPlaylistList(
             }
         }
 
+        if (isTelevision) {
+            item(key = "local_playlist_grid") {
+                val tvCards = ArrayList<LocalPlaylist>().apply {
+                    displayedFavoritesPlaylist?.let { add(it) }
+                    displayedLocalFilesPlaylist?.let { add(it) }
+                    addAll(displayedPlaylists)
+                }
+                Column(Modifier.fillMaxWidth()) {
+                    tvCards.chunked(localArtistColumnCount).forEach { rowCards ->
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(localGridSpacing),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 5.dp)
+                        ) {
+                            rowCards.forEach { pl ->
+                                Box(modifier = Modifier.weight(1f)) {
+                                    LocalPlaylistGridCard(
+                                        playlist = pl,
+                                        onClick = { if (!selectionMode) onClick(pl) },
+                                        onRename = { name -> onRename(pl.id, name) },
+                                        onDelete = { onDelete(listOf(pl.id)) },
+                                        offlineMode = offlineMode
+                                    )
+                                }
+                            }
+                            repeat(localArtistColumnCount - rowCards.size) {
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
         displayedFavoritesPlaylist?.let { system ->
             item(key = "local_playlist_favorites") {
                 val displayName = SystemLocalPlaylists.resolve(system.id, system.name, context)?.currentName ?: system.name
@@ -602,13 +664,14 @@ internal fun LocalPlaylistList(
                     ),
                     elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                     modifier = Modifier
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                        .clip(cardShape)
-                        .combinedClickable(
-                            onClick = {
-                                if (!selectionMode) onClick(system)
-                            }
-                        )
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .clip(cardShape)
+                    .tvBringIntoViewOnFocus()
+                    .combinedClickable(
+                        onClick = {
+                            if (!selectionMode) onClick(system)
+                        }
+                    )
                 ) {
                     ListItem(
                         headlineContent = {
@@ -690,6 +753,8 @@ internal fun LocalPlaylistList(
                 var showRenameDialog by remember { mutableStateOf(false) }
                 var showDeleteDialog by remember { mutableStateOf(false) }
                 var renameText by remember { mutableStateOf(pl.name.take(maxNameLength)) }
+                // 电视：遥控器菜单键直接弹出本行菜单（三个点不好聚焦）
+                val menuKeyState = rememberTvRowMenuKeyState()
 
                 if (selectionMode && showMenu) showMenu = false
 
@@ -706,6 +771,8 @@ internal fun LocalPlaylistList(
                             scaleY = rowScale
                         }
                         .clip(cardShape)
+                        .tvBringIntoViewOnFocus()
+                        .tvRowMenuKeyPress(menuKeyState)
                         .combinedClickable(
                             onClick = {
                                 if (selectionMode) {
@@ -794,6 +861,8 @@ internal fun LocalPlaylistList(
                                 }
                             } else if (!selectionMode && !isSystemPlaylist) {
                                 Box {
+                                    TvRowMenuKeyEffect(state = menuKeyState) { showMenu = true }
+                                    val firstMenuFocus = rememberTvMenuFirstItemFocus(showMenu)
                                     HapticIconButton(onClick = { showMenu = true }) {
                                         Icon(
                                             imageVector = Icons.Filled.MoreVert,
@@ -806,6 +875,7 @@ internal fun LocalPlaylistList(
                                     ) {
                                         DropdownMenuItem(
                                             text = { Text(stringResource(CoreCommonR.string.action_rename)) },
+                                            modifier = Modifier.focusRequester(firstMenuFocus),
                                             onClick = {
                                                 showMenu = false
                                                 renameText = pl.name.take(maxNameLength)
@@ -896,13 +966,14 @@ internal fun LocalPlaylistList(
                     ),
                     elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                     modifier = Modifier
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                        .clip(cardShape)
-                        .combinedClickable(
-                            onClick = {
-                                if (!selectionMode) onClick(system)
-                            }
-                        )
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .clip(cardShape)
+                    .tvBringIntoViewOnFocus()
+                    .combinedClickable(
+                        onClick = {
+                            if (!selectionMode) onClick(system)
+                        }
+                    )
                 ) {
                     ListItem(
                         headlineContent = {
@@ -959,7 +1030,199 @@ internal fun LocalPlaylistList(
                 }
             }
         }
+        }
     }
+    }
+}
+
+/**
+ * 电视上的歌单小卡：和「歌手」标签里的歌手卡片同一套版式（正方形封面 + 名称 + 数量）。
+ * 原来是一整行的 ListItem，跟歌手页放一起看着完全不是同一种东西。
+ * 菜单键（遥控器）打开重命名/删除，和原来的三点菜单一致。
+ */
+@Composable
+private fun LocalPlaylistGridCard(
+    playlist: LocalPlaylist,
+    onClick: () -> Unit,
+    onRename: (String) -> Unit,
+    onDelete: () -> Unit,
+    offlineMode: Boolean
+) {
+    val context = LocalContext.current
+    val systemPlaylist = SystemLocalPlaylists.resolve(playlist.id, playlist.name, context)
+    val displayName = systemPlaylist?.currentName ?: playlist.name
+    val isSystemPlaylist = systemPlaylist != null
+    val maxNameLength = LocalPlaylistRepository.MAX_PLAYLIST_NAME_LENGTH
+
+    var showMenu by remember { mutableStateOf(false) }
+    var showRenameDialog by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    var renameText by remember { mutableStateOf(playlist.name.take(maxNameLength)) }
+    val menuKeyState = rememberTvRowMenuKeyState()
+    TvRowMenuKeyEffect(state = menuKeyState) { if (!isSystemPlaylist) showMenu = true }
+    val firstMenuFocus = rememberTvMenuFirstItemFocus(showMenu)
+    // 和首页「继续播放」卡片同一套焦点框：8dp 圆角 + 外扩 4dp（卡片尺寸不变）
+    val tvRingIndication = rememberTvFocusRingIndication(8.dp, outset = 4.dp)
+        ?: LocalIndication.current
+
+    Column(
+        modifier = Modifier
+            .tvBringIntoViewOnFocus()
+            .tvRowMenuKeyPress(menuKeyState)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = tvRingIndication,
+                onClick = onClick
+            )
+            // 裁剪放在 clickable 之后，否则会把外扩的焦点环一起切掉
+            .clip(neriRoundedShape(12.dp))
+    ) {
+        val cover = rememberPlaylistDisplayCoverUrl(
+            playlist = playlist,
+            resolveLocalFallback = true
+        )
+        if (!cover.isNullOrEmpty()) {
+            AsyncImage(
+                model = fastScrollableImageRequest(
+                    context = context,
+                    data = cover,
+                    sizePx = 384,
+                    offlineMode = offlineMode
+                ),
+                contentDescription = displayName,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .clip(neriRoundedShape(12.dp))
+            )
+        } else {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .clip(neriRoundedShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.QueueMusic,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(48.dp)
+                )
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(top = 6.dp, start = 4.dp, end = 4.dp, bottom = 4.dp)
+            ) {
+                Text(
+                    text = displayName,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Text(
+                    text = pluralStringResource(
+                        AppR.plurals.library_song_count,
+                        playlist.songs.size,
+                        playlist.songs.size
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
+                )
+            }
+            if (!isSystemPlaylist) {
+                Box {
+                    HapticIconButton(onClick = { showMenu = true }) {
+                        Icon(
+                            imageVector = Icons.Filled.MoreVert,
+                            contentDescription = stringResource(CoreCommonR.string.common_more_options)
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = showMenu,
+                        onDismissRequest = { showMenu = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(CoreCommonR.string.action_rename)) },
+                            modifier = Modifier.focusRequester(firstMenuFocus),
+                            onClick = {
+                                showMenu = false
+                                renameText = playlist.name.take(maxNameLength)
+                                showRenameDialog = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(CoreCommonR.string.action_delete)) },
+                            onClick = {
+                                showMenu = false
+                                showDeleteDialog = true
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (showRenameDialog) {
+        MiuixSettingsDialog(
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text(stringResource(CoreCommonR.string.action_rename)) },
+            text = {
+                MiuixSettingsDialogContent(verticalSpacing = 12.dp) {
+                    MiuixSettingsTextField(
+                        value = renameText,
+                        onValueChange = { renameText = it.take(maxNameLength) },
+                        placeholder = { Text(displayName) },
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                MiuixSettingsButton(
+                    onClick = {
+                        val trimmed = renameText.trim().take(maxNameLength)
+                        if (trimmed.isNotBlank()) {
+                            onRename(trimmed)
+                            showRenameDialog = false
+                        }
+                    },
+                    enabled = renameText.trim().isNotBlank()
+                ) { Text(stringResource(CoreCommonR.string.action_confirm)) }
+            },
+            dismissButton = {
+                MiuixSettingsTextButton(onClick = { showRenameDialog = false }) {
+                    Text(stringResource(CoreCommonR.string.action_cancel))
+                }
+            }
+        )
+    }
+
+    if (showDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            title = { Text(stringResource(CoreCommonR.string.action_delete)) },
+            text = {
+                Text(stringResource(CoreCommonR.string.library_delete_playlist_confirm, displayName))
+            },
+            confirmButton = {
+                HapticTextButton(onClick = {
+                    showDeleteDialog = false
+                    onDelete()
+                }) { Text(stringResource(CoreCommonR.string.action_delete)) }
+            },
+            dismissButton = {
+                HapticTextButton(onClick = { showDeleteDialog = false }) {
+                    Text(stringResource(CoreCommonR.string.action_cancel))
+                }
+            }
+        )
     }
 }
 
@@ -1007,6 +1270,9 @@ internal fun LocalArtistSearchAndSortRow(
     onSortModeChange: (LocalArtistSortMode) -> Unit
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    // 右边还有一个排序按钮（三个点）：只放行右键，左键留在原地
+    // （左键放行会穿到页面最左边外面，焦点飞走）
+    val artistSearchIme = rememberTvTextFieldIme(swallowLeft = true, swallowRight = false)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1018,6 +1284,8 @@ internal fun LocalArtistSearchAndSortRow(
                 query = query,
                 onQueryChange = onQueryChange,
                 placeholder = stringResource(CoreCommonR.string.library_local_artist_search_hint),
+                // 右边还有排序三点：右键要能过去（和下方 Material 分支一致）
+                swallowRight = false,
                 modifier = Modifier.weight(1f)
             )
         } else NeriSearchFieldGlass(
@@ -1027,7 +1295,10 @@ internal fun LocalArtistSearchAndSortRow(
         OutlinedTextField(
             value = query,
             onValueChange = onQueryChange,
-            modifier = Modifier.fillMaxWidth(),
+            readOnly = artistSearchIme.readOnly,
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(artistSearchIme.modifier),
             placeholder = { Text(stringResource(CoreCommonR.string.library_local_artist_search_hint)) },
             singleLine = true,
             shape = neriSearchFieldShape(LibrarySearchFieldShape),
@@ -1134,6 +1405,8 @@ internal fun LibraryInlineSearchField(
     onQueryChange: (String) -> Unit,
     placeholderResId: Int
 ) {
+    // 电视上不放搜索框（遥控器输入文字太费劲，用户要求去掉）
+    if (LocalIsTelevision.current) return
     if (NeriDesign.isClean) {
         CleanSearchField(
             query = query,

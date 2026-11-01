@@ -2,6 +2,7 @@ package moe.ouom.neriplayer.ui.screen.artist
 
 import moe.ouom.neriplayer.ui.i18n.asString
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
+import moe.ouom.neriplayer.ui.tv.tvScrollToTopOnUp
 import android.app.Application
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -60,6 +61,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -91,6 +93,12 @@ import moe.ouom.neriplayer.ui.theme.NeriDesign
 import moe.ouom.neriplayer.util.media.offlineCachedImageRequest
 import moe.ouom.neriplayer.R as AppR
 
+import androidx.compose.runtime.remember
+import moe.ouom.neriplayer.ui.tv.rememberTvInitialFocus
+import moe.ouom.neriplayer.ui.tv.tvInitialFocus
+import moe.ouom.neriplayer.ui.tv.tvTrapFocus
+
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NeteaseArtistDetailScreen(
@@ -101,6 +109,7 @@ fun NeteaseArtistDetailScreen(
     offlineMode: Boolean = false
 ) {
     val context = LocalContext.current
+    val tvInitialFocus = rememberTvInitialFocus()
     val viewModel: NeteaseArtistDetailViewModel = viewModel(
         key = "netease_artist_detail_view_model_${artist.id}",
         factory = viewModelFactory {
@@ -118,14 +127,14 @@ fun NeteaseArtistDetailScreen(
         LazyListState(firstVisibleItemIndex = 0, firstVisibleItemScrollOffset = 0)
     }
     val listState = if (selectedTab == 0) songsListState else albumsListState
-
     LaunchedEffect(artist.id) {
         viewModel.start(artist)
     }
 
-    Surface(modifier = Modifier.fillMaxSize(), color = Color.Transparent) {
+    Surface(modifier = Modifier.fillMaxSize().tvTrapFocus(), color = Color.Transparent) {
         Column(modifier = Modifier.fillMaxSize()) {
             TopAppBar(
+                modifier = Modifier.padding(horizontal = pageSidePaddingOr(0.dp)),
                 title = {
                     Text(
                         text = ui.header?.name ?: artist.name,
@@ -134,7 +143,12 @@ fun NeteaseArtistDetailScreen(
                     )
                 },
                 navigationIcon = {
-                    HapticIconButton(onClick = onBack) {
+                    HapticIconButton(
+                        onClick = onBack,
+                        // 电视：从播放页跳进来时这一页没人要焦点，遥控器直接失灵。
+                        // 进来先把光标放到返回键上。
+                        modifier = Modifier.tvInitialFocus(tvInitialFocus)
+                    ) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = stringResource(CoreCommonR.string.cd_back)
@@ -232,8 +246,8 @@ internal fun NeteaseArtistDetailContent(
                             state = listState,
                             modifier = Modifier.weight(1f).fillMaxWidth(),
                             contentPadding = PaddingValues(
-                                start = 16.dp,
-                                end = 16.dp,
+                                start = pageSidePaddingOr(16.dp),
+                                end = pageSidePaddingOr(16.dp),
                                 bottom = 16.dp
                             ),
                             verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -260,8 +274,8 @@ internal fun NeteaseArtistDetailContent(
                     .fillMaxSize()
                     .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)),
                 contentPadding = PaddingValues(
-                    start = 20.dp,
-                    end = 20.dp,
+                    start = pageSidePaddingOr(20.dp),
+                    end = pageSidePaddingOr(20.dp),
                     top = 4.dp,
                     bottom = 40.dp + miniPlayerHeight
                 ),
@@ -285,7 +299,13 @@ internal fun NeteaseArtistDetailContent(
                     onAlbumClick = onAlbumClick,
                     offlineMode = offlineMode,
                     tabs = {
-                        ArtistWorkTabs(selectedTab = selectedTab, onTabSelected = onTabSelected)
+                        ArtistWorkTabs(
+                            selectedTab = selectedTab,
+                            onTabSelected = onTabSelected,
+                            // 头图不是可聚焦节点：在标签行按上先滚到顶（头图完整露出），
+                            // 滚到头了才交给方向搜索往顶栏走
+                            modifier = Modifier.tvScrollToTopOnUp(listState)
+                        )
                     }
                 )
             }

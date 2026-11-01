@@ -45,6 +45,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -122,6 +123,7 @@ internal fun TextLogFileListScreen(
         },
         topBar = {
             TopAppBar(
+                modifier = Modifier.padding(horizontal = pageSidePaddingOr(0.dp)),
                 title = { Text(stringResource(titleRes)) },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent,
@@ -241,8 +243,8 @@ private fun TextLogFileList(
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(
-            start = 16.dp,
-            end = 16.dp,
+            start = pageSidePaddingOr(16.dp),
+            end = pageSidePaddingOr(16.dp),
             top = padding.calculateTopPadding() + 8.dp,
             bottom = padding.calculateBottomPadding() + LocalMiniPlayerHeight.current + 24.dp
         )

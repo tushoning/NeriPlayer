@@ -45,6 +45,7 @@ import androidx.compose.material3.*
 import moe.ouom.neriplayer.ui.component.overlay.DensityScaledAlertDialog as AlertDialog
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -637,6 +638,7 @@ fun DownloadProgressScreen(
     ) {
         // 顶部栏
         TopAppBar(
+            modifier = Modifier.padding(horizontal = pageSidePaddingOr(0.dp)),
             title = {
                 Column {
                     Text(
@@ -741,8 +743,8 @@ fun DownloadProgressScreen(
                     state = listState,
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = PaddingValues(
-                        start = 16.dp,
-                        end = 16.dp,
+                        start = pageSidePaddingOr(16.dp),
+                        end = pageSidePaddingOr(16.dp),
                         top = 16.dp,
                         bottom = 16.dp + miniPlayerHeight
                     )

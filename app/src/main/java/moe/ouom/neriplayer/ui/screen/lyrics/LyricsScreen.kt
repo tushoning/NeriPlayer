@@ -106,6 +106,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -130,6 +131,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.unit.Constraints
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
@@ -182,6 +187,7 @@ import moe.ouom.neriplayer.util.format.formatDuration
 import moe.ouom.neriplayer.util.media.offlineCachedImageRequest
 import moe.ouom.neriplayer.ui.haptic.performHapticFeedback
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -196,7 +202,8 @@ import moe.ouom.neriplayer.ui.screen.nowplaying.MoreOptionsSheet
 import moe.ouom.neriplayer.ui.screen.nowplaying.MoreOptionsSheetNavigation
 import moe.ouom.neriplayer.ui.screen.nowplaying.NowPlayingFavoriteIconColor
 import moe.ouom.neriplayer.ui.screen.nowplaying.NowPlayingQueueSheet
-import moe.ouom.neriplayer.ui.screen.nowplaying.VolumeControlSheetContent
+import moe.ouom.neriplayer.ui.screen.nowplaying.NowPlayingSpeedPitchIcon
+import moe.ouom.neriplayer.ui.screen.nowplaying.NowPlayingSpeedPitchSheet
 import moe.ouom.neriplayer.ui.screen.playback.nextFavoriteStateAfterTap
 import moe.ouom.neriplayer.ui.screen.playback.resolveLyricPreviewTimeMs
 import moe.ouom.neriplayer.ui.screen.playback.shouldReleaseLyricSeekPreview
@@ -209,6 +216,9 @@ import moe.ouom.neriplayer.ui.screen.nowplaying.cover.nowPlayingLyricsCoverFligh
 import moe.ouom.neriplayer.ui.screen.nowplaying.cover.resolveNowPlayingLyricsToolbarAction
 import moe.ouom.neriplayer.ui.viewmodel.NowPlayingViewModel
 import moe.ouom.neriplayer.R as AppR
+import moe.ouom.neriplayer.ui.tv.TvRestoreFocusWhenClosed
+import moe.ouom.neriplayer.ui.tv.rememberTvInitialFocus
+import moe.ouom.neriplayer.ui.tv.tvInitialFocus
 
 private const val LyricsSwipeBackThresholdPx = 50f
 
@@ -341,6 +351,10 @@ fun LyricsScreen(
     var showSongNameMenu by remember { mutableStateOf(false) }
     var showArtistMenu by remember { mutableStateOf(false) }
     var showMoreOptions by remember { mutableStateOf(false) }
+    // 电视：电视上的「更多」是页面内覆盖层，关掉时里面的按钮节点直接销毁，
+    // 光标会掉空 —— 记住入口按钮，关掉之后把焦点还回去。
+    val moreOptionsFocusRequester = remember { FocusRequester() }
+    TvRestoreFocusWhenClosed(showMoreOptions, moreOptionsFocusRequester)
     var startMoreOptionsWithLyricBehavior by remember { mutableStateOf(false) }
     var detailSong by remember { mutableStateOf<SongItem?>(null) }
     var pendingSyncConfirmAction by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -373,7 +387,7 @@ fun LyricsScreen(
     val baseSecondaryControlSize = if (isTabletLandscape) 46.dp else 42.dp
     val lyricsTopActionButtonSize = lyricsControlSize.scaleButtonSize(48.dp)
     val lyricsTopActionIconSize = lyricsControlSize.scaleIconSize(24.dp)
-    val lyricsTopBarHeight = maxOf(56.dp, lyricsTopActionButtonSize)
+    val lyricsTopBarHeight = maxOf(64.dp, lyricsTopActionButtonSize)
     val toolbarIconSize = lyricsControlSize.scaleIconSize(baseToolbarIconSize)
     val toolbarMinimumTouchTarget = lyricsControlSize.scaleButtonSize(48.dp)
     val primaryControlSize = lyricsControlSize.scaleButtonSize(basePrimaryControlSize)
@@ -425,9 +439,9 @@ fun LyricsScreen(
         animationSpec = spring(dampingRatio = 0.8f),
         label = "cover_scale"
     )
-    // 垂直偏移控制在标题栏内 (约-8dp) , 避免飞出界面
+    // 垂直偏移控制在标题栏内，避免飞出界面；歌词模式下不再额外上抬
     val coverOffsetY = animateFloatAsState(
-        targetValue = if (isLyricsMode) -8f else 0f,
+        targetValue = 0f,
         animationSpec = spring(dampingRatio = 0.8f),
         label = "cover_offset_y"
     )
@@ -460,6 +474,9 @@ fun LyricsScreen(
                 .testTag("lyricsScreenContent"),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+        // 电视：进到歌词整页时系统不会自动把光标交给里面任何一个控件，
+        // 主动送到中间的播放键（最常用，且方向键从它上下左右都能扩散出去）。
+        val lyricsTvInitialFocus = rememberTvInitialFocus()
         // 顶部区域 - 包含缩小的封面 + 收藏 + 更多
         Row(
             modifier = Modifier
@@ -503,105 +520,34 @@ fun LyricsScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.width(8.dp))
-
-            // 封面 - 紧邻返回键, 缩小时约48dp
-            Box(
-                modifier = Modifier
-                    .size((64 * coverScale.value).dp)
-                    .then(
-                        if (coverFlight != null) {
-                            Modifier.nowPlayingLyricsCoverFlightEndpoint(
-                                coverFlight, coverScale, coverOffsetY
-                            )
-                        } else if (sharedTransitionScope != null && animatedContentScope != null) {
-                            with(sharedTransitionScope) {
-                                Modifier.sharedElement(
-                                    rememberSharedContentState(
-                                        key = NowPlayingLyricsSharedTransitionElement.COVER.key
-                                    ),
-                                    boundsTransform = LocalNowPlayingLyricsBoundsTransform.current,
-                                    animatedVisibilityScope = animatedContentScope
-                                )
-                            }
-                        } else Modifier
-                    )
-                    .graphicsLayer { translationY = coverOffsetY.value }
-                    .clip(RoundedCornerShape(10.dp))
-            ) {
-                if (coverArtwork != null) {
-                    // 两端共用已解码封面，避免共享层接管时等待新的图片请求
-                    coverArtwork(Modifier.fillMaxSize())
-                } else currentCoverUrl?.let { cover ->
-                    AsyncImage(
-                        model = remember(context, cover, offlineMode) {
-                            offlineCachedImageRequest(
-                                context = context,
-                                data = cover,
-                                sizePx = 192,
-                                allowHardware = false,
-                                offlineMode = offlineMode
-                            )
-                        },
-                        contentDescription = currentSong?.displayName() ?: "",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.width(10.dp))
-
-            // 标题区始终占用剩余空间, 避免挤出边界
-            Column(
+            // 封面 + 歌名 + 歌手名：整组水平居中
+            Row(
                 modifier = Modifier.weight(1f),
-                horizontalAlignment = Alignment.Start
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                BoxWithConstraints {
-                    NowPlayingSongTitle(
-                        text = currentSong?.displayName() ?: stringResource(CoreCommonR.string.lyrics_unknown_song),
-                        marqueeEnabled = nowPlayingSongTitleMarqueeEnabled,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = LocalNeriTargetColorScheme.current.onSurface,
+                // 右侧是「收藏 + 更多」两个按钮、左侧只有返回键，
+                // 补一个按钮宽度的空白，让中间这组相对整行居中而不是偏左
+                Spacer(modifier = Modifier.width(lyricsTopActionButtonSize))
+
+                // 封面 - 紧贴歌名左侧
+                CenteredLyricsHeader(
+                    modifier = Modifier.fillMaxWidth(),
+                    gap = 10.dp,
+                    cover = {
+                    Box(
                         modifier = Modifier
-                            .widthIn(max = maxWidth)
-                            .clip(RoundedCornerShape(6.dp))
-                            .combinedClickable(
-                                onClick = {},
-                                onLongClick = { showSongNameMenu = true }
-                            )
-                    )
-                    DropdownMenu(
-                        expanded = showSongNameMenu,
-                        onDismissRequest = { showSongNameMenu = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(CoreCommonR.string.action_copy_song_name)) },
-                            onClick = {
-                                currentSong?.displayName()?.let { text ->
-                                    scope.launch {
-                                        clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("text", text)))
-                                    }
-                                }
-                                showSongNameMenu = false
-                            }
-                        )
-                    }
-                }
-                Box {
-                    Text(
-                        text = currentSong?.displayArtist() ?: stringResource(CoreCommonR.string.lyrics_unknown_artist),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
+                            .size((92 * coverScale.value).dp)
                             .then(
-                                if (sharedTransitionScope != null && animatedContentScope != null) {
+                                if (coverFlight != null) {
+                                    Modifier.nowPlayingLyricsCoverFlightEndpoint(
+                                        coverFlight, coverScale, coverOffsetY
+                                    )
+                                } else if (sharedTransitionScope != null && animatedContentScope != null) {
                                     with(sharedTransitionScope) {
                                         Modifier.sharedElement(
                                             rememberSharedContentState(
-                                                key = NowPlayingLyricsSharedTransitionElement.ARTIST.key
+                                                key = NowPlayingLyricsSharedTransitionElement.COVER.key
                                             ),
                                             boundsTransform = LocalNowPlayingLyricsBoundsTransform.current,
                                             animatedVisibilityScope = animatedContentScope
@@ -609,29 +555,115 @@ fun LyricsScreen(
                                     }
                                 } else Modifier
                             )
-                            .clip(RoundedCornerShape(6.dp))
-                            .combinedClickable(
-                                onClick = onOpenCurrentArtist,
-                                onLongClick = { showArtistMenu = true }
-                            )
-                    )
-                    DropdownMenu(
-                        expanded = showArtistMenu,
-                        onDismissRequest = { showArtistMenu = false }
+                            .graphicsLayer { translationY = coverOffsetY.value }
+                            .clip(RoundedCornerShape(10.dp))
                     ) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(CoreCommonR.string.action_copy_artist)) },
-                            onClick = {
-                                currentSong?.displayArtist()?.let { text ->
-                                    scope.launch {
-                                        clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("text", text)))
-                                    }
-                                }
-                                showArtistMenu = false
-                            }
-                        )
+                        if (coverArtwork != null) {
+                            // 两端共用已解码封面，避免共享层接管时等待新的图片请求
+                            coverArtwork(Modifier.fillMaxSize())
+                        } else currentCoverUrl?.let { cover ->
+                            AsyncImage(
+                                model = remember(context, cover, offlineMode) {
+                                    offlineCachedImageRequest(
+                                        context = context,
+                                        data = cover,
+                                        sizePx = 192,
+                                        allowHardware = false,
+                                        offlineMode = offlineMode
+                                    )
+                                },
+                                contentDescription = currentSong?.displayName() ?: "",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
                     }
-                }
+
+                    Spacer(modifier = Modifier.width(8.dp))
+                    },
+                    title = {
+                    // 标题区始终占用剩余空间, 避免挤出边界
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        BoxWithConstraints {
+                            NowPlayingSongTitle(
+                                text = currentSong?.displayName() ?: stringResource(CoreCommonR.string.lyrics_unknown_song),
+                                marqueeEnabled = nowPlayingSongTitleMarqueeEnabled,
+                                style = MaterialTheme.typography.titleLarge,
+                                color = LocalNeriTargetColorScheme.current.onSurface,
+                                modifier = Modifier
+                                    .widthIn(max = maxWidth)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .combinedClickable(
+                                        onClick = {},
+                                        onLongClick = { showSongNameMenu = true }
+                                    )
+                            )
+                            DropdownMenu(
+                                expanded = showSongNameMenu,
+                                onDismissRequest = { showSongNameMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(CoreCommonR.string.action_copy_song_name)) },
+                                    onClick = {
+                                        currentSong?.displayName()?.let { text ->
+                                            scope.launch {
+                                                clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("text", text)))
+                                            }
+                                        }
+                                        showSongNameMenu = false
+                                    }
+                                )
+                            }
+                        }
+                        Box {
+                            Text(
+                                text = currentSong?.displayArtist() ?: stringResource(CoreCommonR.string.lyrics_unknown_artist),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .then(
+                                        if (sharedTransitionScope != null && animatedContentScope != null) {
+                                            with(sharedTransitionScope) {
+                                                Modifier.sharedElement(
+                                                    rememberSharedContentState(
+                                                        key = NowPlayingLyricsSharedTransitionElement.ARTIST.key
+                                                    ),
+                                                    boundsTransform = LocalNowPlayingLyricsBoundsTransform.current,
+                                                    animatedVisibilityScope = animatedContentScope
+                                                )
+                                            }
+                                        } else Modifier
+                                    )
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .combinedClickable(
+                                        onClick = onOpenCurrentArtist,
+                                        onLongClick = { showArtistMenu = true }
+                                    )
+                            )
+                            DropdownMenu(
+                                expanded = showArtistMenu,
+                                onDismissRequest = { showArtistMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(CoreCommonR.string.action_copy_artist)) },
+                                    onClick = {
+                                        currentSong?.displayArtist()?.let { text ->
+                                            scope.launch {
+                                                clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("text", text)))
+                                            }
+                                        }
+                                        showArtistMenu = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    }
+                )
             }
 
             // 收藏按钮 (与 NowPlaying 保持一致的逻辑)
@@ -699,7 +731,9 @@ fun LyricsScreen(
                     startMoreOptionsWithLyricBehavior = false
                     showMoreOptions = true
                 },
-                modifier = Modifier.size(lyricsTopActionButtonSize)
+                modifier = Modifier
+                    .focusRequester(moreOptionsFocusRequester)
+                    .size(lyricsTopActionButtonSize)
                     .then(
                         if (sharedTransitionScope != null && animatedContentScope != null) {
                             with(sharedTransitionScope) {
@@ -718,41 +752,6 @@ fun LyricsScreen(
                     Icons.Filled.MoreVert,
                     contentDescription = stringResource(CoreCommonR.string.lyrics_more_options),
                     modifier = Modifier.size(lyricsTopActionIconSize)
-                )
-            }
-            if (showMoreOptions && currentSong != null) {
-                val queue by PlayerManager.currentQueueFlow.collectAsStateWithLifecycle()
-                val displayedQueue = remember(queue) { queue }
-                val nowPlayingViewModel: NowPlayingViewModel = viewModel()
-                MoreOptionsSheet(
-                    viewModel = nowPlayingViewModel,
-                    originalSong = currentSong!!,
-                    queue = displayedQueue,
-                    lyricContent = MoreOptionsLyricContent(
-                        lyrics = lyrics,
-                        translatedLyrics = translatedLyrics.orEmpty(),
-                        hasTranslation = hasTranslation,
-                        hasPhonetic = hasPhonetic
-                    ),
-                    navigation = MoreOptionsSheetNavigation(
-                        onDismiss = {
-                            showMoreOptions = false
-                            requestedSecondaryMode = null
-                        },
-                        onShowSongDetails = { detailSong = it },
-                        onEnterAlbum = onEnterAlbum,
-                        onNavigateUp = onExitNowPlaying,
-                        startWithLyricBehavior = startMoreOptionsWithLyricBehavior
-                    ),
-                    snackbarHostState = snackbarHostState,
-                    fontSettings = MoreOptionsFontSettings(
-                        page = LyricFontScalePage.LYRICS,
-                        scales = lyricFontScales,
-                        onChange = onLyricFontScaleChange
-                    ),
-                    biliClient = AppContainer.biliClient,
-                    currentPlaybackAudioInfo = null,
-                    offlineMode = false
                 )
             }
         }
@@ -997,6 +996,7 @@ fun LyricsScreen(
                     onClick = { PlayerManager.togglePlayPause() },
                     enabled = !usbPlaybackPreparing,
                     modifier = Modifier
+                        .tvInitialFocus(lyricsTvInitialFocus)
                         .then(
                             if (sharedTransitionScope != null && animatedContentScope != null) {
                                 with(sharedTransitionScope) {
@@ -1146,19 +1146,10 @@ fun LyricsScreen(
                 )
             }
 
-            // 音量按钮 (根据设备显示不同图标, 居中)
+            // 倍速与音调（原来是「选择扬声器」，和播放页左侧工具栏保持一致）
             val context = LocalContext.current
-            val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
-            val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-            val audioDeviceIcon = remember(devices) {
-                when {
-                    devices.any { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP } -> Icons.Default.Headset
-                    devices.any { it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET || it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES } -> Icons.Default.Headset
-                    else -> Icons.Default.SpeakerGroup
-                }
-            }
-            var showVolumeSheet by remember { mutableStateOf(false) }
-            HapticIconButton(onClick = { showVolumeSheet = true },
+            var showSpeedPitchSheet by remember { mutableStateOf(false) }
+            HapticIconButton(onClick = { showSpeedPitchSheet = true },
                 modifier = toolbarActionModifier.then(
                     if (sharedTransitionScope != null && animatedContentScope != null) {
                         with(sharedTransitionScope) {
@@ -1173,8 +1164,8 @@ fun LyricsScreen(
                     } else Modifier
                 )) {
                 Icon(
-                    audioDeviceIcon,
-                    contentDescription = stringResource(CoreCommonR.string.cd_audio_device),
+                    NowPlayingSpeedPitchIcon,
+                    contentDescription = "倍速与音调",
                     modifier = Modifier.size(toolbarLayout.iconSize)
                 )
             }
@@ -1254,14 +1245,11 @@ fun LyricsScreen(
                 )
             }
 
-            // 音量控制弹窗
-            if (showVolumeSheet) {
-                DensityScaledModalBottomSheet(
-                    onDismissRequest = { showVolumeSheet = false },
-                    sheetGesturesEnabled = false
-                ) {
-                    VolumeControlSheetContent()
-                }
+            // 倍速与音调面板
+            if (showSpeedPitchSheet) {
+                NowPlayingSpeedPitchSheet(
+                    onDismiss = { showSpeedPitchSheet = false }
+                )
             }
 
             // 播放队列弹窗
@@ -1327,6 +1315,44 @@ fun LyricsScreen(
         }
             }
         }
+        }
+
+        // 这一层是页面内的覆盖层（不是独立窗口），必须挂在页面根部：
+        // 之前它被放在标题那一行 Row 里，尺寸被行高和剩余宽度挤成一条黑框。
+        if (showMoreOptions && currentSong != null) {
+            val queue by PlayerManager.currentQueueFlow.collectAsStateWithLifecycle()
+            val displayedQueue = remember(queue) { queue }
+            val nowPlayingViewModel: NowPlayingViewModel = viewModel()
+            MoreOptionsSheet(
+                viewModel = nowPlayingViewModel,
+                originalSong = currentSong!!,
+                queue = displayedQueue,
+                lyricContent = MoreOptionsLyricContent(
+                    lyrics = lyrics,
+                    translatedLyrics = translatedLyrics.orEmpty(),
+                    hasTranslation = hasTranslation,
+                    hasPhonetic = hasPhonetic
+                ),
+                navigation = MoreOptionsSheetNavigation(
+                    onDismiss = {
+                        showMoreOptions = false
+                        requestedSecondaryMode = null
+                    },
+                    onShowSongDetails = { detailSong = it },
+                    onEnterAlbum = onEnterAlbum,
+                    onNavigateUp = onExitNowPlaying,
+                    startWithLyricBehavior = startMoreOptionsWithLyricBehavior
+                ),
+                snackbarHostState = snackbarHostState,
+                fontSettings = MoreOptionsFontSettings(
+                    page = LyricFontScalePage.LYRICS,
+                    scales = lyricFontScales,
+                    onChange = onLyricFontScaleChange
+                ),
+                biliClient = AppContainer.biliClient,
+                currentPlaybackAudioInfo = null,
+                offlineMode = false
+            )
         }
 
         NeriOverlaySnackbarHost(hostState = snackbarHostState)
@@ -1625,5 +1651,37 @@ private fun LyricsProgressSection(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+/**
+ * 歌词页顶部：歌名 / 歌手名 这一列相对整行水平居中，封面紧贴它的左侧。
+ *
+ * 不用 Row + Arrangement.Center —— 那样封面会参与居中计算，文字整体被推到中心右侧。
+ * 这里先按文字自身宽度居中，再把封面摆到「文字左边界 - 间距 - 封面宽」的位置。
+ */
+@Composable
+private fun CenteredLyricsHeader(
+    cover: @Composable () -> Unit,
+    title: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+    gap: Dp = 10.dp
+) {
+    Layout(
+        contents = listOf(cover, title),
+        modifier = modifier
+    ) { measurables, constraints ->
+        val coverPlaceable = measurables[0].first().measure(Constraints())
+        val titlePlaceable = measurables[1].first().measure(
+            constraints.copy(minWidth = 0, maxWidth = constraints.maxWidth)
+        )
+        val width = constraints.maxWidth
+        val height = maxOf(coverPlaceable.height, titlePlaceable.height)
+        layout(width, height) {
+            val titleX = ((width - titlePlaceable.width) / 2).coerceAtLeast(0)
+            titlePlaceable.placeRelative(titleX, (height - titlePlaceable.height) / 2)
+            val coverX = (titleX - gap.roundToPx() - coverPlaceable.width).coerceAtLeast(0)
+            coverPlaceable.placeRelative(coverX, (height - coverPlaceable.height) / 2)
+        }
     }
 }

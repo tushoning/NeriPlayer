@@ -57,4 +57,5 @@
     <string name="home_bili_music_source_upload">Uploaded video · %1$s</string>
     <string name="home_bili_music_source_note">The chart lists the original artists; playback prefers the official MV and falls back to the chart\'s authorized upload</string>
     <string name="home_bili_music_open_original">Open original video</string>
+    <string name="action_copy_video_link">Copy video link</string>
 </resources>

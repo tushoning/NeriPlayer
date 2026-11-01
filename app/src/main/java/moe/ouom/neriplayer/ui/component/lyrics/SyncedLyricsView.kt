@@ -114,6 +114,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.withFrameNanos
 import moe.ouom.neriplayer.ui.animation.AMBIENT_ANIMATION_FRAME_INTERVAL_NANOS
 import moe.ouom.neriplayer.ui.animation.isNewAmbientFrameSlot
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 
 private const val LYRIC_TIME_SMOOTHING_DURATION_MS = 96
 private const val LYRIC_TIME_SMOOTHING_MAX_DELTA_MS = 180L
@@ -718,18 +719,23 @@ fun SyncedLyricsView(
 
     val shouldUseClearText = isUserInteracting ||
         shouldHoldLyricViewportForManualScroll(manualClearHoldIndex, currentIndex)
-    val handleLyricClick: ((LyricEntry) -> Unit)? = onLyricClick?.let { callback ->
-        { line ->
-            manualClearHoldIndex = null
-            callback(line)
+    // 电视上没有触摸，歌词行既不该能聚焦（否则方向键会停在一行歌词上），
+    // 也不该响应点击 seek 和长按菜单——把回调摘掉，combinedClickable 会连带禁用并退出焦点树
+    val tvLyricsInert = LocalIsTelevision.current
+    val handleLyricClick: ((LyricEntry) -> Unit)? =
+        if (tvLyricsInert) null else onLyricClick?.let { callback ->
+            { line ->
+                manualClearHoldIndex = null
+                callback(line)
+            }
         }
-    }
-    val handleLyricLongClick: ((LyricEntry) -> Unit)? = onLyricLongClick?.let { callback ->
-        { line ->
-            manualClearHoldIndex = null
-            callback(line)
+    val handleLyricLongClick: ((LyricEntry) -> Unit)? =
+        if (tvLyricsInert) null else onLyricLongClick?.let { callback ->
+            { line ->
+                manualClearHoldIndex = null
+                callback(line)
+            }
         }
-    }
 
     BoxWithConstraints(
         modifier = modifier.fillMaxSize(),

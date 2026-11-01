@@ -1,6 +1,10 @@
 package moe.ouom.neriplayer.ui.screen.tab.settings.auth
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.remember
+import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -166,8 +170,17 @@ internal fun SettingsAccountCardSurface(
     content: @Composable BoxScope.() -> Unit
 ) {
     val cardShape = RoundedCornerShape(24.dp)
+    // 电视焦点框：圆角跟卡片一致（以前用默认指示器，是个直角框，还会被 clip 切掉）
+    val tvRingIndication = rememberTvFocusRingIndication(24.dp, cleanRadiusBoost = 0.dp) ?: LocalIndication.current
     val interactionModifier = if (onClick != null) {
-        Modifier.clip(cardShape).clickable(onClick = onClick)
+        Modifier
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = tvRingIndication,
+                onClick = onClick
+            )
+            // 裁剪放在 clickable 之后，否则会把焦点环一起切掉
+            .clip(cardShape)
     } else Modifier
     Surface(
         modifier = modifier.fillMaxWidth().then(interactionModifier),

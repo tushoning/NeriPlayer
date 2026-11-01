@@ -13,6 +13,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.navigation.NavBackStackEntry
 import moe.ouom.neriplayer.navigation.Destinations
+import moe.ouom.neriplayer.ui.tv.TvPerf
 import moe.ouom.neriplayer.ui.effect.glass.DRAWER_BACKGROUND_SINK_FRACTION
 import moe.ouom.neriplayer.ui.effect.glass.DRAWER_RECESSED_CONTENT_SCALE
 import kotlin.collections.get
@@ -76,10 +77,14 @@ internal fun shouldUseInstantBiliUploaderPlaylistTransition(
             targetRoute == Destinations.BiliUploaderDetail.route)
 }
 
-internal const val MAIN_TAB_DETAIL_OPEN_DURATION_MS = 220
-internal const val MAIN_TAB_DETAIL_CLOSE_DURATION_MS = 240
-internal const val DRAWER_DETAIL_OPEN_DURATION_MS = 300
-internal const val DRAWER_DETAIL_CLOSE_DURATION_MS = 280
+// 电视上关掉转场：这些动画纯装饰，在电视 SoC 上只会让操作反馈变慢
+private fun motionDuration(normalMs: Int): Int =
+    if (TvPerf.reduceMotion) 0 else normalMs
+
+internal val MAIN_TAB_DETAIL_OPEN_DURATION_MS: Int get() = motionDuration(220)
+internal val MAIN_TAB_DETAIL_CLOSE_DURATION_MS: Int get() = motionDuration(240)
+internal val DRAWER_DETAIL_OPEN_DURATION_MS: Int get() = motionDuration(300)
+internal val DRAWER_DETAIL_CLOSE_DURATION_MS: Int get() = motionDuration(280)
 
 private const val DRAWER_ROOT_RETAIN_ALPHA = 0.999f
 internal const val DEBUG_NAVIGATION_OPEN_DURATION_MS = 220

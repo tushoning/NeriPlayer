@@ -27,16 +27,20 @@ import moe.ouom.neriplayer.data.identity.stableKey
 import android.app.Application
 import android.net.Uri
 import android.os.Build
+import android.os.SystemClock
 import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -60,7 +64,9 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -122,6 +128,9 @@ import moe.ouom.neriplayer.data.model.settings.appearance.ThemePreferenceSnapsho
 import moe.ouom.neriplayer.data.settings.appearance.isCurrentBuildDimensity
 import moe.ouom.neriplayer.data.settings.playback.readPlaybackPreferenceSnapshotCached
 import moe.ouom.neriplayer.navigation.Destinations
+import moe.ouom.neriplayer.ui.component.navigation.TvTopBarFocus
+import moe.ouom.neriplayer.ui.tv.rememberIsTelevision
+import moe.ouom.neriplayer.ui.tv.TvTabConfirmBus
 import moe.ouom.neriplayer.data.model.navigation.LauncherShortcutAction
 import moe.ouom.neriplayer.data.model.navigation.LauncherShortcutRequest
 import moe.ouom.neriplayer.navigation.launcherShortcutMainTabRoute
@@ -141,6 +150,7 @@ import moe.ouom.neriplayer.ui.screen.host.rememberHomeHostRuntimeState
 import moe.ouom.neriplayer.ui.screen.tab.home.shouldShowHomeContinueSection
 import moe.ouom.neriplayer.ui.screen.tab.home.rememberHomeUsageSnapshot
 import moe.ouom.neriplayer.ui.screen.tab.home.HomeContinueDiagnostics
+import moe.ouom.neriplayer.ui.screen.tab.home.HomeRefreshBus
 import moe.ouom.neriplayer.ui.theme.NeriTheme
 import moe.ouom.neriplayer.ui.theme.biasCoverSeedTowardBlue
 import moe.ouom.neriplayer.ui.theme.rememberActualSystemDarkTheme
@@ -169,7 +179,6 @@ import moe.ouom.neriplayer.ui.haptic.syncHapticFeedbackSetting
 import moe.ouom.neriplayer.ui.navigation.AppBottomBarPresentation
 import moe.ouom.neriplayer.ui.navigation.playbackSourceNavigationAction
 import moe.ouom.neriplayer.ui.navigation.shouldSuppressPlaybackNavigation
-import moe.ouom.neriplayer.ui.navigation.AppMiniPlayerPresentation
 import moe.ouom.neriplayer.ui.navigation.AppNavigationGraph
 import moe.ouom.neriplayer.ui.navigation.AppNavigationGraphOwner
 import moe.ouom.neriplayer.ui.navigation.AppNavigationGraphPresentation
@@ -183,6 +192,7 @@ import moe.ouom.neriplayer.ui.navigation.MainTabPredictiveBackHandler
 import moe.ouom.neriplayer.ui.navigation.biliPlaylistSourceRoute
 import moe.ouom.neriplayer.ui.navigation.biliUploaderSourceRoute
 import moe.ouom.neriplayer.ui.navigation.localPlaylistSourceRoute
+import moe.ouom.neriplayer.ui.navigation.MAIN_TAB_DETAIL_OPEN_DURATION_MS
 import moe.ouom.neriplayer.ui.navigation.mainTabDetailContentOffsetEasing
 import moe.ouom.neriplayer.ui.navigation.navigationGson
 import moe.ouom.neriplayer.ui.navigation.neteaseAlbumSourceRoute
@@ -238,6 +248,33 @@ import moe.ouom.neriplayer.R as AppR
 private val EmptyLauncherShortcutRequestFlow =
     MutableStateFlow<LauncherShortcutRequest?>(null)
 private const val LAUNCHER_SHORTCUT_PLAYLIST_READY_TIMEOUT_MS = 5000L
+/** 电视上「连按两次返回退出」的判定窗口 */
+private const val TV_EXIT_BACK_WINDOW_MS = 2000L
+/**
+ * 逐帧把光标稳到顶部标签栏的某个标签上，最多约 0.4 秒。
+ *
+ * 页面切换/返回时旧层的焦点节点正在被移除，Compose 会把焦点交给树里第一个可聚焦元素，
+ * 单次 requestFocus 经常被这次兜底覆盖，所以要「请求一次、看一帧、没到就再来」。
+ */
+private suspend fun settleTopBarFocusOn(route: String) {
+    repeat(24) {
+        // 用「标签栏里真的有焦点」来判定成功，不能只看 focusedTabRoute：
+        // 那个字段在层切换时会失同步（值对了但光标不在），会导致这里提前返回、
+        // 而屏幕上焦点框其实没跟过去。
+        if (TvTopBarFocus.barHasFocus && TvTopBarFocus.focusedTabRoute == route) return
+        TvTopBarFocus.requestTab(route)
+        withFrameNanos { }
+    }
+}
+
+
+/** 电视顶部标签栏对应的四个主页面路由 */
+private val TvMainTabRoutes: Set<String> = setOf(
+    Destinations.Home.route,
+    Destinations.Explore.route,
+    Destinations.Library.route,
+    Destinations.Settings.route
+)
 internal const val MAIN_TAB_LAYER_Z_INDEX = 0f
 internal const val NAV_HOST_LAYER_Z_INDEX = 1f
 internal const val MINI_PLAYER_OVERLAY_Z_INDEX = 2f
@@ -273,6 +310,24 @@ internal fun localPlaylistIdFromSourceRoute(sourceRoute: String?): Long? {
 }
 
 /**
+ * 播放页能直接跳进去的「详情页」路由。
+ *
+ * 播放页里点歌手名 / 专辑 / 歌单 / 播放来源 / 歌曲百科里的歌单和艺人，都会落到这些路由上。
+ * 从这里按下返回时应该回到播放页（而不是回到详情页下面那一层主页面），
+ * 由 [restoreNowPlayingAfterDetail] 那套逻辑负责。
+ */
+private val NowPlayingSourceDetailRoutes: Set<String> = setOf(
+    Destinations.NeteaseArtistDetail.route,
+    Destinations.NeteaseAlbumDetail.route,
+    Destinations.PlaylistDetail.route,
+    Destinations.BiliUploaderDetail.route,
+    Destinations.BiliPlaylistDetail.route,
+    Destinations.YouTubeMusicCreatorDetail.route,
+    Destinations.YouTubeMusicPlaylistDetail.route,
+    Destinations.LocalPlaylistDetail.route
+)
+
+/**
  * 应用主界面入口.
  *
  * @param initialThemeSnapshot 启动时同步读到的主题偏好, 让首帧就用正确的明暗与样式.
@@ -294,13 +349,20 @@ fun NeriApp(
     onGlobalDialogVisibilityChanged: (Boolean) -> Unit = {},
     canShowGlobalDialogs: Boolean = true
 ) {
+    // 电视：面板会吃掉屏幕最下面一小条（overscan），所有页面底部内容都被切掉一点。
+    // 在根上统一往上抬 24dp（= 48px，约屏高 4.4%，落在电视 overscan 安全区内）。
+    // 之前加到 40dp 是为了兜「焦点框贴底被裁」，后来定位到那问题是滚动中途行贴视口边，
+    // 已由滚动余量（TvFocusScrollMargin 12dp）解决，所以收回到 24dp。
+    val tvBottomSafeInset = if (LocalIsTelevision.current) 24.dp else 0.dp
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
         AppContentMountGate(
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(bottom = tvBottomSafeInset)
         ) {
             NeriAppContent(
                 initialThemeSnapshot = initialThemeSnapshot,
@@ -412,6 +474,11 @@ private fun NeriAppContent(
     var currentPlaybackSourceRoute by rememberSaveable { mutableStateOf<String?>(null) }
     var restoreLyricsAfterAlbumBack by rememberSaveable { mutableStateOf(false) }
     var lyricsAlbumRouteObserved by rememberSaveable { mutableStateOf(false) }
+    // 从播放页跳进歌手 / 专辑 / 歌单等详情页后，返回时要回到播放页，而不是退回下面那一层主页面。
+    // detailRouteObserved = 真的进过详情页（避免「点了但没跳成」也把播放页重新拉起来）。
+    var restoreNowPlayingAfterDetail by rememberSaveable { mutableStateOf(false) }
+    var nowPlayingDetailRouteObserved by rememberSaveable { mutableStateOf(false) }
+    var nowPlayingReturnRoute by rememberSaveable { mutableStateOf<String?>(null) }
     val devModeEnabled by repo.devModeEnabledFlow.collectAsStateWithLifecycle(initialValue = false)
     val alwaysRecordLogsEnabled by repo.alwaysRecordLogsEnabledFlow.collectAsStateWithLifecycle(initialValue = false)
     val themeSeedColor by repo.themeSeedColorFlow.collectAsStateWithLifecycle(initialValue = ThemeDefaults.DEFAULT_SEED_COLOR_HEX)
@@ -430,8 +497,11 @@ private fun NeriAppContent(
     val lyricBlurEnabled by repo.lyricBlurEnabledFlow.collectAsStateWithLifecycle(initialValue = true)
     val lyricBlurAmount by repo.lyricBlurAmountFlow.collectAsStateWithLifecycle(initialValue = 1.5f)
     val advancedLyricsEnabled by repo.advancedLyricsEnabledFlow.collectAsStateWithLifecycle(initialValue = true)
-    val coherentFeedbackEnabled by repo.coherentFeedbackEnabledFlow
+    // 电视机上关掉玻璃模糊与相干反馈动效：都是纯装饰，老 SoC 上每帧都要多取样一遍位图
+    val tvDevice = rememberIsTelevision()
+    val coherentFeedbackPreference by repo.coherentFeedbackEnabledFlow
         .collectAsStateWithLifecycle(initialValue = false)
+    val coherentFeedbackEnabled = coherentFeedbackPreference && !tvDevice
     val advancedBlurEnabled by repo.advancedBlurEnabledFlow.collectAsStateWithLifecycle(initialValue = true)
     val enhancedAdvancedBlurEnabled by repo.enhancedAdvancedBlurEnabledFlow
         .collectAsStateWithLifecycle(initialValue = false)
@@ -446,7 +516,7 @@ private fun NeriAppContent(
         initialValue = initialAdvancedBlurQuality
     )
     val advancedBlurAvailable = isAdvancedGlassBackendSupported(Build.VERSION.SDK_INT)
-    val effectiveAdvancedBlurEnabled = advancedBlurAvailable && advancedBlurEnabled
+    val effectiveAdvancedBlurEnabled = advancedBlurAvailable && advancedBlurEnabled && !tvDevice
     val nowPlayingAudioReactiveEnabled by repo.nowPlayingAudioReactiveEnabledFlow.collectAsStateWithLifecycle(initialValue = true)
     val nowPlayingDynamicBackgroundEnabled by repo.nowPlayingDynamicBackgroundEnabledFlow.collectAsStateWithLifecycle(initialValue = true)
     val nowPlayingCoverBlurBackgroundEnabled by repo.nowPlayingCoverBlurBackgroundEnabledFlow.collectAsStateWithLifecycle(initialValue = false)
@@ -608,6 +678,8 @@ private fun NeriAppContent(
     }
 
     val currentSong by PlayerManager.currentSongFlow.collectAsStateWithLifecycle()
+    // 顶部「正在播放」标签用：播放中频谱柱动、暂停静止
+    val playerIsPlaying by PlayerManager.isPlayingFlow.collectAsStateWithLifecycle()
     val displayCoverUrl = rememberSongDisplayCoverUrl(currentSong)
     val currentSongKey = remember(currentSong) { currentSong?.stableKey() }
     val coverAssetRootGeneration by LocalAssetInvalidationBus.rootGenerationFlow
@@ -894,8 +966,8 @@ private fun NeriAppContent(
     ) {
         AdvancedGlassController(
             sdkInt = Build.VERSION.SDK_INT,
-            advancedBlurEnabled = advancedBlurEnabled,
-            enhancedAdvancedBlurEnabled = enhancedAdvancedBlurEnabled,
+            advancedBlurEnabled = advancedBlurEnabled && !tvDevice,
+            enhancedAdvancedBlurEnabled = enhancedAdvancedBlurEnabled && !tvDevice,
             backendReady = isAdvancedGlassBackendSupported(Build.VERSION.SDK_INT),
             enhancedAdvancedBlurRadiusDp = enhancedAdvancedBlurRadiusDp,
             advancedBlurQuality = advancedBlurQuality,
@@ -1443,6 +1515,40 @@ private fun NeriAppContent(
                 navController.navigateToYouTubeMusicCreator(creator)
             fun navigateToYouTubeMusicPlaylist(playlist: YouTubeMusicPlaylist) =
                 navController.navigateToYouTubeMusicPlaylist(playlist)
+
+            // 播放页里所有会「跳出去到另一个页面」的入口都先举起这个标志：
+            // 从详情页按返回时，把播放页重新盖回来（而不是退回详情页下面那一层）。
+            // 同时记住「是从哪个页面跳出去的」：只有回到这一页才算返回，
+            // 中途点了别处的标签 / 去了别的页面就不该莫名奇妙弹回播放页。
+            fun openDetailFromNowPlaying(navigate: () -> Unit) {
+                nowPlayingReturnRoute = currentRoute
+                restoreNowPlayingAfterDetail = true
+                navigate()
+            }
+
+            LaunchedEffect(currentRoute, restoreNowPlayingAfterDetail) {
+                if (!restoreNowPlayingAfterDetail) {
+                    nowPlayingDetailRouteObserved = false
+                    return@LaunchedEffect
+                }
+                if (currentRoute in NowPlayingSourceDetailRoutes) {
+                    nowPlayingDetailRouteObserved = true
+                    return@LaunchedEffect
+                }
+                if (!nowPlayingDetailRouteObserved) {
+                    // 点了但没真的跳出去（例如同一位歌手又点一次，导航被 launchSingleTop 吃掉）：
+                    // 过一会儿把标志丢掉，免得以后从音乐库进详情页时莫名其妙弹回播放页。
+                    delay(600)
+                    if (!nowPlayingDetailRouteObserved) restoreNowPlayingAfterDetail = false
+                    return@LaunchedEffect
+                }
+                val backToOrigin = currentRoute == nowPlayingReturnRoute
+                restoreNowPlayingAfterDetail = false
+                nowPlayingDetailRouteObserved = false
+                nowPlayingReturnRoute = null
+                // 回到了原页面才把播放页盖回来；去了别的地方（切标签、跳到别的页面）就不动
+                if (backToOrigin) showNowPlaying = true
+            }
             LaunchedEffect(currentRoute, restoreLyricsAfterAlbumBack) {
                 if (!restoreLyricsAfterAlbumBack) {
                     lyricsAlbumRouteObserved = false
@@ -1736,26 +1842,28 @@ private fun NeriAppContent(
                             alwaysUseNewTabStyle = true,
                             backgroundImageUri = backgroundImageUri
                         ),
-                        miniPlayer = AppMiniPlayerPresentation(
-                            song = currentSong,
-                            coverUrl = displayCoverUrl,
-                            visualCoverUrl = playbackVisualCoverUrl,
-                            songVisualKey = currentSongVisualKey,
-                            visualCoverSongKey = playbackVisualCoverState.ownerSongKey,
-                            enableBlur = effectiveAdvancedBlurEnabled
-                        ),
+                        hasCurrentSong = currentSong != null,
+                        isPlaying = playerIsPlaying,
                         baseBlurRequested = advancedGlassController.isBaseBlurRequested,
                         snackbarHostState = snackbarHostState,
                         onMainTabSelected = ::navigateToMainTab,
-                        onExpandNowPlaying = {
-                            showNowPlaying = true
+                        onTabConfirm = { route ->
+                            // 首页沿用原来的刷新总线（它还负责「刷新后回到顶部」）
+                            if (route == Destinations.Home.route) {
+                                HomeRefreshBus.request()
+                            } else {
+                                TvTabConfirmBus.request(route)
+                            }
                         },
-                        onOpenCurrentPlaybackSource = onOpenCurrentPlaybackSource
+                        onOpenNowPlaying = {
+                            showNowPlaying = true
+                        }
                     ) { _ ->
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
                         ) {
+                            val tvFocusManager = LocalFocusManager.current
                             AdvancedGlassNavigationHandoff(
                                 enabled = shouldUseAdvancedGlassNavigationHandoff(
                                     visibleNavigationRoutes
@@ -1797,6 +1905,92 @@ private fun NeriAppContent(
                                 enabled = !showNowPlaying && !nowPlayingOverlayMounted && pendingMainTabRoute == null,
                                 onBackCommitted = { selectedMainTabRoute = it }
                             )
+                            // 电视返回键：页面跳转交给系统/各页自己的返回处理，这里只管
+                            // 「已经停在首页」的情况——光标不在首页标签上时先回到首页标签，
+                            // 已经在首页标签上时 2 秒内再按一次退出应用
+                            var tvLastBackAt by remember { mutableStateOf(0L) }
+                            var tvBackHomeFocusTick by remember { mutableIntStateOf(0) }
+                            // 一级页面按返回只收光标（不切页）时的落点：本页标签
+                            var tvBackTabTarget by remember { mutableStateOf<String?>(null) }
+                            LaunchedEffect(tvBackTabTarget) {
+                                val target = tvBackTabTarget ?: return@LaunchedEffect
+                                settleTopBarFocusOn(target)
+                                tvBackTabTarget = null
+                            }
+                            // 一级页面按返回 = 回首页，光标也跟着落到「首页」标签上。
+                            // 只等两帧然后请求一次是不够的：页面切换期间旧层还在销毁，
+                            // 焦点会被「节点移除 → 交给树里第一个可聚焦元素」的兜底覆盖掉。
+                            // 这里改成逐帧重试，直到光标真的落在首页标签上为止。
+                            LaunchedEffect(tvBackHomeFocusTick) {
+                                if (tvBackHomeFocusTick == 0) return@LaunchedEffect
+                                settleTopBarFocusOn(Destinations.Home.route)
+                            }
+                            // 「在二级页面按返回」走的是 MainTabPredictiveBackHandler，
+                            // 不经过上面那个 tick。主标签切回首页时同样要把光标稳回来。
+                            LaunchedEffect(selectedMainTabRoute) {
+                                if (selectedMainTabRoute != Destinations.Home.route) {
+                                    return@LaunchedEffect
+                                }
+                                settleTopBarFocusOn(Destinations.Home.route)
+                            }
+                            // 冷启动：光标默认落在「首页」标签上。以前没人接，Compose 会把
+                            // 光标丢给树里第一个可聚焦元素（「正在播放」那一格），第一次按
+                            // 方向键等于从那里起步。这里主动请求一次，按键就从首页开始走。
+                            LaunchedEffect(tvDevice) {
+                                if (!tvDevice) return@LaunchedEffect
+                                repeat(30) {
+                                    withFrameNanos { }
+                                    if (TvTopBarFocus.requestTab(Destinations.Home.route)) {
+                                        return@LaunchedEffect
+                                    }
+                                }
+                            }
+                            // 只有「四个主标签的页根」才由这里接管返回键。
+                            // 不能用 previousBackStackEntry == null 判断：主标签之间切换走的是
+                            // navigate + popUpTo(start)，栈里始终留着上一级页面，这个条件恒为假，
+                            // 于是按返回直接落到 MainTabPredictiveBackHandler 上 ——
+                            // 表现就是「一级页面按返回，跟原来一样跳回首页」。
+                            val atMainTabRoot = currentRoute != null && currentRoute in TvMainTabRoutes
+                            BackHandler(
+                                enabled = tvDevice && atMainTabRoot &&
+                                    pendingMainTabRoute == null &&
+                                    !showNowPlaying && !nowPlayingOverlayMounted
+                            ) {
+                                val pageTab = TvTopBarFocus.currentTabRoute
+                                    ?: currentRoute
+                                    ?: selectedMainTabRoute
+                                // 一级页面按返回：光标不在顶部标签栏时，先收到**本页**标签上，
+                                // 不切页面。判定用 barHasFocus（读焦点树）+ focusedTabRoute 两个信号，
+                                // 任一为假都按「不在标签栏」处理 —— 宁可只是把光标收上去，也不误跳页。
+                                // （原来只看 focusedTabRoute，它在层切换时会失同步，于是表现为
+                                //   「页面跳到首页、焦点框却没跟过去，再按两下直接触发首页的退出确认」。）
+                                val inTabBar = TvTopBarFocus.barHasFocus &&
+                                    TvTopBarFocus.focusedTabRoute != null
+                                if (!inTabBar || TvTopBarFocus.focusedTabRoute != pageTab) {
+                                    tvLastBackAt = 0L
+                                    tvBackTabTarget = pageTab
+                                    TvTopBarFocus.requestTab(pageTab)
+                                    return@BackHandler
+                                }
+                                if (selectedMainTabRoute != Destinations.Home.route) {
+                                    tvLastBackAt = 0L
+                                    navigateToMainTab(Destinations.Home.route)
+                                    tvBackHomeFocusTick++
+                                    return@BackHandler
+                                }
+                                val nowMs = SystemClock.elapsedRealtime()
+                                if (tvLastBackAt != 0L && nowMs - tvLastBackAt <= TV_EXIT_BACK_WINDOW_MS) {
+                                    (context as? Activity)?.finish()
+                                } else {
+                                    tvLastBackAt = nowMs
+                                    AppFeedback.showToast(context, "再按一次返回键退出")
+                                }
+                            }
+                            // 电视：路由变化后不再干预光标，落点交给 Compose 自己决定。
+                            // （曾在这里把光标往「本页标签」送，反而打乱了原生行为：
+                            //  进二级页落不到返回按钮、返回时也回不到原来那张卡片。）
+                            // 播放页关掉之后不主动抢焦点：Compose 会把光标还回打开播放页的那个按钮
+                            // （用户要求「从哪首歌进去，返回就回到那首歌」）
                             MainTabLayerHost(
                                 selectedRoute = selectedMainTabRoute,
                                 transitionState = mainTabTransitionState,
@@ -1872,23 +2066,47 @@ private fun NeriAppContent(
                         dismissState = nowPlayingDismissState
                     ) {
                         NowPlayingScreen(
-                            onNavigateUp = { showNowPlaying = false },
+                            onNavigateUp = {
+                                if (restoreNowPlayingAfterDetail) {
+                                    // 详情页正在下面滑进来（转场是「从主界面底下往上滑」）。
+                                    // 这里立刻收播放页的话，中间就会闪一下主界面。等它进场结束再收，
+                                    // 视觉上就是「播放页 -> 直接到详情页」。
+                                    scope.launch {
+                                        delay(MAIN_TAB_DETAIL_OPEN_DURATION_MS.toLong())
+                                        showNowPlaying = false
+                                    }
+                                } else {
+                                    showNowPlaying = false
+                                }
+                            },
                             onPhoneLandscapeBack = onPhoneLandscapeBack,
-                            onOpenCurrentPlaybackSource = onOpenCurrentPlaybackSource,
+                            onOpenCurrentPlaybackSource = onOpenCurrentPlaybackSource?.let { open ->
+                                { openDetailFromNowPlaying(open) }
+                            },
                             showLyricsScreen = showNowPlayingLyrics,
                             onShowLyricsScreenChange = { showNowPlayingLyrics = it },
                             onEnterAlbum = { album ->
                                 val shouldRestoreLyrics = showNowPlayingLyrics
-                                navigateToNeteaseAlbum(album) {
-                                    if (shouldRestoreLyrics) {
-                                        restoreLyricsAfterAlbumBack = true
+                                openDetailFromNowPlaying {
+                                    navigateToNeteaseAlbum(album) {
+                                        if (shouldRestoreLyrics) {
+                                            restoreLyricsAfterAlbumBack = true
+                                        }
                                     }
                                 }
                             },
-                            onEnterArtist = ::navigateToNeteaseArtist,
-                            onEnterBiliUploader = ::navigateToBiliUploader,
-                            onEnterYouTubeCreator = ::navigateToYouTubeMusicCreator,
-                            onEnterPlaylist = ::navigateToNeteasePlaylist,
+                            onEnterArtist = { artist ->
+                                openDetailFromNowPlaying { navigateToNeteaseArtist(artist) }
+                            },
+                            onEnterBiliUploader = { uploader ->
+                                openDetailFromNowPlaying { navigateToBiliUploader(uploader) }
+                            },
+                            onEnterYouTubeCreator = { creator ->
+                                openDetailFromNowPlaying { navigateToYouTubeMusicCreator(creator) }
+                            },
+                            onEnterPlaylist = { playlist ->
+                                openDetailFromNowPlaying { navigateToNeteasePlaylist(playlist) }
+                            },
                             lyricBlurEnabled = lyricBlurEnabled,
                             lyricBlurAmount = lyricBlurAmount,
                             lyricFontScales = lyricFontScales,

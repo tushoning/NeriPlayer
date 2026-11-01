@@ -23,6 +23,9 @@ package moe.ouom.neriplayer.ui.screen.playlist
  * Updated: 2026/3/23
  */
 
+import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.LocalIndication
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
 import moe.ouom.neriplayer.data.identity.sameIdentityAs
 import moe.ouom.neriplayer.data.identity.stableKey
@@ -76,6 +79,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import moe.ouom.neriplayer.ui.component.playlist.NeriSongRow
 import moe.ouom.neriplayer.ui.component.playlist.PlaylistLoadErrorDialog
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -86,6 +90,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
+import moe.ouom.neriplayer.ui.tv.tvScrollToTopOnUp
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
@@ -149,6 +156,12 @@ import moe.ouom.neriplayer.platform.youtube.api.transport.stableYouTubeMusicId
 import kotlin.random.Random
 import kotlin.time.Duration.Companion.milliseconds
 import moe.ouom.neriplayer.R as AppR
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.TvRowMenuKeyEffect
+import moe.ouom.neriplayer.ui.tv.rememberTvMenuFirstItemFocus
+import moe.ouom.neriplayer.ui.tv.rememberTvRowMenuKeyState
+import moe.ouom.neriplayer.ui.tv.tvBringIntoViewOnFocus
+import moe.ouom.neriplayer.ui.tv.tvRowMenuKeyPress
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -478,7 +491,20 @@ fun YouTubeMusicPlaylistDetailScreen(
         },
         topBar = {
             if (!selectionMode) {
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = pageSidePaddingOr(0.dp))
+                        .tvPlaylistTopBarShape()
+                ) {
+                    // 顶栏背景直接用头图：和下面那张是同一块裁剪，接得上
+                    PlaylistTopBarCoverBackdrop(
+                        coverUrl = resolvedPlaylist.coverUrl,
+                        offlineMode = offlineMode,
+                        heroHeight = playlistHeroHeight,
+                        alpha = 1f - playlistChromeCollapseProgress
+                    )
                 TopAppBar(
+                    modifier = Modifier.fillMaxWidth(),
                     title = {
                         Text(
                             text = resolvedPlaylist.title,
@@ -567,17 +593,21 @@ fun YouTubeMusicPlaylistDetailScreen(
                     },
                     windowInsets = WindowInsets.statusBars,
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = playlistTopBarColor,
-                        scrolledContainerColor = playlistTopBarColor,
+                        containerColor = Color.Transparent,
+                        scrolledContainerColor = Color.Transparent,
                         titleContentColor = playlistTopBarContentColor,
                         navigationIconContentColor = playlistTopBarContentColor,
                         actionIconContentColor = playlistTopBarContentColor
                     )
                 )
+                }
             } else {
                 val allSelected = requestedAllTracksLoaded &&
                     selectedKeys.size == visibleTracks.size && visibleTracks.isNotEmpty()
                 TopAppBar(
+                    modifier = Modifier
+                        .padding(horizontal = pageSidePaddingOr(0.dp))
+                        .tvPlaylistTopBarShape(),
                     title = {
                         Text(
                             pluralStringResource(
@@ -669,7 +699,11 @@ fun YouTubeMusicPlaylistDetailScreen(
                 ) {
                     LazyColumn(
                         state = listState,
-                        contentPadding = PaddingValues(bottom = miniPlayerHeight + 24.dp),
+                        contentPadding = PaddingValues(
+                            start = pageSidePaddingOr(0.dp),
+                            end = pageSidePaddingOr(0.dp),
+                            bottom = miniPlayerHeight + 24.dp
+                        ),
                         modifier = Modifier.fillMaxSize()
                     ) {
                         item(key = PLAYLIST_HEADER_KEY) {
@@ -680,6 +714,9 @@ fun YouTubeMusicPlaylistDetailScreen(
                                 offlineMode = offlineMode,
                                 height = playlistHeroHeight,
                                 actionsRevealProgress = searchVisibilityEased,
+                                // 头图继续铺到「全部播放」那一行下面
+                                topBleed = playlistTopBarBleed(),
+                                            backgroundBleed = PlaylistActionSheetBleed,
                                 coverContentDescription = resolvedPlaylist.title,
                                 actions = if (headerSearchVisible) {
                                     {
@@ -715,9 +752,11 @@ fun YouTubeMusicPlaylistDetailScreen(
                         PlaylistModernActionSheet(
                             coverUrl = resolvedPlaylist.coverUrl,
                             offlineMode = offlineMode,
-                            hasCustomBackground = hasCustomBackground
+                            hasCustomBackground = hasCustomBackground,
+                            overHeroImage = true
                         ) {
                                 PlaylistModernPlaybackActions(
+                                    modifier = Modifier.tvScrollToTopOnUp(listState),
                                     songCount = visibleTracks.size,
                                     shuffleEnabled = shuffleEnabled,
                                     repeatMode = repeatMode,
@@ -1077,7 +1116,6 @@ private fun EmptyBlock(text: String) {
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun YouTubeMusicSongRow(
     index: Int,
@@ -1097,244 +1135,24 @@ internal fun YouTubeMusicSongRow(
     onDownload: () -> Unit,
     offlineMode: Boolean
 ) {
-    val context = LocalContext.current
-    val composeResources = LocalResources.current
-    val clipboard = LocalClipboard.current
-    val scope = rememberCoroutineScope()
-    var showMenu by remember { mutableStateOf(false) }
-    val displayName = song.displayName()
-    val displayArtist = song.displayArtist()
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .combinedClickable(
-                onClick = hapticRowAction(context, onClick),
-                onLongClick = hapticRowAction(context, onLongPress)
-            )
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        YouTubeMusicSongRowLeading(
-            index = index,
-            selectionMode = selectionMode,
-            selected = selected,
-            onToggleSelect = onToggleSelect
-        )
-        YouTubeMusicSongRowCover(
-            coverUrl = rememberSongDisplayCoverUrl(song),
-            contentDescription = displayName,
-            offlineMode = offlineMode
-        )
-
-        Column(
-            modifier = Modifier.weight(1f)
-        ) {
-            Text(
-                text = displayName,
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                color = playlistModernListPrimaryContentColor()
-            )
-            Text(
-                text = youTubeMusicSongSubtitle(displayArtist, song.album),
-                style = MaterialTheme.typography.bodySmall,
-                color = playlistModernListSecondaryContentColor(),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-
-        YouTubeMusicSongRowTrailing(
-            isCurrentSong = isCurrentSong,
-            animatePlayingIndicator = animatePlayingIndicator,
-            durationMs = song.durationMs
-        )
-
-        if (!selectionMode) {
-            YouTubeMusicSongRowMenu(
-                expanded = showMenu,
-                onExpandedChange = { showMenu = it },
-                song = song,
-                isFavorite = isFavorite,
-                onFavoriteToggle = onFavoriteToggle,
-                onPlayNext = onPlayNext,
-                onAddToQueueEnd = onAddToQueueEnd,
-                onDownload = onDownload,
-                onCopySongInfo = copySongInfoAction(
-                    scope = scope,
-                    clipboard = clipboard,
-                    snackbarHostState = snackbarHostState,
-                    resources = composeResources,
-                    songInfo = "${displayName}-${displayArtist}"
-                )
-            )
-        }
-    }
-}
-
-internal fun youTubeMusicSongSubtitle(displayArtist: String, album: String): String =
-    listOfNotNull(
-        displayArtist.takeIf { it.isNotBlank() },
-        album.takeIf { it.isNotBlank() }
-    ).joinToString(" · ")
-
-@Composable
-private fun YouTubeMusicSongRowLeading(
-    index: Int,
-    selectionMode: Boolean,
-    selected: Boolean,
-    onToggleSelect: () -> Unit
-) {
-    Box(
-        modifier = Modifier.width(48.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        if (selectionMode) {
-            androidx.compose.material3.Checkbox(
-                checked = selected,
-                onCheckedChange = { onToggleSelect() }
-            )
-        } else {
-            Text(
-                text = index.toString(),
-                style = MaterialTheme.typography.titleSmall,
-                color = playlistModernListTertiaryContentColor(),
-                maxLines = 1
-            )
-        }
-    }
-}
-
-@Composable
-private fun YouTubeMusicSongRowCover(
-    coverUrl: String?,
-    contentDescription: String,
-    offlineMode: Boolean
-) {
-    if (!coverUrl.isNullOrBlank()) {
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(neriRoundedShape(10.dp))
-                .background(
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    shape = neriRoundedShape(10.dp)
-                )
-        ) {
-            AsyncImage(
-                model = offlineCachedImageRequest(
-                    context = LocalContext.current,
-                    data = coverUrl,
-                    offlineMode = offlineMode
-                ),
-                contentDescription = contentDescription,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-        Spacer(modifier = Modifier.width(12.dp))
-    }
-}
-
-@Composable
-private fun YouTubeMusicSongRowTrailing(
-    isCurrentSong: Boolean,
-    animatePlayingIndicator: Boolean,
-    durationMs: Long
-) {
-    if (isCurrentSong) {
-        PlayingIndicator(
-            color = MaterialTheme.colorScheme.primary,
-            animate = animatePlayingIndicator
-        )
-    } else {
-        Text(
-            text = formatDuration(durationMs),
-            style = MaterialTheme.typography.bodySmall,
-            color = playlistModernListSecondaryContentColor()
-        )
-    }
-}
-
-@Composable
-private fun YouTubeMusicSongRowMenu(
-    expanded: Boolean,
-    onExpandedChange: (Boolean) -> Unit,
-    song: SongItem,
-    isFavorite: Boolean,
-    onFavoriteToggle: (SongItem, Boolean) -> Unit,
-    onPlayNext: () -> Unit,
-    onAddToQueueEnd: () -> Unit,
-    onDownload: () -> Unit,
-    onCopySongInfo: () -> Unit
-) {
-    Box {
-        IconButton(onClick = { onExpandedChange(true) }) {
-            Icon(
-                imageVector = Icons.Filled.MoreVert,
-                contentDescription = stringResource(CoreCommonR.string.common_more_actions),
-                tint = playlistModernListSecondaryContentColor()
-            )
-        }
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { onExpandedChange(false) }
-        ) {
-            DropdownMenuItem(
-                text = { Text(stringResource(CoreCommonR.string.local_playlist_play_next)) },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Outlined.PlaylistPlay,
-                        contentDescription = null
-                    )
-                },
-                onClick = {
-                    onPlayNext()
-                    onExpandedChange(false)
-                }
-            )
-            DropdownMenuItem(
-                text = { Text(stringResource(CoreCommonR.string.playlist_add_to_end)) },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Outlined.PlaylistAdd,
-                        contentDescription = null
-                    )
-                },
-                onClick = {
-                    onAddToQueueEnd()
-                    onExpandedChange(false)
-                }
-            )
-            DropdownMenuItem(
-                text = {
-                    Text(
-                        stringResource(
-                            if (isFavorite) {
-                                CoreCommonR.string.favorite_remove
-                            } else {
-                                CoreCommonR.string.favorite_add
-                            }
-                        )
-                    )
-                },
-                leadingIcon = {
-                    Icon(
-                        imageVector = if (isFavorite) {
-                            Icons.Filled.Favorite
-                        } else {
-                            Icons.Outlined.FavoriteBorder
-                        },
-                        contentDescription = null
-                    )
-                },
-                onClick = {
-                    onFavoriteToggle(song, isFavorite)
-                    onExpandedChange(false)
-                }
-            )
+    NeriSongRow(
+        index = index,
+        song = song,
+        onClick = onClick,
+        subtitle = youTubeMusicSongSubtitle(song.displayArtist(), song.album),
+        offlineMode = offlineMode,
+        isCurrentSong = isCurrentSong,
+        animatePlayingIndicator = animatePlayingIndicator,
+        selectionMode = selectionMode,
+        selected = selected,
+        onToggleSelect = onToggleSelect,
+        onLongClick = onLongPress,
+        isFavorite = isFavorite,
+        onFavoriteToggle = onFavoriteToggle,
+        onPlayNext = onPlayNext,
+        onAddToQueueEnd = onAddToQueueEnd,
+        // 页面专属：下载到本地
+        extraMenuBottom = { close ->
             DropdownMenuItem(
                 text = { Text(stringResource(CoreCommonR.string.download_to_local)) },
                 leadingIcon = {
@@ -1344,23 +1162,17 @@ private fun YouTubeMusicSongRowMenu(
                     )
                 },
                 onClick = {
+                    close()
                     onDownload()
-                    onExpandedChange(false)
                 }
             )
-            DropdownMenuItem(
-                text = { Text(stringResource(CoreCommonR.string.action_copy_song_info)) },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Outlined.ContentCopy,
-                        contentDescription = null
-                    )
-                },
-                onClick = {
-                    onCopySongInfo()
-                    onExpandedChange(false)
-                }
-            )
-        }
-    }
+        },
+        snackbarHostState = snackbarHostState
+    )
 }
+
+internal fun youTubeMusicSongSubtitle(displayArtist: String, album: String): String =
+    listOfNotNull(
+        displayArtist.takeIf { it.isNotBlank() },
+        album.takeIf { it.isNotBlank() }
+    ).joinToString(" · ")

@@ -1,6 +1,8 @@
 package moe.ouom.neriplayer.ui.screen.artist
 
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -20,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,6 +42,10 @@ import moe.ouom.neriplayer.data.local.media.displayName
 import moe.ouom.neriplayer.ui.util.rememberSongDisplayCoverUrl
 import moe.ouom.neriplayer.data.model.SongItem
 import moe.ouom.neriplayer.ui.viewmodel.tab.AlbumSummary
+import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
+import moe.ouom.neriplayer.ui.component.playlist.NeriSongRow
+import moe.ouom.neriplayer.core.player.PlayerManager
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 import moe.ouom.neriplayer.util.format.formatDuration
 import moe.ouom.neriplayer.util.media.offlineCachedImageRequest
 import moe.ouom.neriplayer.R as AppR
@@ -51,60 +58,27 @@ internal fun ArtistSongRow(
     offlineMode: Boolean = false
 ) {
     val context = LocalContext.current
-    val coverUrl = rememberSongDisplayCoverUrl(song)
     val displayArtist = song.displayArtist().takeIf { it.isNotBlank() }
     val displayAlbum = song.displayAlbum(context)
         .replace("Netease", "")
         .takeIf { it.isNotBlank() }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(modifier = Modifier.width(48.dp), contentAlignment = Alignment.Center) {
-            Text(
-                text = index.toString(),
-                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                textAlign = TextAlign.Center,
-                overflow = TextOverflow.Clip
-            )
-        }
-        AsyncImage(
-            model = offlineCachedImageRequest(
-                context = context,
-                data = coverUrl,
-                offlineMode = offlineMode
-            ),
-            contentDescription = song.displayName(),
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(48.dp)
-                .clip(neriRoundedShape(10.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-        )
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = song.displayName(),
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+    // 电视：左右各补 16dp，和歌单页歌曲行一层层加上来的边距对齐
+    val horizontalPadding = if (LocalIsTelevision.current) 16.dp else 0.dp
+    NeriSongRow(
+        index = index,
+        song = song,
+        onClick = onClick,
+        subtitleContent = {
             ArtistSongSubtitle(
                 artist = displayArtist,
                 album = displayAlbum
             )
-        }
-        Text(
-            text = formatDuration(song.durationMs),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
+        },
+        offlineMode = offlineMode,
+        horizontalPadding = horizontalPadding,
+        onPlayNext = { PlayerManager.addToQueueNext(song) },
+        onAddToQueueEnd = { PlayerManager.addToQueueEnd(song) }
+    )
 }
 
 @Composable
@@ -152,7 +126,12 @@ internal fun ArtistAlbumRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onClick)
+                .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = rememberTvFocusRingIndication(12.dp, insetHorizontal = 25.dp)
+                    ?: LocalIndication.current,
+                onClick = onClick
+            )
                 .padding(vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {

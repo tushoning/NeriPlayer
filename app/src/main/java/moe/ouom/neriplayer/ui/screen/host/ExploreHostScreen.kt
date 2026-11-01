@@ -60,6 +60,7 @@ import moe.ouom.neriplayer.core.di.AppContainer
 import moe.ouom.neriplayer.data.model.NeteaseArtistSummary
 import moe.ouom.neriplayer.data.model.SongItem
 import moe.ouom.neriplayer.platform.youtube.api.transport.stableYouTubeMusicId
+import moe.ouom.neriplayer.ui.component.navigation.TvTopBarFocus
 import moe.ouom.neriplayer.ui.navigation.animateMainTabDetailCloseRootRevealFraction
 import moe.ouom.neriplayer.ui.navigation.clipMainTabDetailCloseRoot
 import moe.ouom.neriplayer.ui.effect.glass.AdvancedGlassSceneMotion

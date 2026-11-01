@@ -25,6 +25,9 @@ package moe.ouom.neriplayer.ui.component.settings
 
 
 import moe.ouom.neriplayer.ui.settings.SettingRowIcon
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
@@ -59,10 +62,15 @@ fun LanguageSettingItem(
     var showDialog by remember { mutableStateOf(false) }
     var currentLanguage by remember { mutableStateOf(LanguageManager.getCurrentLanguage(context)) }
 
+    // 电视焦点框：18dp 圆角（跟这一行的形状一致），裁剪放在 clickable 之后
+    val itemRing = rememberTvFocusRingIndication(18.dp, cleanRadiusBoost = 0.dp) ?: LocalIndication.current
     ListItem(
         modifier = modifier
-            .clip(LanguageSettingItemShape)
-            .clickable { showDialog = true },
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = itemRing
+            ) { showDialog = true }
+            .clip(LanguageSettingItemShape),
         headlineContent = { Text(stringResource(CoreCommonR.string.language_setting_title)) },
         supportingContent = { Text(currentLanguage.getDisplayName(context)) },
         leadingContent = {
@@ -82,17 +90,22 @@ fun LanguageSettingItem(
             text = {
                 Column {
                     LanguageManager.Language.entries.forEach { language ->
+                        val optionRing = rememberTvFocusRingIndication(16.dp, cleanRadiusBoost = 0.dp)
+                            ?: LocalIndication.current
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(LanguageOptionShape)
-                                .clickable {
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = optionRing
+                                ) {
                                     showDialog = false
                                     if (currentLanguage == language) return@clickable
                                     LanguageManager.setLanguage(context, language)
                                     currentLanguage = language
                                     onLanguageChanged(language)
                                 }
+                                .clip(LanguageOptionShape)
                                 .padding(vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
