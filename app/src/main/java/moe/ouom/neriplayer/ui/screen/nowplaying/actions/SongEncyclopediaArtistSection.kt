@@ -52,7 +52,9 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import moe.ouom.neriplayer.data.model.encyclopedia.EncyclopediaArtistInfo
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.focusProperties
 import moe.ouom.neriplayer.R as AppR
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 private const val ENCYCLOPEDIA_ARTIST_BRIEF_MAX_LINES = 4
 private const val ENCYCLOPEDIA_ARTIST_AVATAR_SIZE_DP = 48
 private val ENCYCLOPEDIA_ARTIST_TEXT_FOLLOW_MIN_WIDTH = 320.dp
@@ -80,8 +82,15 @@ internal fun SongEncyclopediaArtistSection(
             ) {
                 SongEncyclopediaArtistAvatar(artist, Modifier.encyclopediaClickable(onOpenArtist))
                 Spacer(Modifier.size(12.dp))
+                // 电视：这一列（姓名 + 作品数）和左边的头像是同一个跳转入口，
+                // 遥控器上没必要多停一站，焦点只留在头像上。
+                val tvNoFocus = if (LocalIsTelevision.current) {
+                    Modifier.focusProperties { canFocus = false }
+                } else {
+                    Modifier
+                }
                 Column(
-                    modifier = Modifier.weight(1f).encyclopediaClickable(onOpenArtist),
+                    modifier = Modifier.weight(1f).then(tvNoFocus).encyclopediaClickable(onOpenArtist),
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     Text(

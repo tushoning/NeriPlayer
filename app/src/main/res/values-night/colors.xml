@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- 深色模式的冷启动预览底色 -->
+    <color name="launch_background">#FF121212</color>
     <color name="widget_background">#FF1D2521</color>
     <color name="widget_text_primary">#FFE8F0E9</color>
     <color name="widget_text_secondary">#FFBBC8BF</color>

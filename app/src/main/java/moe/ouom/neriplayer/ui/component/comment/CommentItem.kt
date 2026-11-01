@@ -41,6 +41,8 @@ import coil.compose.AsyncImage
 import moe.ouom.neriplayer.data.model.comments.SongComment
 import moe.ouom.neriplayer.data.model.comments.CommentReplyTarget
 import moe.ouom.neriplayer.ui.haptic.HapticTextButton
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.theme.CleanDesignTokens
 import moe.ouom.neriplayer.ui.theme.NeriDesign
 import moe.ouom.neriplayer.ui.theme.cleanTintedAccent
 import moe.ouom.neriplayer.util.format.formatDate
@@ -111,7 +113,13 @@ internal fun CommentItem(
     ) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
-            shape = if (NeriDesign.isClean) NeriDesign.tokens.cardShape else MaterialTheme.shapes.extraLarge,
+            // 电视统一按「简洁风格」的卡片圆角（20dp 连续圆角）：
+            // 另一主题原来走 MaterialTheme.shapes.extraLarge，评论卡比简洁风格更方。
+            shape = if (NeriDesign.isClean || LocalIsTelevision.current) {
+                CleanDesignTokens.cardShape
+            } else {
+                MaterialTheme.shapes.extraLarge
+            },
             // Clean 下 surfaceContainer 与 sheet 底 surfaceContainerLow 只差一点点，
             // 评论卡片会糊成一片，改用墨色半透明拉开层次。
             color = if (NeriDesign.isClean) {

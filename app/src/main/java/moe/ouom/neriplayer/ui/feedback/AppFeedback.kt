@@ -3,6 +3,8 @@ package moe.ouom.neriplayer.ui.feedback
 import android.app.Activity
 import android.app.Application
 import android.content.Context
+import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -24,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -110,6 +113,14 @@ internal fun canUseStyledToastView(
     isForeground: Boolean,
     sdkInt: Int
 ): Boolean = isForeground || sdkInt < Build.VERSION_CODES.R
+
+/** 电视/遥控器环境：系统 Toast 的落点不可控，反馈改走应用内 snackbar */
+internal fun isTelevisionFeedbackContext(context: Context): Boolean {
+    val uiModeType =
+        context.resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK
+    return uiModeType == Configuration.UI_MODE_TYPE_TELEVISION ||
+        context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+}
 
 object AppFeedback {
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -221,6 +232,9 @@ object AppFeedback {
         )
     }
 
+    internal fun isTelevision(): Boolean =
+        applicationContext?.let { isTelevisionFeedbackContext(it) } ?: false
+
     internal fun registerSnackbarHost() {
         snackbarHostCount.incrementAndGet()
     }
@@ -253,6 +267,7 @@ object AppFeedback {
         if (shouldSkipGlobalDuplicate(text)) {
             return
         }
+        // 一律用系统 Toast：应用内 snackbar 是另一套样式，用户要的是系统默认那一条。
         when (
             resolveFeedbackDelivery(
                 isForeground = isForeground,
@@ -403,6 +418,11 @@ suspend fun SnackbarHostState.showNeriSnackbar(
     if (text.isEmpty() || shouldSkipSnackbarDuplicate(this, text)) {
         return SnackbarResult.Dismissed
     }
+    // 电视上要系统默认样式：不走应用内 snackbar，直接弹系统 Toast
+    if (AppFeedback.isTelevision()) {
+        AppFeedback.show(message = text, preferSnackbar = false)
+        return SnackbarResult.Dismissed
+    }
     return showSnackbar(
         message = text,
         actionLabel = actionLabel,
@@ -492,11 +512,18 @@ fun NeriSnackbarHost(
     if (applyImePadding) {
         hostModifier = hostModifier.imePadding()
     }
-    SnackbarHost(
-        hostState = hostState,
-        modifier = hostModifier,
-        snackbar = ::NeriSnackbar
-    )
+    // Material3 的 SnackbarHost 内部是个默认左上对齐的 Box：宿主铺满宽度时，
+    // 提示条会被摆在最左边（短消息看着像缩在左下角一小条）。这里套一层居中容器，
+    // 让提示条永远待在底部中间。
+    Box(
+        modifier = hostModifier.fillMaxWidth(),
+        contentAlignment = Alignment.BottomCenter
+    ) {
+        SnackbarHost(
+            hostState = hostState,
+            snackbar = ::NeriSnackbar
+        )
+    }
 }
 
 @Composable
@@ -530,8 +557,11 @@ private fun NeriSnackbar(snackbarData: SnackbarData) {
         withDismissAction = snackbarData.visuals.withDismissAction
     )
     Snackbar(
+        // 电视上这条提示原来会横着铺开占满整屏，跟原来那个小胶囊 Toast 的观感差太多；
+        // 这里给一个上限宽度，短消息仍然是贴内容的小条，长消息最多这么宽。
         modifier = Modifier
             .padding(12.dp)
+            .widthIn(max = 520.dp)
             .testTag(NeriSnackbarTestTag),
         action = if (actionLabel != null) {
             {

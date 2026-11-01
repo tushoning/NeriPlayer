@@ -26,7 +26,9 @@ internal fun SectionHeader(icon: ImageVector, title: String) {
             text = title,
             style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
             color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.padding(top = 18.dp, bottom = 10.dp)
+            // 分类与分类之间原来上下各留一大截（18 + 10，再叠上网格的 14dp 间距），
+            // 电视上一屏能看到的分类太少。收紧到 8 + 6。
+            modifier = Modifier.padding(top = 8.dp, bottom = 6.dp)
         )
         return
     }

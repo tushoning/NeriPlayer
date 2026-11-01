@@ -656,21 +656,13 @@ private fun LyricSettingsSlider(
     valueRange: ClosedFloatingPointRange<Float>,
     steps: Int
 ) {
-    if (NeriDesign.isClean) {
-        MiuixSettingsSlider(
-            value = value,
-            onValueChange = onValueChange,
-            onValueChangeFinished = onValueChangeFinished,
-            valueRange = valueRange,
-            steps = steps
-        )
-    } else {
-        Slider(
-            value = value,
-            onValueChange = onValueChange,
-            onValueChangeFinished = onValueChangeFinished,
-            valueRange = valueRange,
-            steps = steps
-        )
-    }
+    // 统一走 MiuixSettingsSlider：电视上它会给滑块画「环贴小圆点」的焦点环，
+    // 而直接调 material3 Slider 会把整条滑轨框起来。
+    MiuixSettingsSlider(
+        value = value,
+        onValueChange = onValueChange,
+        onValueChangeFinished = onValueChangeFinished,
+        valueRange = valueRange,
+        steps = steps
+    )
 }

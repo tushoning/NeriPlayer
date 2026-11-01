@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- 冷启动预览窗口的底色，跟启动主题的 windowBackground 保持一致 -->
+    <color name="launch_background">#FFFFFFFF</color>
     <color name="widget_background">#FFF4F7F4</color>
     <color name="widget_text_primary">#FF1C2521</color>
     <color name="widget_text_secondary">#FF48534D</color>

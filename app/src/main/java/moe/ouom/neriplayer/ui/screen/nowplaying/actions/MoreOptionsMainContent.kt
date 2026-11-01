@@ -101,6 +101,8 @@ import moe.ouom.neriplayer.data.model.stableKey
 import moe.ouom.neriplayer.data.model.stats.TrackStat
 import moe.ouom.neriplayer.ui.component.sheet.bottomSheetScrollGuard
 import moe.ouom.neriplayer.ui.component.download.downloadStageLabelResource
+import androidx.compose.ui.focus.focusRequester
+import moe.ouom.neriplayer.ui.screen.nowplaying.TvMoreOptionsFocus
 import moe.ouom.neriplayer.ui.haptic.HapticTextButton
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
 import moe.ouom.neriplayer.ui.screen.nowplaying.hasCachedLocalDownload
@@ -232,7 +234,9 @@ private fun MetadataAndPlaybackActions(
         icon = Icons.Outlined.Info,
         hue = MoreHueBlue,
         enabled = !isDismissing,
-        onClick = onOpenSearch
+        onClick = onOpenSearch,
+        // 电视上弹出面板后光标就落在这里（面板第一个按钮）
+        modifier = Modifier.focusRequester(TvMoreOptionsFocus.firstItem)
     )
     MoreOptionsItem(
         title = stringResource(CoreCommonR.string.music_edit_info),
@@ -656,7 +660,8 @@ private fun MoreOptionsItem(
     enabled: Boolean = true,
     busy: Boolean = false,
     subtitle: String? = null,
-    supporting: (@Composable () -> Unit)? = null
+    supporting: (@Composable () -> Unit)? = null,
+    modifier: Modifier = Modifier
 ) {
     if (!NeriDesign.isClean) {
         ListItem(
@@ -669,13 +674,13 @@ private fun MoreOptionsItem(
                 }
             },
             supportingContent = supporting ?: subtitle?.let { text -> { Text(text) } },
-            modifier = Modifier.clickable(enabled = enabled, onClick = onClick)
+            modifier = modifier.clickable(enabled = enabled, onClick = onClick)
         )
         return
     }
     val colors = MaterialTheme.colorScheme
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(MoreRowShape)
             .clickable(enabled = enabled, onClick = onClick)

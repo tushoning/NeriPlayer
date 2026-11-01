@@ -46,6 +46,9 @@ import moe.ouom.neriplayer.data.model.SongItem
 import moe.ouom.neriplayer.data.local.media.displayArtist
 import moe.ouom.neriplayer.data.local.media.displayName
 import moe.ouom.neriplayer.ui.component.playback.NowPlayingSongTitle
+import androidx.compose.ui.focus.focusProperties
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import androidx.compose.ui.unit.sp
 
 internal data class NowPlayingTrackDisplay(
     val name: String?,
@@ -70,11 +73,22 @@ internal enum class NowPlayingTrackIdentityLayout {
 
 internal fun resolveNowPlayingTrackIdentityPresentation(
     layout: NowPlayingTrackIdentityLayout,
-    typography: Typography
+    typography: Typography,
+    isTelevision: Boolean = false
 ): NowPlayingTrackIdentityPresentation = when (layout) {
-    NowPlayingTrackIdentityLayout.Compact -> NowPlayingTrackIdentityPresentation(
-        typography.titleLarge, typography.bodyMedium, Alignment.Start, Modifier
-    )
+    // 电视：坐在两三米外看，这两行字要明显大一号；两行都居中（容器会按整屏宽度居中）
+    NowPlayingTrackIdentityLayout.Compact -> if (isTelevision) {
+        NowPlayingTrackIdentityPresentation(
+            typography.titleLarge.copy(fontSize = 32.sp, lineHeight = 42.sp),
+            typography.bodyMedium.copy(fontSize = 18.sp, lineHeight = 26.sp),
+            Alignment.CenterHorizontally,
+            Modifier
+        )
+    } else {
+        NowPlayingTrackIdentityPresentation(
+            typography.titleLarge, typography.bodyMedium, Alignment.Start, Modifier
+        )
+    }
     NowPlayingTrackIdentityLayout.Expanded -> NowPlayingTrackIdentityPresentation(
         typography.headlineSmall, typography.bodyLarge, Alignment.CenterHorizontally, Modifier
     )
@@ -136,7 +150,9 @@ internal fun NowPlayingTrackIdentity(
     val clipboardScope = rememberCoroutineScope()
     val owner = remember { NowPlayingTrackIdentityOwner() }
     owner.bindCopyContext(clipboard, clipboardScope)
-    val presentation = resolveNowPlayingTrackIdentityPresentation(layout, MaterialTheme.typography)
+    val presentation = resolveNowPlayingTrackIdentityPresentation(
+        layout, MaterialTheme.typography, LocalIsTelevision.current
+    )
     AnimatedVisibility(
         visible = visible,
         modifier = presentation.modifier,
@@ -166,6 +182,12 @@ private fun NowPlayingTrackTitle(
     owner: NowPlayingTrackIdentityOwner,
     titleStyle: TextStyle
 ) {
+    // 电视：歌名只是展示，不该成为可聚焦节点（遥控器方向键经过它就会停一下）
+    val tvNoFocus = if (LocalIsTelevision.current) {
+        Modifier.focusProperties { canFocus = false }
+    } else {
+        Modifier
+    }
     BoxWithConstraints {
         NowPlayingSongTitle(
             text = displayName.orEmpty(),
@@ -175,6 +197,7 @@ private fun NowPlayingTrackTitle(
             modifier = Modifier
                 .widthIn(max = maxWidth)
                 .clip(RoundedCornerShape(8.dp))
+                .then(tvNoFocus)
                 .combinedClickable(onClick = {}, onLongClick = owner::openNameMenu)
         )
         DropdownMenu(
@@ -199,6 +222,7 @@ private fun NowPlayingTrackArtist(
     owner: NowPlayingTrackIdentityOwner,
     artistStyle: TextStyle
 ) {
+    // 歌手名的焦点要保留（点了能进歌手页），歌名才是纯展示
     Box {
         Text(
             text = displayArtist.orEmpty(),

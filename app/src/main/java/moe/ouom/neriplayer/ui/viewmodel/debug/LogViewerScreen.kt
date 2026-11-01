@@ -48,6 +48,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import moe.ouom.neriplayer.ui.screen.tab.settings.page.MiuixSettingsSectionCard
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
@@ -130,6 +131,7 @@ fun LogViewerScreen(
         },
         topBar = {
             TopAppBar(
+                modifier = Modifier.padding(horizontal = pageSidePaddingOr(0.dp)),
                 title = {
                     Text(
                         File(decodedFilePath).name,

@@ -3,6 +3,11 @@ package moe.ouom.neriplayer.ui.screen.tab.settings.appearance
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.remember
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -50,6 +55,9 @@ import moe.ouom.neriplayer.ui.theme.NeriMotion
 import moe.ouom.neriplayer.ui.screen.tab.settings.page.MiuixSettingsSectionIntro
 import androidx.compose.ui.platform.LocalContext
 
+/** 电视上界面风格预览卡的宽度（原来铺满半屏，太大） */
+private val UiStyleTileTvWidth = 200.dp
+
 @Composable
 internal fun SettingsUiStyleSelector(modifier: Modifier = Modifier) {
     val repo = AppContainer.settingsRepo
@@ -71,7 +79,12 @@ internal fun SettingsUiStyleSelector(modifier: Modifier = Modifier) {
                 UiStyleTile(
                     style = option,
                     selected = option == uiStyle,
-                    modifier = Modifier.weight(1f),
+                    // 电视上这两张预览卡原来铺满半个屏幕，太大；限宽到 200dp（原来的三分之一）
+                    modifier = if (LocalIsTelevision.current) {
+                        Modifier.width(UiStyleTileTvWidth)
+                    } else {
+                        Modifier.weight(1f)
+                    },
                     onClick = {
                         if (option != uiStyle) {
                             context.performHapticFeedback()
@@ -103,14 +116,20 @@ private fun UiStyleTile(
         label = "ui_style_tile_border"
     )
     val tileShape = ContinuousRoundedCornerShape(20.dp)
+    // 电视焦点框：圆角跟卡片一致；裁剪必须放在 clickable 之后，否则环会被切掉
+    val tvRingIndication = rememberTvFocusRingIndication(20.dp, cleanRadiusBoost = 0.dp) ?: LocalIndication.current
     Column(
         modifier = modifier
             .semantics {
                 role = Role.RadioButton
                 this.selected = selected
             }
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = tvRingIndication,
+                onClick = onClick
+            )
             .clip(tileShape)
-            .clickable(onClick = onClick)
             .padding(4.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {

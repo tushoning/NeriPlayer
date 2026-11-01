@@ -14,17 +14,24 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -37,6 +44,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheetProperties
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -44,19 +52,24 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.NonRestartableComposable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.IntSize
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.CoroutineScope
@@ -102,6 +115,10 @@ import moe.ouom.neriplayer.ui.viewmodel.NowPlayingViewModel
 import moe.ouom.neriplayer.ui.viewmodel.tab.AlbumSummary
 import moe.ouom.neriplayer.ui.viewmodel.tab.PlaylistSummary
 import moe.ouom.neriplayer.ui.screen.host.rememberHostPredictiveBackTransition
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.tvEdgeScroll
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 
 private val NowPlayingFeedbackExtraBottomPadding = 24.dp
 private val EditSongInfoFeedbackControlClearance = 72.dp
@@ -558,11 +575,16 @@ private fun rememberMoreOptionsSheetSession(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val coroutineScope = rememberCoroutineScope()
     val latestOnDismiss = rememberUpdatedState(navigation.onDismiss)
-    return remember(sheetState, coroutineScope) {
+    // 电视上没有底部弹层，收起/展开都没有可动画的对象，直接返回（否则会去动一个
+    // 没有 anchor 的 SheetState，抛异常或卡住）
+    val isTelevision = LocalIsTelevision.current
+    return remember(sheetState, coroutineScope, isTelevision, navigation.startWithLyricBehavior) {
         MoreOptionsSheetSession(
             sheetState,
             MoreOptionsSheetOwner(
-                coroutineScope, sheetState::hide, sheetState::expand,
+                coroutineScope,
+                hide = if (isTelevision) suspend { } else sheetState::hide,
+                expand = if (isTelevision) suspend { } else sheetState::expand,
                 initialPage = resolveMoreOptionsInitialPage(navigation.startWithLyricBehavior)
             ) { latestOnDismiss.value() }
         )
@@ -682,6 +704,14 @@ private fun MoreOptionsPages(
     MoreOptionsEncyclopediaPage(targetState, viewModel, actualSong, offlineMode, owner, navigation)
 }
 
+/**
+ * 播放页「更多」面板的焦点入口：面板打开后光标落在第一个按钮（获取歌曲信息）上。
+ * 和播放页主控制区一样，改由面板里真实存在的按钮承接焦点请求。
+ */
+internal object TvMoreOptionsFocus {
+    val firstItem = androidx.compose.ui.focus.FocusRequester()
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 internal fun MoreOptionsSheetSurface(
@@ -690,6 +720,13 @@ internal fun MoreOptionsSheetSurface(
     snackbarHostState: SnackbarHostState,
     content: @Composable () -> Unit
 ) {
+    // 电视：不用 ModalBottomSheet。它自带弹出/收起动画、拖拽手势和嵌套滚动，
+    // 遥控器上的表现是「弹出来还要等动画」和「一按方向键整块面板跟着跑」。
+    // 这里换成最基础的一层覆盖：没有动画、不可拖拽，内容自己滚动。
+    if (LocalIsTelevision.current) {
+        TvMoreOptionsSurface(owner, snackbarHostState, content)
+        return
+    }
     val predictiveDismissState = rememberPredictiveDismissState()
     var sheetSize by remember { mutableStateOf(IntSize.Zero) }
     val presentation = owner.windowPresentation(isCompactEditSongLandscape())
@@ -720,6 +757,61 @@ internal fun MoreOptionsSheetSurface(
             sheetState = sheetState,
             showDragHandle = presentation.showDragHandle,
             onDismissRequest = owner.onDismissRequest
+        ) {
+            MoreOptionsSheetBody(owner.page, snackbarHostState, content)
+        }
+    }
+}
+
+/**
+ * 电视上的「更多」面板：一层无动画的全屏覆盖 + 底部固定面板。
+ * 除了去掉弹层动画，它也不参与任何手势/嵌套滚动，方向键移动焦点时面板不会跟着位移。
+ */
+@Composable
+private fun TvMoreOptionsSurface(
+    owner: MoreOptionsSheetOwner,
+    snackbarHostState: SnackbarHostState,
+    content: @Composable () -> Unit
+) {
+    val scrimInteraction = remember { MutableInteractionSource() }
+    // 从三个点按钮下方往左下展开：贴屏幕右上角，高度跟着内容走，最多到屏幕 82%。
+    val maxSheetHeight = LocalConfiguration.current.screenHeightDp.dp * 0.82f
+    LaunchedEffect(Unit) {
+        repeat(8) {
+            val focused = runCatching {
+                TvMoreOptionsFocus.firstItem.requestFocus()
+            }.getOrDefault(false)
+            if (focused) return@LaunchedEffect
+            withFrameNanos { }
+        }
+    }
+    BackHandler {
+        if (owner.isEditSongSaving) return@BackHandler
+        if (owner.page != MoreOptionsPage.MAIN) owner.back() else owner.onDismissRequest()
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .zIndex(100f)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.52f))
+                .clickable(interactionSource = scrimInteraction, indication = null) {
+                    owner.onDismissRequest()
+                }
+        )
+        Surface(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 72.dp, end = 28.dp)
+                .fillMaxWidth(0.34f)
+                .widthIn(max = 560.dp)
+                .heightIn(max = maxSheetHeight)
+                .wrapContentHeight(),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surface
         ) {
             MoreOptionsSheetBody(owner.page, snackbarHostState, content)
         }
@@ -796,13 +888,52 @@ internal fun MoreOptionsAnimatedPage(
         onBack = { owner.back() },
         label = "more_options_sheet_content"
     )
+    // 电视上切页直接换内容：淡入 + 缩放这套在小屏上是「顺」，在大屏上只是多等 220ms
+    val tvNoPageAnimation = LocalIsTelevision.current
+    // 电视：二级页是把整棵子树换掉的，原来承载焦点的那个按钮随之销毁，
+    // 焦点就掉到面板外面去了 —— 表现出来就是「点进二级页，遥控器动了没反应」。
+    // 每页内容外侧包一个带 requester 的容器，切页后等布局落定再把焦点交给这个容器：
+    // 请求落在容器上时会自动往下找到该页第一个可聚焦项。
+    val tvPageFirstFocus = remember { FocusRequester() }
+    if (tvNoPageAnimation) {
+        LaunchedEffect(owner.page) {
+            // 先立刻试一次，别上来就先等一帧
+            if (runCatching { tvPageFirstFocus.requestFocus() }.getOrDefault(false)) {
+                return@LaunchedEffect
+            }
+            repeat(8) {
+                withFrameNanos { }
+                val focused = runCatching { tvPageFirstFocus.requestFocus() }
+                    .getOrDefault(false)
+                if (focused) return@LaunchedEffect
+            }
+        }
+        // 电视：连 AnimatedContent 都不走。即使把时长设成 0，它还是要组合一棵新子树、
+        // 再组合一遍旧子树做退场 —— 大页面上正好是一帧的卡顿，表现就是「进/出二级页顿一下」。
+        Box(Modifier.fillMaxWidth().focusRequester(tvPageFirstFocus)) {
+            content(owner.page)
+        }
+        return
+    }
     pageTransition.AnimatedContent(
         transitionSpec = {
-            (fadeIn(animationSpec = tween(220, delayMillis = 90)) +
-                scaleIn(initialScale = 0.92f, animationSpec = tween(220, delayMillis = 90)))
-                .togetherWith(fadeOut(animationSpec = tween(90)))
+            if (tvNoPageAnimation) {
+                fadeIn(animationSpec = tween(0)) togetherWith fadeOut(animationSpec = tween(0))
+            } else {
+                (fadeIn(animationSpec = tween(220, delayMillis = 90)) +
+                    scaleIn(initialScale = 0.92f, animationSpec = tween(220, delayMillis = 90)))
+                    .togetherWith(fadeOut(animationSpec = tween(90)))
+            }
         },
-        content = { targetState -> content(targetState) }
+        content = { targetState ->
+            if (tvNoPageAnimation && targetState == owner.page) {
+                Box(Modifier.fillMaxWidth().focusRequester(tvPageFirstFocus)) {
+                    content(targetState)
+                }
+            } else {
+                content(targetState)
+            }
+        }
     )
 }
 
@@ -817,6 +948,9 @@ private fun MoreOptionsListenTogetherPage(
             .fillMaxWidth()
             .bottomSheetScrollGuard()
             .verticalScroll(listenTogetherScrollState)
+            // 电视：最后一段只有文字、没有按钮，光标按不下去页面也就不滚了。
+            // 由滚动容器自己接管「已经无处可去」的下键，把剩下那段内容挪出来。
+            .tvEdgeScroll(listenTogetherScrollState)
             .padding(horizontal = 16.dp, vertical = 8.dp)
             .windowInsetsPadding(WindowInsets.navigationBars)
     ) {

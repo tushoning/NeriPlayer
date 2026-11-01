@@ -257,8 +257,18 @@ fun SafeModeScreen(
                         },
                         onExport = {
                             val currentReport = report ?: return@CrashLogPreviewCard
-                            exportReport = currentReport
-                            exportLauncher.launch(currentReport.file.name)
+                            // 电视（以及不少盒子）里根本没有能处理 CREATE_DOCUMENT 的文件
+                            // 选择器，直接 launch 会抛 ActivityNotFoundException 把进程打崩。
+                            // 兜住异常，改成提示用户用「复制日志」。
+                            val launched = runCatching {
+                                exportReport = currentReport
+                                exportLauncher.launch(currentReport.file.name)
+                            }.isSuccess
+                            if (!launched) {
+                                showMessage(
+                                    composeResources.getString(AppR.string.log_cannot_read)
+                                )
+                            }
                         }
                     )
                 }

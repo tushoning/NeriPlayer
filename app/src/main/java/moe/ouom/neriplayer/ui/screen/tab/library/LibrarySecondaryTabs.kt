@@ -9,8 +9,22 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import moe.ouom.neriplayer.ui.haptic.performHapticFeedback
+import moe.ouom.neriplayer.ui.tv.tvClampRowEnds
+import moe.ouom.neriplayer.ui.tv.tvFocusRing
+import moe.ouom.neriplayer.ui.tv.tvFocusGate
 import androidx.compose.ui.unit.dp
 import moe.ouom.neriplayer.ui.component.common.CleanSegmentedTabs
 import moe.ouom.neriplayer.ui.effect.glass.AdvancedGlassRole
@@ -36,7 +50,7 @@ internal fun LibrarySecondaryTabs(
             labels = labels,
             selectedIndex = selectedIndex,
             onSelected = onSelected,
-            modifier = modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+            modifier = modifier.padding(vertical = 6.dp)
         )
         return
     }
@@ -44,7 +58,10 @@ internal fun LibrarySecondaryTabs(
         role = AdvancedGlassRole.ScreenTopTab,
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp)
+            // 横向边距由外面的列表 contentPadding 提供（媒体库各页是 pageSidePaddingOr(8dp)），
+            // 这里再加一层会变成两层叠加 —— 标签行就比下面的内容短一截
+            .tvFocusGate()
+            .padding(vertical = 6.dp)
             .clip(LibrarySecondaryTabShape),
         shape = LibrarySecondaryTabShape,
         fallbackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f),
@@ -59,6 +76,11 @@ internal fun LibrarySecondaryTabs(
             labels.forEachIndexed { index, label ->
                 Tab(
                     selected = selectedIndex == index,
+                    // 电视：走到这一行两端就停住（否则按左会跳到上面的主标签栏/内容里）；
+                    // 焦点框以前是默认指示器（看不清），这里补一个胶囊环
+                    modifier = Modifier
+                        .tvClampRowEnds(index, labels.lastIndex)
+                        .tvFocusRing(color = MaterialTheme.colorScheme.primary),
                     onClick = { onSelected(index) },
                     selectedContentColor = MaterialTheme.colorScheme.primary,
                     unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,

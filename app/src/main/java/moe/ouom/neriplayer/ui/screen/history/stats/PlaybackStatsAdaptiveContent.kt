@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -43,6 +44,8 @@ import moe.ouom.neriplayer.ui.effect.glass.AdvancedGlassRole
 import moe.ouom.neriplayer.ui.effect.glass.AdvancedGlassSurface
 import moe.ouom.neriplayer.ui.haptic.HapticTextButton
 import moe.ouom.neriplayer.R as AppR
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 
 private val StatsTabletContentMaxWidth = 1200.dp
 private val StatsTabletColumnsMinWidth = 720.dp
@@ -59,8 +62,12 @@ internal data class PlaybackStatsLayout(
     val overviewWidth: Dp
 )
 
-internal fun resolvePlaybackStatsLayout(availableWidth: Dp, tablet: Boolean): PlaybackStatsLayout {
-    val padding = if (tablet) 24.dp else 8.dp
+internal fun resolvePlaybackStatsLayout(
+    availableWidth: Dp,
+    tablet: Boolean,
+    horizontalPadding: Dp = if (tablet) 24.dp else 8.dp
+): PlaybackStatsLayout {
+    val padding = horizontalPadding
     val contentWidth = (availableWidth - padding * 2).coerceAtLeast(0.dp)
         .let { if (tablet) minOf(it, StatsTabletContentMaxWidth) else it }
     return PlaybackStatsLayout(
@@ -83,17 +90,27 @@ internal fun PlaybackStatsContent(
     offlineMode: Boolean,
     miniPlayerHeight: Dp,
     tablet: Boolean,
+    showPeriodSelector: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val rankingListState = rememberLazyListState()
+    // 电视上概览用手机那种单卡三段式（图标在上、数值在中、文字在下），不再拆成三张小卡
+    val isTelevision = LocalIsTelevision.current
     val displayedRequest = state.loadedRequest ?: request
     val displayedSortMode = state.loadedQuery?.let { StatsSortMode.valueOf(it.sort.name) } ?: sortMode
     BoxWithConstraints(modifier.testTag("statsContent"), contentAlignment = Alignment.TopCenter) {
-        val layout = resolvePlaybackStatsLayout(maxWidth, tablet)
+        val layout = resolvePlaybackStatsLayout(
+            maxWidth, tablet, pageSidePaddingOr(if (tablet) 24.dp else 8.dp)
+        )
         val contentModifier = Modifier.widthIn(max = layout.contentWidth).fillMaxSize()
         if (layout.useColumns) {
             Column(contentModifier.testTag("statsTabletColumns")) {
-                StatsPeriodSelector(selectedPeriod, onPeriodSelected)
+                if (showPeriodSelector) {
+                    StatsPeriodSelector(
+                        selectedPeriod, onPeriodSelected,
+                        modifier = Modifier.padding(horizontal = 8.dp)
+                    )
+                }
                 StatsRefreshStatus(state, request, onPageRequest)
                 StatsCompatibilityNotice(state)
                 Spacer(Modifier.height(12.dp))
@@ -109,7 +126,7 @@ internal fun PlaybackStatsContent(
                     ) {
                         StatsOverviewCard(
                             state.summary.totalPlayCount, state.summary.totalListenMs,
-                            state.summary.trackCount, compact = true, stackMetrics = true,
+                            state.summary.trackCount, compact = !isTelevision, stackMetrics = true,
                             modifier = Modifier.testTag("statsOverview")
                         )
                         if (displayedRequest.offset == 0 && state.page.tracks.size >= 2) {
@@ -154,13 +171,18 @@ internal fun PlaybackStatsContent(
                 modifier = if (tablet) contentModifier.testTag("statsSingleColumn")
                     else Modifier.fillMaxSize().testTag("statsSingleColumn"),
                 contentPadding = PaddingValues(
-                    start = if (tablet) 0.dp else layout.horizontalPadding,
-                    end = if (tablet) 0.dp else layout.horizontalPadding,
+                    start = pageSidePaddingOr(if (tablet) 0.dp else layout.horizontalPadding),
+                    end = pageSidePaddingOr(if (tablet) 0.dp else layout.horizontalPadding),
                     top = 8.dp, bottom = 8.dp + miniPlayerHeight
                 )
             ) {
                 item {
-                    StatsPeriodSelector(selectedPeriod, onPeriodSelected)
+                    if (showPeriodSelector) {
+                        StatsPeriodSelector(
+                            selectedPeriod, onPeriodSelected,
+                            modifier = Modifier.padding(horizontal = 8.dp)
+                        )
+                    }
                     StatsRefreshStatus(state, request, onPageRequest)
                     Spacer(Modifier.height(12.dp))
                 }
@@ -171,7 +193,7 @@ internal fun PlaybackStatsContent(
                     item {
                         StatsOverviewCard(
                             state.summary.totalPlayCount, state.summary.totalListenMs,
-                            state.summary.trackCount, compact = tablet,
+                            state.summary.trackCount, compact = tablet && !isTelevision,
                             modifier = Modifier.testTag("statsOverview")
                         )
                         Spacer(Modifier.height(16.dp))

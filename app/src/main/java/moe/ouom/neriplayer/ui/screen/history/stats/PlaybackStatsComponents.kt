@@ -1,6 +1,7 @@
 package moe.ouom.neriplayer.ui.screen.history.stats
 
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
+import moe.ouom.neriplayer.ui.tv.tvFocusRing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -51,6 +52,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -65,6 +67,12 @@ import moe.ouom.neriplayer.R as AppR
 
 private const val CompactMetricGlassTintStrength = 0.7f
 
+/** 概览指标一行放几个 */
+private const val StatsMetricsPerRow = 2
+
+/** 简洁风格下「日/周/月/年/总」这一条的最大宽度 */
+private val StatsPeriodCleanMaxWidth = 560.dp
+
 private val StatsPeriodOptions = listOf(
     PlaybackStatsPeriod.DAY,
     PlaybackStatsPeriod.WEEK,
@@ -76,24 +84,27 @@ private val StatsPeriodOptions = listOf(
 @Composable
 internal fun StatsPeriodSelector(
     selectedPeriod: PlaybackStatsPeriod,
-    onPeriodSelected: (PlaybackStatsPeriod) -> Unit
+    onPeriodSelected: (PlaybackStatsPeriod) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     if (NeriDesign.isClean) {
         CleanSegmentedTabs(
             labels = StatsPeriodOptions.map { stringResource(it.labelResId()) },
             selectedIndex = StatsPeriodOptions.indexOf(selectedPeriod).coerceAtLeast(0),
             onSelected = { index -> onPeriodSelected(StatsPeriodOptions[index]) },
-            modifier = Modifier.padding(horizontal = 12.dp),
-            maxFixedItems = StatsPeriodOptions.size
+            // 宽度限位恢复成 560dp（上一轮误解成「解除限位」，结果拉满整屏）；
+            // 用户要解除的是**焦点左右移动的限制**，用 clampRowEnds = false 放行
+            modifier = modifier
+                .widthIn(max = StatsPeriodCleanMaxWidth)
+                .padding(horizontal = 12.dp),
+            maxFixedItems = StatsPeriodOptions.size,
+            clampRowEnds = false
         )
         return
     }
     val overBackground = LocalHasCustomBackground.current
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 8.dp),
+        modifier = modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         StatsPeriodOptions.forEach { period ->
@@ -146,34 +157,55 @@ internal fun StatsOverviewCard(
     stackMetrics: Boolean = false
 ) {
     if (compact) {
-        val metrics: @Composable (Modifier) -> Unit = { metricModifier ->
-            CompactStatMetric(
-                Icons.Outlined.Headphones, totalPlayCount.toString(),
-                stringResource(AppR.string.stats_total_plays),
-                metricModifier.testTag("statsMetricPlays")
-            )
-            CompactStatMetric(
-                Icons.Outlined.AccessTime, formatListenDuration(totalListenMs),
-                stringResource(AppR.string.stats_total_time),
-                metricModifier.testTag("statsMetricListenTime")
-            )
-            CompactStatMetric(
-                Icons.Outlined.LibraryMusic, trackCount.toString(),
-                stringResource(AppR.string.stats_track_count),
-                metricModifier.testTag("statsMetricTracks")
-            )
-        }
+        val metrics: List<@Composable (Modifier) -> Unit> = listOf(
+            { metricModifier ->
+                CompactStatMetric(
+                    Icons.Outlined.Headphones, totalPlayCount.toString(),
+                    stringResource(AppR.string.stats_total_plays),
+                    metricModifier.testTag("statsMetricPlays")
+                )
+            },
+            { metricModifier ->
+                CompactStatMetric(
+                    Icons.Outlined.AccessTime, formatListenDuration(totalListenMs),
+                    stringResource(AppR.string.stats_total_time),
+                    metricModifier.testTag("statsMetricListenTime")
+                )
+            },
+            { metricModifier ->
+                CompactStatMetric(
+                    Icons.Outlined.LibraryMusic, trackCount.toString(),
+                    stringResource(AppR.string.stats_track_count),
+                    metricModifier.testTag("statsMetricTracks")
+                )
+            }
+        )
         if (stackMetrics) {
+            // 一行两个：竖着排三个满宽的卡片太长，也浪费横向空间。
+            // 奇数个时最后一行只放一个，右边留空，宽度和上面那行保持一致。
             Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                metrics(Modifier.fillMaxWidth())
+                metrics.chunked(StatsMetricsPerRow).forEach { chunk ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        chunk.forEach { metric ->
+                            metric(Modifier.weight(1f))
+                        }
+                        repeat(StatsMetricsPerRow - chunk.size) {
+                            Spacer(Modifier.weight(1f))
+                        }
+                    }
+                }
             }
         } else {
             Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                metrics(Modifier.weight(1f))
+                metrics.forEach { metric -> metric(Modifier.weight(1f)) }
             }
         }
         return
     }
+    // 手机/电视共用：一个卡片装三项，图标在上、数值在中、文字在下
     val shape = neriRoundedShape(16.dp)
     val baseColor = MaterialTheme.colorScheme.secondaryContainer
     AdvancedGlassSurface(
@@ -186,23 +218,27 @@ internal fun StatsOverviewCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 20.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly
+                .padding(horizontal = 12.dp, vertical = 18.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             StatMetric(
                 icon = Icons.Outlined.Headphones,
                 value = totalPlayCount.toString(),
-                label = stringResource(AppR.string.stats_total_plays)
+                label = stringResource(AppR.string.stats_total_plays),
+                modifier = Modifier.weight(1f).testTag("statsMetricPlays")
             )
             StatMetric(
                 icon = Icons.Outlined.AccessTime,
                 value = formatListenDuration(totalListenMs),
-                label = stringResource(AppR.string.stats_total_time)
+                label = stringResource(AppR.string.stats_total_time),
+                modifier = Modifier.weight(1f).testTag("statsMetricListenTime")
             )
             StatMetric(
                 icon = Icons.Outlined.LibraryMusic,
                 value = trackCount.toString(),
-                label = stringResource(AppR.string.stats_track_count)
+                label = stringResource(AppR.string.stats_track_count),
+                modifier = Modifier.weight(1f).testTag("statsMetricTracks")
             )
         }
     }
@@ -234,9 +270,10 @@ private fun CompactStatMetric(icon: ImageVector, value: String, label: String, m
 private fun StatMetric(
     icon: ImageVector,
     value: String,
-    label: String
+    label: String,
+    modifier: Modifier = Modifier
 ) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Icon(
             icon,
             contentDescription = null,
@@ -248,12 +285,14 @@ private fun StatMetric(
             value,
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center
         )
         Text(
             label,
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
         )
     }
 }
@@ -368,7 +407,10 @@ internal fun StatTrackRow(
     Card(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            // 电视上不加焦点环的话，光标落进列表完全看不出来（"按两下就不知道焦点在哪"）
+            .tvFocusRing(MaterialTheme.colorScheme.primary, cornerRadius = 12.dp),
         shape = neriRoundedShape(12.dp),
         colors = CardDefaults.cardColors(
             containerColor = Color.Transparent,

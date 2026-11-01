@@ -50,6 +50,7 @@ import moe.ouom.neriplayer.ui.screen.artist.creatorFollowFailureText
 import moe.ouom.neriplayer.ui.i18n.UiText
 import moe.ouom.neriplayer.ui.i18n.asString
 import java.io.IOException
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 
 /**
  * 模块五 艺人关注按钮。
@@ -110,7 +111,9 @@ internal fun SongEncyclopediaArtistFollowButton(
                     }
                 }
             },
-            enabled = !updating,
+            // 电视：更新中把按钮禁用会**直接丢焦点**（点完红心光标就不知道跑哪去了）。
+            // 改成始终可聚焦，忙碌时靠 onClick 里的 `if (updating) return` 拦住重复点击。
+            enabled = LocalIsTelevision.current || !updating,
             modifier = if (compact) {
                 Modifier.size(48.dp).semantics { contentDescription = actionLabel }
             } else {

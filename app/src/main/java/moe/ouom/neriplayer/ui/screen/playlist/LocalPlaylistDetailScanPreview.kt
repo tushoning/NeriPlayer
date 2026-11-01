@@ -71,6 +71,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -201,6 +202,7 @@ internal fun LocalScanPreviewScreen(
         },
         topBar = {
             TopAppBar(
+                modifier = Modifier.padding(horizontal = pageSidePaddingOr(0.dp)),
                 title = { Text(resolvedTitle) },
                 navigationIcon = {
                     HapticIconButton(onClick = onBack) {

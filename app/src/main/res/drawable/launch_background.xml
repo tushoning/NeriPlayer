@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 冷启动首帧之前的系统启动窗口：底色 + 应用图标，
+     不再让用户对着纯黑屏等（原先 windowDisablePreview 直接关掉了预览窗口） -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/launch_background" />
+    <item
+        android:drawable="@drawable/ic_neriplayer_round"
+        android:gravity="center"
+        android:width="96dp"
+        android:height="96dp" />
+</layer-list>

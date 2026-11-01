@@ -23,6 +23,9 @@ package moe.ouom.neriplayer.ui.screen.playlist
  * Created: 2025/8/10
  */
 
+import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.LocalIndication
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
 import moe.ouom.neriplayer.data.identity.sameIdentityAs
 import moe.ouom.neriplayer.data.identity.stableKey
@@ -98,6 +101,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import moe.ouom.neriplayer.ui.component.playlist.NeriSongRow
 import moe.ouom.neriplayer.ui.component.playlist.PlaylistLoadErrorDialog
 import moe.ouom.neriplayer.ui.component.playlist.playlistLoadErrorText
 import moe.ouom.neriplayer.ui.i18n.asString
@@ -111,6 +115,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
+import moe.ouom.neriplayer.ui.tv.tvScrollToTopOnUp
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
@@ -177,6 +184,16 @@ import moe.ouom.neriplayer.util.search.playlistSearchValues
 import kotlin.random.Random
 import kotlin.time.Duration.Companion.milliseconds
 import moe.ouom.neriplayer.R as AppR
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.TvRowMenuKeyEffect
+import moe.ouom.neriplayer.ui.tv.TvRowMenuKeyState
+import moe.ouom.neriplayer.ui.tv.rememberTvInitialFocus
+import moe.ouom.neriplayer.ui.tv.rememberTvMenuFirstItemFocus
+import moe.ouom.neriplayer.ui.tv.rememberTvRowMenuKeyState
+import moe.ouom.neriplayer.ui.tv.tvBringIntoViewOnFocus
+import moe.ouom.neriplayer.ui.tv.tvInitialFocus
+import moe.ouom.neriplayer.ui.tv.tvRowMenuKeyPress
+import moe.ouom.neriplayer.ui.tv.tvTrapFocus
 
 internal fun isNeteaseCollectionHeaderForRoute(
     header: NeteaseCollectionHeader?,
@@ -301,6 +318,10 @@ fun NeteaseAlbumDetailScreen(
         }
     }
 
+    // 电视：从播放页跳到专辑页时这一页不会自动拿到焦点（遥控器直接失灵）。
+    // 包一层带 requester 的容器，焦点请求会往下落到第一个可聚焦项（顶栏返回键）。
+    val tvInitialFocus = rememberTvInitialFocus()
+    Box(modifier = Modifier.fillMaxSize().tvInitialFocus(tvInitialFocus)) {
     DetailScreen(
         ui = ui,
         playlistId = album.id,
@@ -315,6 +336,7 @@ fun NeteaseAlbumDetailScreen(
         onSongClick = onSongClick,
         offlineMode = offlineMode
     )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -569,14 +591,28 @@ fun DetailScreen(
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             Surface(
-                modifier = Modifier.fillMaxSize(),
+                // 电视：焦点不许从这一页漏回下面那一层（列表加载中 / 标签切换时最容易发生）
+                modifier = Modifier.fillMaxSize().tvTrapFocus(),
                 color = Color.Transparent
             ) {
                 val miniPlayerHeight = LocalMiniPlayerHeight.current
                 Column {
                     // 顶部栏: 普通模式 / 多选模式
                     if (!selectionMode) {
+                        Box(
+                            modifier = Modifier
+                                .padding(horizontal = pageSidePaddingOr(0.dp))
+                                .tvPlaylistTopBarShape()
+                        ) {
+                            // 顶栏背景直接用头图：和下面那张是同一块裁剪，接得上
+                            PlaylistTopBarCoverBackdrop(
+                                coverUrl = displayCoverUrl,
+                                offlineMode = offlineMode,
+                                heroHeight = playlistHeroHeight,
+                                alpha = 1f - playlistChromeCollapseProgress
+                            )
                         TopAppBar(
+                            modifier = Modifier.fillMaxWidth(),
                             title = {
                                 Text(
                                     text = ui.header?.name ?: stringResource(CoreCommonR.string.playlist_title),
@@ -640,17 +676,21 @@ fun DetailScreen(
                             },
                             windowInsets = WindowInsets.statusBars,
                             colors = TopAppBarDefaults.topAppBarColors(
-                                containerColor = playlistTopBarColor,
-                                scrolledContainerColor = playlistTopBarColor,
+                                containerColor = Color.Transparent,
+                                scrolledContainerColor = Color.Transparent,
                                 titleContentColor = playlistTopBarContentColor,
                                 navigationIconContentColor = playlistTopBarContentColor,
                                 actionIconContentColor = playlistTopBarContentColor
                             )
                         )
+                        }
                     } else {
                         val allSelected =
                             selectedIds.size == ui.tracks.size && ui.tracks.isNotEmpty()
                         TopAppBar(
+                            modifier = Modifier
+                                .padding(horizontal = pageSidePaddingOr(0.dp))
+                                .tvPlaylistTopBarShape(),
                     title = {
                         Text(
                             pluralStringResource(
@@ -766,6 +806,8 @@ fun DetailScreen(
                             LazyColumn(
                                 state = listState,
                                 contentPadding = PaddingValues(
+                                    start = pageSidePaddingOr(0.dp),
+                                    end = pageSidePaddingOr(0.dp),
                                     bottom = 24.dp + miniPlayerHeight
                                 ),
                                 modifier = Modifier.fillMaxSize()
@@ -778,6 +820,9 @@ fun DetailScreen(
                                         offlineMode = offlineMode,
                                         height = playlistHeroHeight,
                                         actionsRevealProgress = searchVisibilityEased,
+                                        // 头图继续铺到「全部播放」那一行下面
+                                        topBleed = playlistTopBarBleed(),
+                                            backgroundBleed = PlaylistActionSheetBleed,
                                         coverContentDescription = heroTitle,
                                         actions = if (headerSearchVisible) {
                                             {
@@ -813,9 +858,11 @@ fun DetailScreen(
                                 PlaylistModernActionSheet(
                                     coverUrl = displayCoverUrl,
                                     offlineMode = offlineMode,
-                                    hasCustomBackground = hasCustomBackground
+                                    hasCustomBackground = hasCustomBackground,
+                                    overHeroImage = true
                                 ) {
                                         PlaylistModernPlaybackActions(
+                                            modifier = Modifier.tvScrollToTopOnUp(listState),
                                             songCount = ui.tracks.size,
                                             shuffleEnabled = shuffleEnabled,
                                             repeatMode = repeatMode,
@@ -1086,7 +1133,6 @@ private fun RetryChip(onClick: () -> Unit) {
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun SongRow(
     index: Int,
@@ -1106,250 +1152,31 @@ internal fun SongRow(
     snackbarHostState: SnackbarHostState,
     offlineMode: Boolean
 ) {
-    val context = LocalContext.current
-    val composeResources = LocalResources.current
-    val clipboard = LocalClipboard.current
-    val scope = rememberCoroutineScope()
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .combinedClickable(
-                onClick = hapticRowAction(context, if (selectionMode) onToggleSelect else onClick),
-                onLongClick = onLongPress
-            )
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        SongRowLeading(
-            index = index,
-            selectionMode = selectionMode,
-            selected = selected,
-            onToggleSelect = onToggleSelect
-        )
-        SongRowCover(song = song, showCover = showCover, offlineMode = offlineMode)
-
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = song.displayName(),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.titleMedium,
-                color = playlistModernListPrimaryContentColor()
-            )
-            Text(
-                text = neteaseSongSubtitle(song.displayArtist(), song.album),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodySmall,
-                color = playlistModernListSecondaryContentColor()
-            )
-        }
-
-        SongRowTrailing(
-            isCurrentSong = isCurrentSong,
-            animatePlayingIndicator = animatePlayingIndicator,
-            durationMs = song.durationMs
-        )
-
-        // 更多操作菜单
-        if (!selectionMode) {
-            SongRowMoreMenu(
-                song = song,
-                isFavorite = isFavorite,
-                onFavoriteToggle = onFavoriteToggle,
-                onPlayNext = onPlayNext,
-                onAddToQueueEnd = onAddToQueueEnd,
-                onCopySongInfo = copySongInfoAction(
-                    scope = scope,
-                    clipboard = clipboard,
-                    snackbarHostState = snackbarHostState,
-                    resources = composeResources,
-                    songInfo = "${song.displayName()}-${song.displayArtist()}"
-                )
-            )
-        }
-    }
+    NeriSongRow(
+        index = index,
+        song = song,
+        onClick = onClick,
+        subtitle = neteaseSongSubtitle(song.displayArtist(), song.album),
+        showCover = showCover,
+        offlineMode = offlineMode,
+        isCurrentSong = isCurrentSong,
+        animatePlayingIndicator = animatePlayingIndicator,
+        selectionMode = selectionMode,
+        selected = selected,
+        onToggleSelect = onToggleSelect,
+        onLongClick = onLongPress,
+        isFavorite = isFavorite,
+        onFavoriteToggle = onFavoriteToggle,
+        onPlayNext = onPlayNext,
+        onAddToQueueEnd = onAddToQueueEnd,
+        snackbarHostState = snackbarHostState
+    )
 }
 
 internal fun neteaseSongSubtitle(displayArtist: String, album: String): String = listOfNotNull(
     displayArtist.takeIf { it.isNotBlank() },
     album.takeIf { it.isNotBlank() }?.replace("Netease", "") ?: ""
 ).joinToString(" · ")
-
-@Composable
-private fun SongRowLeading(
-    index: Int,
-    selectionMode: Boolean,
-    selected: Boolean,
-    onToggleSelect: () -> Unit
-) {
-    Box(
-        modifier = Modifier.width(48.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        if (selectionMode) {
-            Checkbox(
-                checked = selected,
-                onCheckedChange = { onToggleSelect() }
-            )
-        } else {
-            Text(
-                text = index.toString(),
-                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                color = playlistModernListTertiaryContentColor(),
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Clip,
-                textAlign = TextAlign.Center
-            )
-        }
-    }
-}
-
-@Composable
-private fun SongRowCover(song: SongItem, showCover: Boolean, offlineMode: Boolean) {
-    val itemContext = LocalContext.current
-    val displayCoverUrl = rememberSongDisplayCoverUrl(song)
-    if (showCover && !displayCoverUrl.isNullOrBlank()) {
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(neriRoundedShape(10.dp))
-                .background(
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    shape = neriRoundedShape(10.dp)
-                )
-        ) {
-            AsyncImage(
-                model = offlineCachedImageRequest(
-                    context = itemContext,
-                    data = displayCoverUrl,
-                    offlineMode = offlineMode
-                ),
-                contentDescription = song.displayName(),
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.matchParentSize()
-            )
-        }
-        Spacer(Modifier.width(12.dp))
-    }
-}
-
-@Composable
-private fun SongRowTrailing(
-    isCurrentSong: Boolean,
-    animatePlayingIndicator: Boolean,
-    durationMs: Long
-) {
-    if (isCurrentSong) {
-        PlayingIndicator(
-            color = MaterialTheme.colorScheme.primary,
-            animate = animatePlayingIndicator
-        )
-    } else {
-        Text(
-            text = formatDuration(durationMs),
-            style = MaterialTheme.typography.bodySmall,
-            color = playlistModernListSecondaryContentColor()
-        )
-    }
-}
-
-@Composable
-private fun SongRowMoreMenu(
-    song: SongItem,
-    isFavorite: Boolean,
-    onFavoriteToggle: (SongItem, Boolean) -> Unit,
-    onPlayNext: () -> Unit,
-    onAddToQueueEnd: () -> Unit,
-    onCopySongInfo: () -> Unit
-) {
-    var showMoreMenu by remember { mutableStateOf(false) }
-    Box {
-        IconButton(
-            onClick = { showMoreMenu = true }
-        ) {
-            Icon(
-                Icons.Filled.MoreVert,
-                contentDescription = stringResource(CoreCommonR.string.cd_more_actions),
-                tint = playlistModernListSecondaryContentColor()
-            )
-        }
-
-        DropdownMenu(
-            expanded = showMoreMenu,
-            onDismissRequest = { showMoreMenu = false }
-        ) {
-            DropdownMenuItem(
-                text = { Text(stringResource(CoreCommonR.string.local_playlist_play_next)) },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Outlined.PlaylistPlay,
-                        contentDescription = null
-                    )
-                },
-                onClick = {
-                    onPlayNext()
-                    showMoreMenu = false
-                }
-            )
-            DropdownMenuItem(
-                text = { Text(stringResource(CoreCommonR.string.playlist_add_to_end)) },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Outlined.PlaylistAdd,
-                        contentDescription = null
-                    )
-                },
-                onClick = {
-                    onAddToQueueEnd()
-                    showMoreMenu = false
-                }
-            )
-            DropdownMenuItem(
-                text = {
-                    Text(
-                        stringResource(
-                            if (isFavorite) {
-                                CoreCommonR.string.favorite_remove
-                            } else {
-                                CoreCommonR.string.favorite_add
-                            }
-                        )
-                    )
-                },
-                leadingIcon = {
-                    Icon(
-                        imageVector = if (isFavorite) {
-                            Icons.Filled.Favorite
-                        } else {
-                            Icons.Outlined.FavoriteBorder
-                        },
-                        contentDescription = null
-                    )
-                },
-                onClick = {
-                    onFavoriteToggle(song, isFavorite)
-                    showMoreMenu = false
-                }
-            )
-            DropdownMenuItem(
-                text = { Text(stringResource(CoreCommonR.string.action_copy_song_info)) },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Outlined.ContentCopy,
-                        contentDescription = null
-                    )
-                },
-                onClick = {
-                    onCopySongInfo()
-                    showMoreMenu = false
-                }
-            )
-        }
-    }
-}
 
 internal fun hapticRowAction(context: Context, action: () -> Unit): () -> Unit = {
     context.performHapticFeedback()

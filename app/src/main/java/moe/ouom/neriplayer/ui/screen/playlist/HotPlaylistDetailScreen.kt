@@ -31,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -75,6 +76,7 @@ fun HotPlaylistDetailScreen(
         contentWindowInsets = WindowInsets.statusBars,
         topBar = {
             TopAppBar(
+                modifier = Modifier.padding(horizontal = pageSidePaddingOr(0.dp)),
                 title = { Text(title) },
                 navigationIcon = {
                     HapticIconButton(onClick = onBack) {
@@ -121,8 +123,8 @@ fun HotPlaylistDetailScreen(
                     .fillMaxSize()
                     .padding(padding),
                 contentPadding = PaddingValues(
-                    start = 8.dp,
-                    end = 8.dp,
+                    start = pageSidePaddingOr(8.dp),
+                    end = pageSidePaddingOr(8.dp),
                     top = 8.dp,
                     bottom = 8.dp + LocalMiniPlayerHeight.current
                 )

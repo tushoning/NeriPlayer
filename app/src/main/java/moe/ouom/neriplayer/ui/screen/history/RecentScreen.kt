@@ -39,6 +39,8 @@ import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -83,15 +85,20 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -133,6 +140,15 @@ import moe.ouom.neriplayer.ui.screen.playlist.shouldRequestPlaylistSearchFocus
 import kotlin.random.Random
 import kotlin.time.Duration.Companion.milliseconds
 import moe.ouom.neriplayer.R as AppR
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.LocalTvRowMenuKeyState
+import moe.ouom.neriplayer.ui.tv.TvRowMenuKeyEffect
+import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
+import moe.ouom.neriplayer.ui.tv.rememberTvMenuFirstItemFocus
+import moe.ouom.neriplayer.ui.tv.rememberTvRowMenuKeyState
+import moe.ouom.neriplayer.ui.tv.tvBringIntoViewOnFocus
+import moe.ouom.neriplayer.ui.tv.tvFocusExitTo
+import moe.ouom.neriplayer.ui.tv.tvRowMenuKeyPress
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -185,6 +201,17 @@ fun RecentScreen(
 
     // 搜索
     var showSearch by rememberSaveable { mutableStateOf(false) }
+    // 电视：从媒体库标签进这一页时，默认焦点落到顶栏返回按钮上，
+    // 而不是直接掉进第一首歌（返回按钮就成了「按上才能勉强碰到」的位置）。
+    val backFocus = remember { FocusRequester() }
+    val isTelevision = LocalIsTelevision.current
+    LaunchedEffect(Unit) {
+        if (!isTelevision) return@LaunchedEffect
+        repeat(6) {
+            runCatching { backFocus.requestFocus() }
+            withFrameNanos { }
+        }
+    }
     var query by rememberSaveable { mutableStateOf("") }
     val searchFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -247,6 +274,7 @@ fun RecentScreen(
                         displayedSongs = displayedSongs,
                         hasHistory = hasHistory,
                         onBack = onBack,
+                        backFocusRequester = backFocus,
                         onToggleSearch = {
                             if (showSearch) {
                                 showSearch = false
@@ -305,8 +333,15 @@ fun RecentScreen(
                 }
 
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 16.dp + mini)
+                    modifier = Modifier
+                        .fillMaxSize()
+                        // 电视：列表第一项再按上不能穿到上一层，回到本页返回按钮
+                        .tvFocusExitTo(FocusDirection.Up, backFocus),
+                    contentPadding = PaddingValues(
+                        start = pageSidePaddingOr(0.dp),
+                        end = pageSidePaddingOr(0.dp),
+                        bottom = 16.dp + mini
+                    )
                 ) {
                     itemsIndexed(
                         items = displayed.rows,
@@ -343,6 +378,8 @@ fun RecentScreen(
                             },
                             moreMenu = {
                                 var showMenu by remember { mutableStateOf(false) }
+                                TvRowMenuKeyEffect { showMenu = true }
+                                val firstItemFocus = rememberTvMenuFirstItemFocus(showMenu)
                                 Box {
                                     IconButton(onClick = { showMenu = true }) {
                                         Icon(
@@ -364,6 +401,7 @@ fun RecentScreen(
                                                     contentDescription = null
                                                 )
                                             },
+                                            modifier = Modifier.focusRequester(firstItemFocus),
                                             onClick = {
                                                 PlayerManager.addToQueueNext(song)
                                                 showMenu = false
@@ -500,12 +538,17 @@ internal fun RecentBrowseTopBar(
     onBack: () -> Unit,
     onToggleSearch: () -> Unit,
     onSongClick: (List<SongItem>, Int) -> Unit,
-    onRequestClear: () -> Unit
+    onRequestClear: () -> Unit,
+    backFocusRequester: FocusRequester? = null
 ) {
     TopAppBar(
+        modifier = Modifier.padding(horizontal = pageSidePaddingOr(0.dp)),
         title = { Text(stringResource(CoreCommonR.string.recent_title)) },
         navigationIcon = {
-            HapticIconButton(onClick = onBack) {
+            HapticIconButton(
+                onClick = onBack,
+                modifier = backFocusRequester?.let { Modifier.focusRequester(it) } ?: Modifier
+            ) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = stringResource(CoreCommonR.string.cd_back)
@@ -581,6 +624,7 @@ internal fun RecentSelectionTopBar(
     val allSelected =
         selectedKeys.size == displayedSongs.size && displayedSongs.isNotEmpty()
     TopAppBar(
+        modifier = Modifier.padding(horizontal = pageSidePaddingOr(0.dp)),
         title = {
             Text(
                 pluralStringResource(
@@ -684,17 +728,28 @@ internal fun RecentRowRich(
         Color.Transparent
     }
 
+    // 电视上三点按钮不参与焦点，改成「光标停在这一行时按菜单键」
+    val isTelevision = LocalIsTelevision.current
+    val tvRowMenuState = rememberTvRowMenuKeyState()
+    CompositionLocalProvider(LocalTvRowMenuKeyState provides tvRowMenuState) {
     Row(
         modifier = Modifier
             .graphicsLayer { scaleX = rowScale; scaleY = rowScale }
             .fillMaxWidth()
             .clip(rowShape)
             .background(rowContainerColor)
+            .tvBringIntoViewOnFocus()
+            .tvRowMenuKeyPress(tvRowMenuState, enabled = isTelevision && !selectionMode)
+            // 焦点环和歌单页歌曲行同一套：12dp 圆角；先外扩 15，再内缩 5 → 内收 15
             .combinedClickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = rememberTvFocusRingIndication(12.dp, insetHorizontal = 15.dp)
+                    ?: LocalIndication.current,
                 onClick = recentRowClickAction(selectionMode, onToggleSelect, onClick),
                 onLongClick = onLongPress
             )
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            // 和其它歌单页歌曲行一致：16/12，另外左右各再内缩 5
+            .padding(horizontal = 21.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 序号 / 播放指示
@@ -720,8 +775,18 @@ internal fun RecentRowRich(
             modifier = Modifier.weight(1f)
         )
 
+        // 时长放在三点前面（和歌单页歌曲行一样）
+        Text(
+            text = formatDuration(song.durationMs),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1
+        )
+        Spacer(Modifier.width(4.dp))
+
         // 右侧更多
         moreMenu()
+    }
     }
 }
 
@@ -732,8 +797,7 @@ internal fun recentSongPrimaryTitle(song: SongItem): String {
 
 internal fun recentSongSecondaryText(song: SongItem, primaryTitle: String): String = listOfNotNull(
     recentLocalTagTitle(song, primaryTitle),
-    song.displayArtist().takeIf { it.isNotBlank() },
-    formatDuration(song.durationMs)
+    song.displayArtist().takeIf { it.isNotBlank() }
 ).joinToString(" · ")
 
 private fun recentLocalTagTitle(song: SongItem, primaryTitle: String): String? {
@@ -756,7 +820,8 @@ private fun RecentRowLeading(
     isPlaying: Boolean,
     onToggleSelect: () -> Unit
 ) {
-    Box(Modifier.width(40.dp), contentAlignment = Alignment.Center) {
+    // 序号块宽度和其它歌单页一致（48dp），序号才对得上
+    Box(Modifier.width(48.dp), contentAlignment = Alignment.Center) {
         if (selectionMode) {
             Checkbox(
                 checked = selected,

@@ -32,12 +32,23 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import moe.ouom.neriplayer.ui.tv.tvClampLeft
+import moe.ouom.neriplayer.ui.tv.tvClampRight
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.LocalTvRowMenuKeyState
+import moe.ouom.neriplayer.ui.tv.TvRowMenuKeyEffect
+import moe.ouom.neriplayer.ui.tv.rememberTvMenuFirstItemFocus
+import moe.ouom.neriplayer.ui.tv.rememberTvRowMenuKeyState
+import moe.ouom.neriplayer.ui.tv.tvBringIntoViewOnFocus
+import moe.ouom.neriplayer.ui.tv.tvRowMenuKeyPress
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -239,6 +250,7 @@ private fun LinkedCollectionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .tvBringIntoViewOnFocus()
             .clickable {
                 context.performHapticFeedback()
                 onClick()
@@ -365,22 +377,31 @@ internal fun SongRow(
     actions: ExploreSongRowActions
 ) {
     val context = LocalContext.current
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable {
-                context.performHapticFeedback()
-                actions.onClick()
-            }
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        SongRowIndex(state.index)
-        SongRowCover(state.song, state.offlineMode)
-        SongRowIdentity(state.song, Modifier.weight(1f))
-        SongRowDuration(state.song.durationMs)
-        Spacer(Modifier.width(8.dp))
-        SongRowMoreButton(state, actions)
+    val isTelevision = LocalIsTelevision.current
+    // 电视上三点按钮不可聚焦，改成「光标停在这一行时按菜单键」弹出同一个菜单
+    val tvRowMenuState = rememberTvRowMenuKeyState()
+    CompositionLocalProvider(LocalTvRowMenuKeyState provides tvRowMenuState) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                // 整行占满宽度，左边没有兄弟节点：按左会一路往上跑到顶部标签栏
+                .tvClampLeft()
+                .tvBringIntoViewOnFocus()
+            .tvRowMenuKeyPress(tvRowMenuState, enabled = isTelevision)
+                .clickable {
+                    context.performHapticFeedback()
+                    actions.onClick()
+                }
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SongRowIndex(state.index)
+            SongRowCover(state.song, state.offlineMode)
+            SongRowIdentity(state.song, Modifier.weight(1f))
+            SongRowDuration(state.song.durationMs)
+            Spacer(Modifier.width(8.dp))
+            SongRowMoreButton(state, actions)
+        }
     }
 }
 
@@ -405,8 +426,13 @@ internal class ExploreSongRowActions(
 @Composable
 private fun SongRowMoreButton(state: ExploreSongRowState, actions: ExploreSongRowActions) {
     var showMoreMenu by remember { mutableStateOf(false) }
+    TvRowMenuKeyEffect { showMoreMenu = true }
     Box {
-        HapticIconButton(onClick = { showMoreMenu = true }) {
+        HapticIconButton(
+            onClick = { showMoreMenu = true },
+            // 这是本行最后一个可聚焦控件：再按右会掉到分页器上，整页跟着翻
+            modifier = Modifier.tvClampRight()
+        ) {
             Icon(
                 imageVector = Icons.Filled.MoreVert,
                 contentDescription = stringResource(CoreCommonR.string.cd_more_actions),
@@ -511,12 +537,15 @@ private fun ExploreSongActionMenu(
     onToggleFavorite: () -> Unit,
     onCopyInfo: () -> Unit
 ) {
+    // 电视：菜单一出来光标就落在第一个按钮上
+    val firstItemFocus = rememberTvMenuFirstItemFocus(expanded)
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
         SongMenuAction(
             textRes = CoreCommonR.string.search_result_play_keep_queue,
             icon = Icons.Filled.PlayCircle,
             enabled = true,
-            onClick = { onPlayNow(); onDismiss() }
+            onClick = { onPlayNow(); onDismiss() },
+            modifier = Modifier.focusRequester(firstItemFocus)
         )
         SongMenuAction(
             textRes = CoreCommonR.string.local_playlist_play_next,
@@ -558,13 +587,15 @@ private fun SongMenuAction(
     @StringRes textRes: Int,
     icon: ImageVector,
     enabled: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     DropdownMenuItem(
         text = { Text(stringResource(textRes)) },
         leadingIcon = { Icon(imageVector = icon, contentDescription = null) },
         enabled = enabled,
+        modifier = modifier,
         onClick = {
             context.performHapticFeedback()
             onClick()

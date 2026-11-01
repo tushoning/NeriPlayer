@@ -18,8 +18,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusManager
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusTarget
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalFocusManager
@@ -43,6 +46,9 @@ import moe.ouom.neriplayer.ui.animation.LocalSharedCoverFlight
 import moe.ouom.neriplayer.ui.animation.SharedCoverFlightState
 import moe.ouom.neriplayer.util.media.RetainedPlaybackCoverBitmapCache
 import moe.ouom.neriplayer.ui.theme.NeriTheme
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.TvCleanFocusRingRadius
+import moe.ouom.neriplayer.ui.tv.TvNowPlayingFocus
 import moe.ouom.neriplayer.ui.util.hasKnownEmptyLocalCover
 import moe.ouom.neriplayer.util.platform.PHONE_SMALLEST_SCREEN_WIDTH_DP
 
@@ -120,6 +126,7 @@ internal fun shouldUseNowPlayingContainerMorph(
     smallestScreenWidthDp: Int
 ): Boolean = smallestScreenWidthDp < PHONE_SMALLEST_SCREEN_WIDTH_DP
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 internal fun AppNowPlayingOverlay(
     visible: Boolean,
@@ -136,6 +143,20 @@ internal fun AppNowPlayingOverlay(
     val focusManager = LocalFocusManager.current
     val textToolbar = LocalTextToolbar.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val isTelevision = LocalIsTelevision.current
+    // 电视上覆盖层一出来就得把光标抢进来，否则方向键还在下面那层看不见的界面上跑。
+    // 请求器必须绑在浮层里真实存在的按钮上（播放/暂停），不能绑在浮层根节点上：
+    // 根节点挂的是 canFocus=false，那种节点不接受焦点请求。
+    LaunchedEffect(visible, isTelevision) {
+        if (!visible || !isTelevision) return@LaunchedEffect
+        // 等两帧：覆盖层刚挂载时节点还没进入焦点树
+        withFrameNanos { }
+        withFrameNanos { }
+        runCatching { TvNowPlayingFocus.playPause.requestFocus() }
+        // 按钮可能比浮层外壳晚一帧挂上，补一次很便宜
+        withFrameNanos { }
+        runCatching { TvNowPlayingFocus.playPause.requestFocus() }
+    }
     LaunchedEffect(visible) {
         if (visible) {
             dismissState.reset()
@@ -174,16 +195,48 @@ internal fun AppNowPlayingOverlay(
                     // phone morphs own the back preview, while tablets keep the default transform
                     .then(if (useContainerMorph) Modifier else Modifier.predictiveDismissTransform(dismissState))
                     .blockUnderlyingTouches()
+                    // 电视：焦点进入这个盒子（会被转交给第一个可聚焦的控件），
+                    // 并且不允许再往外跑，避免方向键把光标送回浮层下面
+                    .then(
+                        if (isTelevision) {
+                            Modifier
+                                .focusProperties {
+                                    // 这一层只当「焦点边界」用，本身不是可聚焦目标，
+                                    // 免得方向键在浮层里停在一个看不见的空位上。
+                                    // 真正的落焦由内部播放/暂停按钮上的 requestFocus 完成。
+                                    canFocus = false
+                                    // 方向键想跑出浮层时原地取消，避免焦点回到下面看不见的界面。
+                                    // 收起过程中放开，好让焦点交还给顶部标签栏。
+                                    onExit = { if (visible) cancelFocusChange() }
+                                }
+                                .focusTarget()
+                        } else {
+                            Modifier
+                        }
+                    )
             ) {
                 NowPlayingBackdrop(
                     NowPlayingBackdropRequest(cover, queueFlow, background)
                 )
 
                 CompositionLocalProvider(LocalMiniPlayerHeight provides 0.dp) {
-                    content()
+                    // 电视：这一层里的焦点环圆角统一按「简洁风格」那一档画。
+                    // 播放页的浮层是一级套一级的自绘面板，各自传各自的圆角，
+                    // 换个主题风格就会一层一个样。
+                    TvCleanFocusRingRadius {
+                        content()
+                    }
                 }
             }
         }
+    }
+    // 电视：不要任何入场/退场动画。
+    // 之前这里走的是「容器变形」——从底部迷你播放器那个胶囊长成整页，四角圆角一路收缩，
+    // 电视上看着就是「整页先缩一下再弹开」。电视是 1.5 米外看的整屏切换，
+    // 直接出现/直接消失最干净，也最快。
+    if (isTelevision) {
+        if (visible) overlayBody()
+        return
     }
     if (useContainerMorph) {
         val backPreviewEnabled = LocalPredictiveBackPreviewEnabled.current

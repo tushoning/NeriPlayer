@@ -1,23 +1,37 @@
 package moe.ouom.neriplayer.ui.screen.playlist
 
+import moe.ouom.neriplayer.ui.haptic.HapticFeedbackEffect
+import moe.ouom.neriplayer.ui.haptic.performHapticFeedback
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.tvFocusRing
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.CircleShape
@@ -44,13 +58,20 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithCache
@@ -59,6 +80,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathOperation
@@ -66,11 +88,16 @@ import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.addOutline
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import android.content.Context
 import android.content.res.Configuration
@@ -82,6 +109,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.constrainHeight
 import androidx.compose.ui.unit.dp
@@ -447,6 +475,67 @@ private val PlaylistActionSheetShape = RoundedCornerShape(
 )
 private const val PlaylistSheetLightAlpha = 0.18f
 private const val PlaylistSheetDarkAlpha = 0.24f
+
+/**
+ * 头图往下多铺出来的那一截。
+ *
+ * 「全部播放」那一行自己是不透明底色，它上边缘只有 28dp 圆角缺口是空的 ——
+ * 头图要正好盖住这块缺口，缺口里看到的才是头图，而不是补上去的纯色。
+ *
+ * 只给「圆角 + 4dp」：
+ * - 少一点（< 28dp）缺口就只铺一半，露出两条纯色三角；
+ * - 多一点（曾给过 90dp）图会从这一行下面穿出来，压到第一首歌行上，
+ *   看起来就像这一栏"半透明"。
+ * 这一行的实际高度约 59dp，32dp 只会落在它自己的范围里。
+ */
+internal val PlaylistActionSheetBleed = PlaylistActionSheetCornerRadius + 4.dp
+
+/** 顶栏（返回那一行）高度，头图要往上铺这么多才能和顶栏接上 */
+internal val PlaylistChromeTopBarHeight = 64.dp
+
+/**
+ * 顶栏实际占的高度：TopAppBar 自身 64dp + 状态栏内边距。
+ *
+ * 头图往上铺多少、顶栏那张背景图按多高来裁，都要用同一个值，
+ * 否则两段图缩放不一样，接缝处会错开一截。
+ */
+@Composable
+internal fun playlistTopBarBleed(): Dp =
+    PlaylistChromeTopBarHeight + WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+
+/** 顶栏（返回那一行）/「全部播放」那一行共用的上边缘圆角 */
+internal val PlaylistChromeCornerRadius = PlaylistActionSheetCornerRadius
+
+/**
+ * 歌单详情页顶栏在电视上的造型：上边缘和「全部播放」那一行一样的圆角。
+ *
+ * 手机上是整屏通栏，套圆角反而像贴了个卡片，所以只在电视上生效。
+ */
+@Composable
+internal fun Modifier.tvPlaylistTopBarShape(useHeroColor: Boolean = true): Modifier {
+    if (!LocalIsTelevision.current) return this
+    val shape = RoundedCornerShape(
+        topStart = PlaylistChromeCornerRadius,
+        topEnd = PlaylistChromeCornerRadius,
+        bottomEnd = 0.dp,
+        bottomStart = 0.dp
+    )
+    // 和「全部播放」面板同一套：先用 `background(color, shape)` 画一块**抗锯齿**的圆角底，
+    // 再把照片 clip 到同一个形状盖上去。
+    // 这样看到的轮廓是那块底的边（drawPath 填充，抗锯齿），照片自己那条 clip 出来的
+    // 硬边被压在底下、只露出不到一个像素，圆角就是平滑的。
+    // （纯 clip 时看到的正是照片那条不抗锯齿的边，所以是一排台阶。）
+    // 网易云歌单页顶栏在取色 Provider 之外，底色本来就是 surface；
+    // 本地歌单整页在 Provider 里，若跟着用头图色，滚到底会变成一条彩色条，
+    // 和网易云对不上。所以这里允许显式要求「跟网易云一样用 surface」。
+    val baseColor = if (useHeroColor) {
+        LocalPlaylistHeroVisualColors.current
+            .backgroundOr(MaterialTheme.colorScheme.surface)
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
+    return background(baseColor, shape).clip(shape)
+}
 
 internal val LOCAL_PLAYLIST_FIXED_ITEM_KEYS = setOf(
     LOCAL_PLAYLIST_HEADER_KEY,
@@ -1083,6 +1172,36 @@ private fun playlistModernUsesDarkSurface(): Boolean {
     ) < 0.5
 }
 
+/**
+ * 把一个「比容器高」的图层塞进容器里。
+ *
+ * **不能用 `BoxScope.align()`**：实测它在条链路上不生效（会被落成居中），
+ * 头图/顶栏两张背景图就是因此错开的 —— 日志里 top/bottom 跟任何 align 都对不上，
+ * 只跟「居中」对得上。
+ *
+ * 这里自己算：**尺寸报成容器大小**（父布局怎么摆偏移都是 0，与 align 无关），
+ * 图层再用**显式的 top 偏移**落位，越界部分画到容器外面去。
+ *
+ * 注意 `measurable.measure(constraints)` 必须**原样传约束**：
+ * 高度是外层 `requiredHeight` 定的，一旦改掉它，图片就按原图比例量成 1736 高（=宽），
+ * 越界范围直接翻几倍。
+ *
+ * 用 top 偏移（而不是「贴底」）是故意的：top 偏移只跟容器的**上边界**和 dp 常量有关，
+ * 和容器实测高度、和行内容有没有被字撑高都没关系 —— 换缩放/换字体也不会错开。
+ *
+ * @param topPx 图层顶边相对容器顶边的偏移（px），可以给负数往容器上方画
+ * @param containerHeightPx 容器高度，只用来「把自身尺寸报成容器大小」
+ */
+private fun Modifier.placeLayerInContainer(
+    topPx: Int,
+    containerHeightPx: Int
+): Modifier = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    layout(constraints.maxWidth, containerHeightPx) {
+        placeable.place(0, topPx)
+    }
+}
+
 @Composable
 internal fun PlaylistModernHeroHeader(
     displayName: String,
@@ -1092,6 +1211,10 @@ internal fun PlaylistModernHeroHeader(
     height: Dp,
     coverContentDescription: String = displayName,
     actionsRevealProgress: Float = 1f,
+    /** 背景图往下多铺多少（铺进「全部播放」那一行上边缘的圆角缺口） */
+    backgroundBleed: Dp = 0.dp,
+    /** 背景图往上多铺多少（铺到顶栏下面，顶栏自己的背景也换成这张图） */
+    topBleed: Dp = 0.dp,
     actions: (@Composable () -> Unit)? = null
 ) {
     val context = LocalContext.current
@@ -1101,15 +1224,99 @@ internal fun PlaylistModernHeroHeader(
         offlineMode = offlineMode
     )
 
+    val density = LocalDensity.current
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = height)
-            .background(visualColors.background)
+            .onGloballyPositioned { coords ->
+                // 排查用，别删：头图顶边应该正好等于顶栏的 y + h。
+                android.util.Log.i(
+                    "NERI_TV_H",
+                    "hero y=${coords.positionInWindow().y.toInt()} h=${coords.size.height} " +
+                        "param=${with(density) { height.toPx() }.toInt()} " +
+                        "w=${coords.size.width}"
+                )
+            }
     ) {
+        // 底色垫在最下面：内容（标题 + 搜索框）撑得比 height 高时，图片只按 height 算，
+        // 底下多出来的那一截露出来的就是这块底色，而不是透明/花屏。
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(visualColors.background)
+        )
+        // 背景层。用 matchParentSize 套一层，内层再用 requiredHeight 撑到「头图 + 多铺出来的部分」，
+        // 这样它不影响头图自身高度，又能在父布局不裁剪的情况下画到自己范围之外。
+        BoxWithConstraints(modifier = Modifier.matchParentSize()) {
+            val containerHeightPx = constraints.maxHeight
+            if (!coverUrl.isNullOrBlank()) {
+                // 把「顶栏 + 头图 + 圆角缺口」当成一整块来裁这张图：
+                // 顶栏里画的是这一块最上面那一段，头图里画的是它下面那一段。
+                // 两处必须用**同一个**高度来裁，否则缩放不一样，接缝处就成两张图了 ——
+                // 这里只能用 height 参数，不能拿实测高度（实测含搜索框，会比 height 高一截）。
+                //
+                // 对齐方式：**贴底**（底边 = 头图下边界 + backgroundBleed），
+                // 靠 `placeLayerInContainer` 自己算，不走 `align()`（见这个函数的注释）。
+                // 底边要盖满「全部播放」那一行的圆角缺口；顶边由块高推出来，正好落在顶栏上边缘。
+                val backgroundHeight = topBleed + height + backgroundBleed
+                // 顶边 = 头图顶边 - topBleed = 顶栏上边缘：和顶栏那张图的顶边是同一条线，
+                // 谁也不用去测对方的高度。
+                val topPx = -with(density) { topBleed.toPx() }.roundToInt()
+                AsyncImage(
+                    model = offlineCachedImageRequest(
+                        context = context,
+                        data = coverUrl,
+                        sizePx = 720,
+                        allowHardware = false,
+                        offlineMode = offlineMode
+                    ),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .requiredHeight(backgroundHeight)
+                        .placeLayerInContainer(
+                            topPx = topPx,
+                            containerHeightPx = containerHeightPx
+                        )
+                        .onGloballyPositioned { coords ->
+                            // 排查用，别删：底边应该 = 头图下边界 + backgroundBleed，
+                            // 顶边应该和顶栏那张图同一个 y（logcat -s NERI_TV_H）。
+                            val bounds = coords.boundsInWindow()
+                            android.util.Log.i(
+                                "NERI_TV_H",
+                                "heroPhoto top=${bounds.top.toInt()} " +
+                                    "bottom=${bounds.bottom.toInt()} h=${coords.size.height} " +
+                                    "block=${with(density) { backgroundHeight.toPx() }.toInt()}"
+                            )
+                        }
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .requiredHeight(backgroundHeight)
+                        .placeLayerInContainer(
+                            topPx = topPx,
+                            containerHeightPx = containerHeightPx
+                        )
+                        .background(
+                            Brush.verticalGradient(
+                                0f to Color.Black.copy(alpha = 0.18f),
+                                0.5f to Color.Black.copy(alpha = 0.52f),
+                                1f to Color.Black.copy(alpha = 0.82f)
+                            )
+                        )
+                )
+            }
+        }
         Column(
             modifier = Modifier
-                .align(Alignment.TopStart)
+                // 竖向居中：封面图 / 标题这一块整体居中，封面中心就落在头图中心。
+                // 用「铺满高度 + 内容居中」而不是 `align(Center)`，同样是为了绕开 align。
+                .fillMaxHeight()
+                .wrapContentHeight(Alignment.CenterVertically)
                 .fillMaxWidth()
                 .padding(start = 20.dp, top = 6.dp, end = 20.dp, bottom = 6.dp)
         ) {
@@ -1182,6 +1389,108 @@ internal fun PlaylistModernHeroHeader(
     }
 }
 
+/**
+ * 顶栏（返回那一行）的背景：直接画头图。
+ *
+ * 高度按「顶栏 + 头图 + 圆角缺口」整块算，顶栏里显示的就是这块图最上面那一段，
+ * 和下面头图里显示的那一段接得上，看起来是一张图从顶上铺下来。
+ *
+ * 两边各自锚一条**确定的边**，谁也不靠位移猜：
+ * - 这张（顶栏里）：贴顶栏上边缘，高度 = 整块；
+ * - 头图里那张：贴「头图下边界 + 圆角那一截」，高度相同。
+ * 而顶栏高度 == 头图要往上铺的那一截（都是 `64dp + 状态栏`），
+ * 所以两张图的 top/bottom 会落在同一处。
+ *
+ * @param heroHeight 下面头图的高度，必须和传给 [PlaylistModernHeroHeader] 的一致
+ * @param alpha 跟着顶栏一起淡出（页面往上滚时顶栏本来会渐变到透明）
+ */
+@Composable
+internal fun BoxScope.PlaylistTopBarCoverBackdrop(
+    coverUrl: String?,
+    offlineMode: Boolean,
+    heroHeight: Dp,
+    alpha: Float = 1f
+) {
+    if (coverUrl.isNullOrBlank() || alpha <= 0.01f) return
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val topBleed = playlistTopBarBleed()
+    val totalHeight = topBleed + heroHeight + PlaylistActionSheetBleed
+    BoxWithConstraints(
+        // 必须 matchParentSize：以前用 fillMaxSize，Column 里的顶栏被撑到整屏高，
+        // 下面「全部播放」和歌曲列表全被挤到屏幕外面去了。
+        modifier = Modifier
+            .matchParentSize()
+            .onGloballyPositioned { coords ->
+                // 排查用，别删：顶栏的窗口 y 和高度必须和头图接上（logcat -s NERI_TV_H）。
+                android.util.Log.i(
+                    "NERI_TV_H",
+                    "bar y=${coords.positionInWindow().y.toInt()} h=${coords.size.height} " +
+                        "bleed=${with(density) { topBleed.toPx() }.toInt()} " +
+                        "block=${with(density) { totalHeight.toPx() }.toInt()} " +
+                        "w=${coords.size.width}"
+                )
+                // 头图那张是按「顶栏上边缘」定位的，前提是顶栏实际高度 == playlistTopBarBleed()。
+                // 两者不一致（换了顶栏实现 / 主题改了高度）就会错开，这里主动报警。
+                val barHeightPx = coords.size.height
+                val topBleedPx = with(density) { topBleed.toPx() }.roundToInt()
+                if (kotlin.math.abs(barHeightPx - topBleedPx) > 1) {
+                    android.util.Log.w(
+                        "NERI_TV_H",
+                        "顶栏高度 ${barHeightPx}px 与 playlistTopBarBleed() ${topBleedPx}px 不一致，" +
+                            "头图会错开 —— 需要让 PlaylistChromeTopBarHeight 跟随顶栏实际高度"
+                    )
+                }
+            }
+            .graphicsLayer { this.alpha = alpha }
+    ) {
+        val containerHeightPx = constraints.maxHeight
+        AsyncImage(
+            model = offlineCachedImageRequest(
+                context = context,
+                data = coverUrl,
+                sizePx = 720,
+                allowHardware = false,
+                offlineMode = offlineMode
+            ),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxWidth()
+                .requiredHeight(totalHeight)
+                .placeLayerInContainer(
+                    topPx = 0,
+                    containerHeightPx = containerHeightPx
+                )
+                .onGloballyPositioned { coords ->
+                    // 排查用，别删：这张图的 top/bottom 必须和头图那张完全一致。
+                    val bounds = coords.boundsInWindow()
+                    android.util.Log.i(
+                        "NERI_TV_H",
+                        "barPhoto top=${bounds.top.toInt()} bottom=${bounds.bottom.toInt()} " +
+                            "h=${coords.size.height} alpha=$alpha"
+                    )
+                }
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .requiredHeight(totalHeight)
+                .placeLayerInContainer(
+                    topPx = 0,
+                    containerHeightPx = containerHeightPx
+                )
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Black.copy(alpha = 0.18f),
+                        0.5f to Color.Black.copy(alpha = 0.52f),
+                        1f to Color.Black.copy(alpha = 0.82f)
+                    )
+                )
+        )
+    }
+}
+
 @Composable
 internal fun LocalPlaylistHeroHeader(
     displayName: String,
@@ -1192,6 +1501,8 @@ internal fun LocalPlaylistHeroHeader(
     offlineMode: Boolean,
     height: Dp,
     actionsRevealProgress: Float = 1f,
+    backgroundBleed: Dp = 0.dp,
+    topBleed: Dp = 0.dp,
     actions: (@Composable () -> Unit)? = null
 ) {
     PlaylistModernHeroHeader(
@@ -1206,6 +1517,8 @@ internal fun LocalPlaylistHeroHeader(
         offlineMode = offlineMode,
         height = height,
         actionsRevealProgress = actionsRevealProgress,
+        backgroundBleed = backgroundBleed,
+        topBleed = topBleed,
         actions = actions
     )
 }
@@ -1432,6 +1745,15 @@ internal fun PlaylistModernActionSheet(
     shape: Shape = PlaylistActionSheetShape,
     cornerGapHeight: Dp = PlaylistActionSheetCornerRadius,
     hasCustomBackground: Boolean = false,
+    /**
+     * 头图铺到了这一行上边缘的圆角缺口里。
+     *
+     * 生效时这一行必须是**不透明的纯色底**（不再是玻璃底）：
+     * 头图就从这一行下面走过，半透明的底会把图透上来，
+     * 看起来就是"全部播放这一栏是半透明的"。
+     * 图只在圆角那两块缺口里露出来。
+     */
+    overHeroImage: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val visualColors = rememberPlaylistHeroVisualColors(
@@ -1445,23 +1767,41 @@ internal fun PlaylistModernActionSheet(
         Box(
             modifier = modifier
                 .fillMaxWidth()
+                .onGloballyPositioned { coords ->
+                    android.util.Log.i(
+                        "NERI_TV_H",
+                        "actions y=${coords.positionInWindow().y.toInt()} h=${coords.size.height}"
+                    )
+                }
         ) {
-            PlaylistActionSheetCornerGapLayer(
-                shape = shape,
-                color = visualColors.background,
-                gapHeight = cornerGapHeight
-            )
-            AdvancedGlassSurface(
-                role = AdvancedGlassRole.PlaylistSheet,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .wrapContentHeight(),
-                shape = shape,
-                fallbackColor = fallbackColor,
-                tintColor = tintColor,
-                enabled = glassEnabled
-            ) {
-                content()
+            if (overHeroImage) {
+                // 不透明底 + 圆角：先铺一块抗锯齿的圆角底，再把内容裁进同一个形状。
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(playlistModernListContainerColor(), shape)
+                        .clip(shape)
+                ) {
+                    content()
+                }
+            } else {
+                PlaylistActionSheetCornerGapLayer(
+                    shape = shape,
+                    color = visualColors.background,
+                    gapHeight = cornerGapHeight
+                )
+                AdvancedGlassSurface(
+                    role = AdvancedGlassRole.PlaylistSheet,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .wrapContentHeight(),
+                    shape = shape,
+                    fallbackColor = fallbackColor,
+                    tintColor = tintColor,
+                    enabled = glassEnabled
+                ) {
+                    content()
+                }
             }
         }
     }
@@ -1526,7 +1866,9 @@ internal fun PlaylistModernPlaybackActions(
     onShufflePlay: () -> Unit,
     onToggleShuffle: () -> Unit,
     onCycleRepeatMode: () -> Unit,
-    onExportToLocalPlaylist: () -> Unit
+    onExportToLocalPlaylist: () -> Unit,
+    /** B 站视频这类没有「导出到本地歌单」概念的内容把这一颗按钮藏起来 */
+    showExport: Boolean = true
 ) {
     val canUseSongs = songCount > 0
     val visualColors = LocalPlaylistHeroVisualColors.current
@@ -1557,7 +1899,10 @@ internal fun PlaylistModernPlaybackActions(
                 colors = IconButtonDefaults.filledIconButtonColors(
                     containerColor = accentColor,
                     contentColor = onAccentColor
-                )
+                ),
+                // 节点 44dp、可见圆 40dp（圆心重合）→ 环内收 1dp 后再算上基础 1dp，
+                // 正好是一圈直径 40dp 的圆，和圆边严丝合缝。
+                ringInset = 1.dp
             ) {
                 Icon(
                     Icons.Filled.PlayArrow,
@@ -1565,6 +1910,7 @@ internal fun PlaylistModernPlaybackActions(
                     modifier = Modifier.size(26.dp)
                 )
             }
+
             Text(
                 text = playLabel,
                 style = MaterialTheme.typography.titleMedium,
@@ -1591,12 +1937,14 @@ internal fun PlaylistModernPlaybackActions(
                 active = repeatMode != Player.REPEAT_MODE_OFF,
                 onClick = onCycleRepeatMode
             )
-            PlaylistCompactIconButton(
-                imageVector = Icons.AutoMirrored.Outlined.PlaylistAdd,
-                contentDescription = stringResource(CoreCommonR.string.playlist_export_to_local),
-                enabled = shouldEnableLocalPlaylistQuickExport(songCount),
-                onClick = onExportToLocalPlaylist,
-            )
+            if (showExport) {
+                PlaylistCompactIconButton(
+                    imageVector = Icons.AutoMirrored.Outlined.PlaylistAdd,
+                    contentDescription = stringResource(CoreCommonR.string.playlist_export_to_local),
+                    enabled = shouldEnableLocalPlaylistQuickExport(songCount),
+                    onClick = onExportToLocalPlaylist,
+                )
+            }
         }
     }
 }

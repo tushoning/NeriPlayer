@@ -73,6 +73,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -107,6 +108,8 @@ import moe.ouom.neriplayer.ui.viewmodel.tab.PlaylistSummary
 import moe.ouom.neriplayer.ui.viewmodel.tab.YouTubeMusicPlaylist
 import moe.ouom.neriplayer.ui.haptic.HapticIconButton
 import moe.ouom.neriplayer.ui.haptic.HapticTextButton
+import moe.ouom.neriplayer.ui.tv.tvClampLeft
+import moe.ouom.neriplayer.ui.tv.tvBringIntoViewOnFocus
 import moe.ouom.neriplayer.util.format.formatPlayCount
 import moe.ouom.neriplayer.util.media.offlineCachedImageRequest
 import org.burnoutcrew.reorderable.ItemPosition
@@ -241,7 +244,7 @@ internal fun FavoritePlaylistList(
     val cardShape = neriRoundedShape(12.dp)
     LazyColumn(
         state = reorderState.listState,
-        contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 8.dp + miniPlayerHeight),
+        contentPadding = PaddingValues(start = pageSidePaddingOr(8.dp), end = pageSidePaddingOr(8.dp), top = 8.dp, bottom = 8.dp + miniPlayerHeight),
         verticalArrangement = Arrangement.spacedBy(4.dp),
         modifier = Modifier
             .fillMaxSize()
@@ -399,6 +402,8 @@ internal fun FavoritePlaylistList(
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                             .animateItem()
                             .clip(cardShape)
+                            .tvClampLeft()
+                            .tvBringIntoViewOnFocus()
                             .clickable { onHotPlaylistClick(playlist.period) }
                     ) {
                         ListItem(
@@ -509,11 +514,13 @@ internal fun FavoritePlaylistList(
                         modifier = Modifier
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                             .animateItem()
-                            .clip(cardShape)
-                            .combinedClickable(
-                                onClick = {
-                                    if (sortMode) {
-                                        toggleSelection(itemKey)
+                        .clip(cardShape)
+                        .tvClampLeft()
+                        .tvBringIntoViewOnFocus()
+                        .combinedClickable(
+                            onClick = {
+                                if (sortMode) {
+                                    toggleSelection(itemKey)
                                         return@combinedClickable
                                     }
                                     when (favorite.source) {
@@ -726,7 +733,7 @@ internal fun QqMusicPlaylistList(
     val cardShape = neriRoundedShape(12.dp)
     LazyColumn(
         state = listState,
-        contentPadding = PaddingValues(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 8.dp + miniPlayerHeight),
+        contentPadding = PaddingValues(start = pageSidePaddingOr(8.dp), end = pageSidePaddingOr(8.dp), top = 8.dp, bottom = 8.dp + miniPlayerHeight),
         verticalArrangement = Arrangement.spacedBy(4.dp),
         modifier = Modifier.fillMaxSize()
     ) {

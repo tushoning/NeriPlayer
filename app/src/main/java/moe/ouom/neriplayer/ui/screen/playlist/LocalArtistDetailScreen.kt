@@ -6,6 +6,8 @@ import moe.ouom.neriplayer.data.identity.stableKey
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -35,9 +37,14 @@ import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -59,6 +66,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.layout.ContentScale
@@ -90,6 +98,15 @@ import moe.ouom.neriplayer.data.local.media.displayName
 import moe.ouom.neriplayer.data.model.stableKey
 import moe.ouom.neriplayer.data.playlist.usage.PlaylistUsageRepository
 import moe.ouom.neriplayer.ui.navigation.LocalMiniPlayerHeight
+import moe.ouom.neriplayer.core.player.PlayerManager
+import moe.ouom.neriplayer.ui.theme.LocalHasCustomBackground
+import moe.ouom.neriplayer.util.format.formatDuration
+import moe.ouom.neriplayer.ui.component.playlist.NeriSongRow
+import moe.ouom.neriplayer.ui.component.playlist.PlaylistChromeTopBar
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
+import moe.ouom.neriplayer.ui.tv.tvScrollToTopOnUp
+import kotlin.random.Random
 import moe.ouom.neriplayer.ui.screen.artist.CreatorDetailAdaptiveLayout
 import moe.ouom.neriplayer.ui.screen.artist.CreatorDetailProfileCard
 import moe.ouom.neriplayer.ui.component.download.BatchDownloadManagerSheet
@@ -139,6 +156,7 @@ private fun LocalArtistDetailLoadingScreen(
             containerColor = androidx.compose.ui.graphics.Color.Transparent,
             topBar = {
                 TopAppBar(
+                    modifier = Modifier.padding(horizontal = pageSidePaddingOr(0.dp)),
                     title = {
                         Text(
                             text = artistName,
@@ -240,6 +258,8 @@ fun LocalArtistDetailScreen(
     var selectionMode by remember(artistKey) { mutableStateOf(false) }
     var selectedKeys by remember(artistKey) { mutableStateOf<Set<String>>(emptySet()) }
     var showExportSheet by remember(artistKey) { mutableStateOf(false) }
+    // 「全部播放」那一行的导出：把整页歌曲当作导出内容（不是选中项）
+    var exportAllSongs by remember(artistKey) { mutableStateOf<List<SongItem>>(emptyList()) }
     var showDownloadManager by remember(artistKey) { mutableStateOf(false) }
     val downloadTaskSummary by GlobalDownloadManager.downloadTaskSummary.collectAsState()
     val hasDownloadManagerEntry = downloadTaskSummary.hasDownloadManagerEntry
@@ -328,22 +348,13 @@ fun LocalArtistDetailScreen(
             },
             topBar = {
                 if (!selectionMode) {
-                    TopAppBar(
-                        title = {
-                            Text(
-                                text = title,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        },
-                        navigationIcon = {
-                            HapticIconButton(onClick = onBack) {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.ArrowBack,
-                                    contentDescription = stringResource(CoreCommonR.string.action_back)
-                                )
-                            }
-                        },
+                    PlaylistChromeTopBar(
+                        title = title,
+                        coverUrl = headerCover,
+                        offlineMode = offlineMode,
+                        heroHeight = PlaylistModernHeroHeight,
+                        listState = listState,
+                        onBack = onBack,
                         actions = {
                             HapticIconButton(
                                 enabled = songs.isNotEmpty(),
@@ -364,8 +375,7 @@ fun LocalArtistDetailScreen(
                                 HapticIconButton(onClick = { showDownloadManager = true }) {
                                     Icon(
                                         Icons.Outlined.Download,
-                                        contentDescription = stringResource(CoreCommonR.string.cd_download_manager),
-                                        tint = MaterialTheme.colorScheme.primary
+                                        contentDescription = stringResource(CoreCommonR.string.cd_download_manager)
                                     )
                                 }
                             }
@@ -382,12 +392,7 @@ fun LocalArtistDetailScreen(
                                     contentDescription = stringResource(CoreCommonR.string.cd_play_all)
                                 )
                             }
-                        },
-                        windowInsets = WindowInsets.statusBars,
-                        colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = androidx.compose.ui.graphics.Color.Transparent,
-                            scrolledContainerColor = MaterialTheme.colorScheme.surface
-                        )
+                        }
                     )
                 } else {
                     val displayedSongKeys = displayedSongs.map { it.stableKey() }.toSet()
@@ -396,6 +401,9 @@ fun LocalArtistDetailScreen(
                         displayedKeys = displayedSongKeys
                     )
                     TopAppBar(
+                        modifier = Modifier
+                            .padding(horizontal = pageSidePaddingOr(0.dp))
+                            .tvPlaylistTopBarShape(),
                         title = {
                             Text(
                                 pluralStringResource(
@@ -518,20 +526,32 @@ fun LocalArtistDetailScreen(
                     }
                 },
                 offlineMode = offlineMode,
+                onExportAll = {
+                    exportAllSongs = displayedSongs
+                    showExportSheet = true
+                },
                 modifier = Modifier.padding(padding)
             )
         }
 
         if (showExportSheet) {
+            val exportSongs = if (exportAllSongs.isNotEmpty()) {
+                exportAllSongs
+            } else {
+                songs.filter { it.stableKey() in selectedKeys }
+            }
             PlaylistExportSheet(
                 title = stringResource(CoreCommonR.string.local_playlist_export_to),
                 playlists = playlists.filterNot {
                     LocalFilesPlaylist.isSystemPlaylist(it, context)
                 },
-                selectedCount = selectedKeys.size,
-                onDismissRequest = { showExportSheet = false },
+                selectedCount = exportSongs.size,
+                onDismissRequest = {
+                    showExportSheet = false
+                    exportAllSongs = emptyList()
+                },
                 onCreateAndExport = { name ->
-                    val selectedSongs = songs.filter { it.stableKey() in selectedKeys }
+                    val selectedSongs = exportSongs
                     scope.launchLocalPlaylistMutation(
                         operation = "createPlaylistFromLocalArtist",
                         onResult = { result ->
@@ -546,9 +566,10 @@ fun LocalArtistDetailScreen(
                         repo.createPlaylistWithPreparedSongs(name, selectedSongs)
                     }
                     exitSelectionMode()
+                    exportAllSongs = emptyList()
                 },
                 onExportToPlaylist = { target ->
-                    val selectedSongs = songs.filter { it.stableKey() in selectedKeys }
+                    val selectedSongs = exportSongs
                     scope.launchLocalPlaylistMutation(
                         operation = "exportSongsFromLocalArtist",
                         onResult = { result ->
@@ -565,6 +586,7 @@ fun LocalArtistDetailScreen(
                         repo.addPreparedSongsToPlaylistWithResult(target.id, selectedSongs)
                     }
                     exitSelectionMode()
+                    exportAllSongs = emptyList()
                 }
             )
         }
@@ -601,9 +623,34 @@ internal fun LocalArtistDetailContent(
     onToggleSelect: (SongItem) -> Unit,
     onLongClick: (SongItem) -> Unit,
     offlineMode: Boolean,
+    onExportAll: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val miniPlayerHeight = LocalMiniPlayerHeight.current
+    if (LocalIsTelevision.current) {
+        LocalArtistTvContent(
+            title = title,
+            headerCover = headerCover,
+            songCount = songCount,
+            durationMs = durationMs,
+            displayedSongs = displayedSongs,
+            listState = listState,
+            showSearch = showSearch,
+            searchQuery = searchQuery,
+            searchFocusRequester = searchFocusRequester,
+            selectionMode = selectionMode,
+            selectedKeys = selectedKeys,
+            downloadPresenceVersion = downloadPresenceVersion,
+            onQueryChange = onQueryChange,
+            onSongClick = onSongClick,
+            onToggleSelect = onToggleSelect,
+            onLongClick = onLongClick,
+            onExportAll = onExportAll,
+            offlineMode = offlineMode,
+            modifier = modifier
+        )
+        return
+    }
     CreatorDetailAdaptiveLayout(
         tabletDevice = LocalConfiguration.current.smallestScreenWidthDp >= 600,
         miniPlayerHeight = miniPlayerHeight,
@@ -636,8 +683,8 @@ internal fun LocalArtistDetailContent(
             LazyColumn(
                 state = listState,
                 contentPadding = PaddingValues(
-                    start = 16.dp,
-                    end = 16.dp,
+                    start = pageSidePaddingOr(16.dp),
+                    end = pageSidePaddingOr(16.dp),
                     top = 12.dp,
                     bottom = if (tabletLayout) 12.dp else 12.dp + miniPlayerHeight
                 ),
@@ -693,6 +740,148 @@ internal fun LocalArtistDetailContent(
 }
 
 @Composable
+private fun LocalArtistTvContent(
+    title: String,
+    headerCover: String?,
+    songCount: Int,
+    durationMs: Long,
+    displayedSongs: List<SongItem>,
+    listState: LazyListState,
+    showSearch: Boolean,
+    searchQuery: String,
+    searchFocusRequester: FocusRequester,
+    selectionMode: Boolean,
+    selectedKeys: Set<String>,
+    downloadPresenceVersion: Int,
+    onQueryChange: (String) -> Unit,
+    onSongClick: (List<SongItem>, Int) -> Unit,
+    onToggleSelect: (SongItem) -> Unit,
+    onLongClick: (SongItem) -> Unit,
+    onExportAll: () -> Unit,
+    offlineMode: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val miniPlayerHeight = LocalMiniPlayerHeight.current
+    val shuffleEnabled by PlayerManager.shuffleModeFlow.collectAsState()
+    val repeatMode by PlayerManager.repeatModeFlow.collectAsState()
+    val hasCustomBackground = LocalHasCustomBackground.current
+    val subtitle = stringResource(
+        CoreCommonR.string.local_artist_total_duration,
+        formatTotalDuration(context, durationMs),
+        songCount
+    )
+
+    // 电视上整页换成歌单详情页的版式：大封面头图 → 「全部播放」那一行 → 歌曲列表，
+    // 边距也照抄（外层不缩进，各行自带内边距）
+    Column(modifier = modifier.fillMaxSize()) {
+        AnimatedVisibility(showSearch && !selectionMode) {
+            PlaylistModernVisualColorsProvider(
+                coverUrl = headerCover,
+                offlineMode = offlineMode
+            ) {
+                PlaylistModernDockedSearchField(
+                    query = searchQuery,
+                    onQueryChange = onQueryChange,
+                    placeholder = stringResource(CoreCommonR.string.search_artist_songs),
+                    focusRequester = searchFocusRequester
+                )
+            }
+        }
+        LazyColumn(
+            state = listState,
+            contentPadding = PaddingValues(
+                start = pageSidePaddingOr(0.dp),
+                end = pageSidePaddingOr(0.dp),
+                bottom = 24.dp + miniPlayerHeight
+            ),
+            modifier = Modifier.weight(1f).fillMaxWidth()
+        ) {
+            item(key = "local_artist_hero") {
+                PlaylistModernHeroHeader(
+                    displayName = title,
+                    coverUrl = headerCover,
+                    subtitle = subtitle,
+                    offlineMode = offlineMode,
+                    height = PlaylistModernHeroHeight,
+                    // 头图继续铺到「全部播放」那一行下面
+                    topBleed = playlistTopBarBleed(),
+                                            backgroundBleed = PlaylistActionSheetBleed
+                )
+            }
+            item(key = "local_artist_actions") {
+                PlaylistModernActionSheet(
+                    coverUrl = headerCover,
+                    offlineMode = offlineMode,
+                    hasCustomBackground = hasCustomBackground,
+                    overHeroImage = true
+                ) {
+                    PlaylistModernPlaybackActions(
+                        modifier = Modifier.tvScrollToTopOnUp(listState),
+                        songCount = displayedSongs.size,
+                        shuffleEnabled = shuffleEnabled,
+                        repeatMode = repeatMode,
+                        onPlayInOrder = {
+                            if (displayedSongs.isNotEmpty()) onSongClick(displayedSongs, 0)
+                        },
+                        onShufflePlay = {
+                            if (displayedSongs.isNotEmpty()) {
+                                onSongClick(displayedSongs, Random.nextInt(displayedSongs.size))
+                            }
+                        },
+                        onToggleShuffle = { PlayerManager.setShuffle(!shuffleEnabled) },
+                        onCycleRepeatMode = { PlayerManager.cycleRepeatMode() },
+                        onExportToLocalPlaylist = onExportAll
+                    )
+                }
+            }
+            if (displayedSongs.isEmpty()) {
+                item(key = "local_artist_search_empty") {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = stringResource(CoreCommonR.string.search_no_match),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            itemsIndexed(
+                items = displayedSongs,
+                key = { _, song -> song.stableKey() }
+            ) { index, song ->
+                PlaylistModernListItemSurface(
+                    coverUrl = headerCover,
+                    offlineMode = offlineMode,
+                    // 外面不再叠边距：行内边距现在和其它歌单页一样是 16dp，
+                    // 再叠一层 10dp 就成了 26dp，看起来比别的歌单更往里缩。
+                    modifier = Modifier
+                ) {
+                    LocalArtistSongRow(
+                        index = index + 1,
+                        song = song,
+                        selectionMode = selectionMode,
+                        selected = song.stableKey() in selectedKeys,
+                        downloaded = remember(downloadPresenceVersion, song) {
+                            hasCachedLocalArtistDownload(song)
+                        },
+                        onClick = {
+                            if (selectionMode) onToggleSelect(song)
+                            else onSongClick(displayedSongs, index)
+                        },
+                        onLongClick = { onLongClick(song) },
+                        onToggleSelect = { onToggleSelect(song) },
+                        offlineMode = offlineMode
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 internal fun LocalArtistDetailHeader(
     title: String,
     coverUrl: String?,
@@ -711,7 +900,6 @@ internal fun LocalArtistDetailHeader(
     )
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun LocalArtistSongRow(
     index: Int,
@@ -724,80 +912,32 @@ internal fun LocalArtistSongRow(
     onToggleSelect: () -> Unit,
     offlineMode: Boolean
 ) {
-    val context = LocalContext.current
-    val coverUrl = rememberSongDisplayCoverUrl(
-        song = song,
-        resolveLocalFallback = false
-    )
     val rowContainerColor = if (selected) {
         MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f)
     } else {
         androidx.compose.ui.graphics.Color.Transparent
     }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(neriRoundedShape(12.dp))
-            .background(rowContainerColor)
-            .combinedClickable(
-                onClick = hapticRowAction(context, onClick),
-                onLongClick = onLongClick
-            )
-            .padding(horizontal = 8.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier.width(34.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            if (selectionMode) {
-                Checkbox(
-                    checked = selected,
-                    onCheckedChange = { onToggleSelect() }
-                )
-            } else {
-                Text(
-                    text = index.toString(),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Clip
-                )
-            }
-        }
-
-        if (!coverUrl.isNullOrBlank()) {
-            AsyncImage(
-                model = offlineCachedImageRequest(
-                    context = context,
-                    data = coverUrl,
-                    sizePx = 160,
-                    allowHardware = false,
-                    offlineMode = offlineMode
-                ),
-                contentDescription = song.displayName(),
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(neriRoundedShape(10.dp))
-            )
-        } else {
-            Spacer(Modifier.size(48.dp))
-        }
-
-        Spacer(Modifier.width(12.dp))
-
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = song.displayName(),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.titleMedium
-            )
+    NeriSongRow(
+        index = index,
+        song = song,
+        onClick = onClick,
+        subtitleContent = {
             SongDownloadSubtitle(
                 text = song.displayArtist(),
                 downloaded = downloaded
             )
-        }
-    }
+        },
+        coverUrl = rememberSongDisplayCoverUrl(
+            song = song,
+            resolveLocalFallback = false
+        ),
+        offlineMode = offlineMode,
+        selectionMode = selectionMode,
+        selected = selected,
+        rowContainerColor = rowContainerColor,
+        onToggleSelect = onToggleSelect,
+        onLongClick = onLongClick,
+        onPlayNext = { PlayerManager.addToQueueNext(song) },
+        onAddToQueueEnd = { PlayerManager.addToQueueEnd(song) }
+    )
 }

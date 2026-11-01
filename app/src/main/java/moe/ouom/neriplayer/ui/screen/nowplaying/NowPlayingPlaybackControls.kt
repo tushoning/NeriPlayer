@@ -421,7 +421,9 @@ internal fun NowPlayingProgressSection(
     onPreviewPositionChange: (Long?) -> Unit,
     modifier: Modifier = Modifier,
     tabletLandscape: Boolean = false,
-    progressRowModifier: Modifier = Modifier
+    progressRowModifier: Modifier = Modifier,
+    /** 只加在进度条（可聚焦的那个滑块）上的修饰符，电视用来改上下方向键的去向 */
+    seekModifier: Modifier = Modifier
 ) {
     val owner = remember(songKey) {
         NowPlayingProgressOwner(PlayerManager.playbackPositionFlow.value)
@@ -457,6 +459,7 @@ internal fun NowPlayingProgressSection(
             seekEnabled = seekEnabled,
             activeContentColor = activeContentColor,
             lyricSeekHaptic = lyricSeekHaptic,
+            seekModifier = seekModifier,
             modifier = Modifier.fillMaxWidth().then(progressRowModifier)
         )
         if (progressInfoPresentation.reserveRowHeight || progressInfoPresentation.segments.isNotEmpty()) {
@@ -489,7 +492,8 @@ private fun NowPlayingProgressRow(
     seekEnabled: Boolean,
     activeContentColor: Color,
     lyricSeekHaptic: LyricSeekHapticFeedback,
-    modifier: Modifier
+    modifier: Modifier,
+    seekModifier: Modifier = Modifier
 ) {
     Row(
         modifier = modifier,
@@ -514,7 +518,7 @@ private fun NowPlayingProgressRow(
             seekEnabled = seekEnabled,
             activeContentColor = activeContentColor,
             lyricSeekHaptic = lyricSeekHaptic,
-            modifier = Modifier.weight(1f)
+            modifier = Modifier.weight(1f).then(seekModifier)
         )
         Text(
             text = formatDuration(durationMs),

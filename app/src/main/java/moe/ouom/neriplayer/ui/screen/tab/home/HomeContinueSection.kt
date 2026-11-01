@@ -4,6 +4,8 @@ import moe.ouom.neriplayer.ui.theme.neriRoundedShape
 import android.content.Context
 import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -48,6 +50,7 @@ import moe.ouom.neriplayer.core.di.AppContainer
 import moe.ouom.neriplayer.data.model.download.DownloadedSong
 import moe.ouom.neriplayer.core.download.policy.toPlaybackSongItem
 import moe.ouom.neriplayer.data.model.playlist.LocalPlaylist
+import moe.ouom.neriplayer.data.local.playlist.system.FavoritesPlaylist
 import moe.ouom.neriplayer.data.local.playlist.system.LocalFilesPlaylist
 import moe.ouom.neriplayer.data.local.playlist.system.SystemLocalPlaylists
 import moe.ouom.neriplayer.data.model.SongItem
@@ -55,6 +58,11 @@ import moe.ouom.neriplayer.data.playlist.usage.PlaylistUsageRepository
 import moe.ouom.neriplayer.data.playlist.usage.resolveLocalPlaylistUsageId
 import moe.ouom.neriplayer.data.model.stats.UsageEntry
 import moe.ouom.neriplayer.ui.util.rememberPlaylistDisplayCoverUrl
+import moe.ouom.neriplayer.ui.theme.NeriDesign
+import moe.ouom.neriplayer.ui.theme.cleanCornerRadiusFor
+import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
+import moe.ouom.neriplayer.ui.tv.tvClampLeft
+import moe.ouom.neriplayer.ui.tv.tvClampRight
 import moe.ouom.neriplayer.util.media.fastScrollableImageRequest
 import kotlin.math.ceil
 import moe.ouom.neriplayer.R as AppR
@@ -196,7 +204,11 @@ private fun ContinuePage(model: ContinuePageModel) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = HomeContinueHorizontalPaddingDp.dp),
+            // vertical 4dp 给外扩的焦点环留空间，不留会被翻页容器裁掉
+            .padding(
+                horizontal = HomeContinueHorizontalPaddingDp.dp,
+                vertical = 4.dp
+            ),
         horizontalArrangement = Arrangement.spacedBy(HomeContinueCardSpacingDp.dp)
     ) {
         repeat(model.cardsPerPage) { slot ->
@@ -212,13 +224,22 @@ private fun ContinuePageSlot(model: ContinuePageModel, slot: Int) {
         Spacer(Modifier.width(model.cardWidth))
         return
     }
+    val absoluteIndex = model.page * model.cardsPerPage + slot
     ContinueSlot(
         ContinueCardModel(
             entry = entry,
             localPlaylist = resolveHomeContinuePlaylist(entry, model.localPlaylistLookup, LocalContext.current),
             localFilesCoverCandidates = model.localFilesCoverCandidates,
             offlineMode = model.offlineMode,
-            modifier = Modifier.width(model.cardWidth),
+            modifier = Modifier.width(model.cardWidth)
+                // 电视：整条第一张再按左、最后一张再按右就停住。
+                // 不夹住的话方向搜索会一路往上跑到根节点，把顶部标签栏当成候选，
+                // 表现就是「首页第一个卡片按左跳回首页标签」。
+                .then(if (absoluteIndex == 0) Modifier.tvClampLeft() else Modifier)
+                .then(
+                    if (absoluteIndex == model.items.lastIndex) Modifier.tvClampRight()
+                    else Modifier
+                ),
             onEntryClick = model.onClick
         )
     )
@@ -237,8 +258,54 @@ private fun ContinueSlot(model: ContinueCardModel) {
     )
 }
 
-internal fun resolveHomeContinuePlaylist(
-    entry: UsageEntry,
+/**
+ * 「我喜欢的音乐」固定占第一个格子，网易云「我喜欢的音乐」紧随其后占第二个。
+ *
+ * 其余的卡片由仓库按打开时间排（最近打开的在前），这里只把这两张提到最前面：
+ * 它们出现就一定在前两位（顺序恒为 本地我喜欢 → 网易云我喜欢），没出现过就维持仓库原有的顺序。
+ */
+internal fun pinHomeContinueFavorites(
+    items: List<UsageEntry>,
+    context: Context
+): List<UsageEntry> {
+    if (items.size < 2) return items
+    val favoritesIndex = items.indexOfFirst { entry ->
+        entry.source == PlaylistUsageRepository.SOURCE_LOCAL &&
+            SystemLocalPlaylists.resolve(entry.id, entry.name, context)?.id ==
+            FavoritesPlaylist.SYSTEM_ID
+    }
+    // 网易云「我喜欢的音乐」是账号自带歌单，id 因人而异，只能靠名字认
+    val neteaseLikedIndex = items.indexOfFirst(::isNeteaseLikedPlaylistEntry)
+    val pinnedIndexes = listOf(favoritesIndex, neteaseLikedIndex)
+        .filter { it >= 0 }
+        .distinct()
+    if (pinnedIndexes.isEmpty()) return items
+    if (pinnedIndexes.size == 1 && pinnedIndexes.first() == 0) return items
+    return buildList {
+        pinnedIndexes.forEach { index -> add(items[index]) }
+        items.forEachIndexed { index, entry ->
+            if (index !in pinnedIndexes) add(entry)
+        }
+    }
+}
+
+/**
+ * 网易云「<用户名>喜欢的音乐」—— 在这 app 里显示成「xx喜欢的音乐」。
+ *
+ * 判定三条：
+ * 1. 必须是**网易云**歌单：本地那个「我喜欢的音乐」已经在第一格钉死了，
+ *    这一条就是为了把它排除掉（它名字里也带这几个字）；
+ * 2. 名字以「喜欢的音乐」结尾（用户名在前面）；
+ * 3. 名字总字节数不超过 58：超过的多半是用户自己建、名字里恰好带这几个字的歌单。
+ */
+private fun isNeteaseLikedPlaylistEntry(entry: UsageEntry): Boolean {
+    if (!entry.source.equals("netease", ignoreCase = true)) return false
+    val name = entry.name.trim()
+    if (!name.endsWith("喜欢的音乐")) return false
+    return name.toByteArray(Charsets.UTF_8).size <= 58
+}
+
+internal fun resolveHomeContinuePlaylist(    entry: UsageEntry,
     lookup: Map<Long, LocalPlaylist>,
     context: Context? = null
 ): LocalPlaylist? {
@@ -338,16 +405,29 @@ private fun ContinueCardSurface(
 ) {
     val view = LocalView.current
     var showMenu by remember { mutableStateOf(false) }
+    // 卡片圆角 8dp；环外扩 4dp 画在卡片外侧，卡片尺寸不变、环也不压封面。
+    // 简洁风格不额外放大圆角：环要和卡片圆角同心，否则看着又圆又扁
+    // 环半径跟着卡片圆角走：卡片是 neriRoundedShape(8.dp)，简洁风格下会映射成 12dp，
+    // 两种风格的环都要和卡片同心（固定 12 的话，切回 Material 就比 8dp 的卡片圆一圈）
+    val cardCorner = if (NeriDesign.isClean) cleanCornerRadiusFor(8.dp) else 8.dp
+    val tvRingIndication = rememberTvFocusRingIndication(
+        radius = cardCorner,
+        outset = 4.dp,
+        cleanRadiusBoost = 0.dp
+    ) ?: LocalIndication.current
     Column(
         modifier = modifier
-            .clip(neriRoundedShape(8.dp))
             .combinedClickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = tvRingIndication,
                 onClick = onClick,
                 onLongClick = {
                     view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                     showMenu = true
                 }
             )
+            // 圆角裁剪放在 clickable 之后，否则会把外扩的焦点环一起切掉
+            .clip(neriRoundedShape(8.dp))
     ) {
         ContinueCover(displayName, coverUrl, offlineMode)
         ContinueCardDetails(displayName, entry.trackCount)
@@ -438,3 +518,20 @@ internal fun resolveHomeContinueCardWidthDp(
     return (availableWidth / slots)
         .coerceAtLeast(0f)
 }
+
+/**
+ * 「继续播放」那档卡片的排版参数，供别的页面共用（本地歌单 / 本地歌手）。
+ *
+ * 传**网格自己的内容宽度**（已经扣掉页面左右边距的那一段），返回每行几张。
+ * 配合 [ContinueStyleCardSpacingDp] + [ContinueStyleHorizontalInsetDp] 一起用，
+ * 算出来的单元格宽度和 `resolveHomeContinueCardWidthDp` 完全相等，
+ * 也就是「卡片大小 = 继续播放卡片大小、间距也一样」。
+ */
+internal fun resolveContinueStyleColumns(contentWidthDp: Float): Int =
+    resolveHomeContinueCardsPerPage(contentWidthDp + HomeContinueHorizontalPaddingDp * 2f)
+
+/** 与继续播放卡片一致的卡片间距（dp） */
+internal val ContinueStyleCardSpacingDp = HomeContinueCardSpacingDp.dp
+
+/** 与继续播放卡片一致的额外左右留白（dp），让卡片左边缘对得上 */
+internal val ContinueStyleHorizontalInsetDp = HomeContinueHorizontalPaddingDp.dp

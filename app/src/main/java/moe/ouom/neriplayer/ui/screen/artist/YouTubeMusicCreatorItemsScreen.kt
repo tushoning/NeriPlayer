@@ -41,6 +41,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -63,6 +64,8 @@ import moe.ouom.neriplayer.ui.haptic.HapticTextButton
 import moe.ouom.neriplayer.ui.viewmodel.artist.YouTubeMusicCreatorItemsUiState
 import moe.ouom.neriplayer.ui.viewmodel.artist.YouTubeMusicCreatorItemsViewModel
 import moe.ouom.neriplayer.ui.viewmodel.artist.toCreatorSongItem
+import moe.ouom.neriplayer.ui.tv.rememberTvInitialFocus
+import moe.ouom.neriplayer.ui.tv.tvInitialFocus
 
 internal fun resolveYouTubeMusicCreatorItemsTitle(
     creatorName: String,
@@ -85,6 +88,7 @@ fun YouTubeMusicCreatorItemsScreen(
     offlineMode: Boolean = false
 ) {
     val context = LocalContext.current
+    val tvInitialFocus = rememberTvInitialFocus()
     val viewModel: YouTubeMusicCreatorItemsViewModel = viewModel(
         factory = viewModelFactory {
             initializer {
@@ -114,6 +118,7 @@ fun YouTubeMusicCreatorItemsScreen(
     Surface(modifier = Modifier.fillMaxSize(), color = Color.Transparent) {
         Column(modifier = Modifier.fillMaxSize()) {
             TopAppBar(
+                modifier = Modifier.padding(horizontal = pageSidePaddingOr(0.dp)),
                 title = {
                     Text(
                         text = resolveYouTubeMusicCreatorItemsTitle(
@@ -126,7 +131,12 @@ fun YouTubeMusicCreatorItemsScreen(
                     )
                 },
                 navigationIcon = {
-                    HapticIconButton(onClick = onBack) {
+                    HapticIconButton(
+                        onClick = onBack,
+                        // 电视：从播放页跳进来时这一页没人要焦点，遥控器直接失灵。
+                        // 进来先把光标放到返回键上。
+                        modifier = Modifier.tvInitialFocus(tvInitialFocus)
+                    ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = stringResource(CoreCommonR.string.cd_back)
@@ -190,8 +200,8 @@ internal fun YouTubeMusicCreatorItemsContent(
                     .fillMaxSize()
                     .testTag("youtubeCreatorItemsList"),
                 contentPadding = PaddingValues(
-                    start = if (tabletLayout) 24.dp else 20.dp,
-                    end = if (tabletLayout) 24.dp else 20.dp,
+                    start = pageSidePaddingOr(if (tabletLayout) 24.dp else 20.dp),
+                    end = pageSidePaddingOr(if (tabletLayout) 24.dp else 20.dp),
                     top = if (tabletLayout) 12.dp else 4.dp,
                     bottom = if (tabletLayout) 20.dp else 40.dp + miniPlayerHeight
                 ),

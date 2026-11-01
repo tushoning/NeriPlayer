@@ -36,6 +36,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
@@ -49,6 +51,9 @@ import moe.ouom.neriplayer.ui.screen.nowplaying.LocalNowPlayingLyricsBoundsTrans
 import moe.ouom.neriplayer.ui.screen.nowplaying.PlaybackActionToolbarLayout
 import moe.ouom.neriplayer.ui.screen.nowplaying.rememberAudioDeviceInfo
 import moe.ouom.neriplayer.ui.screen.nowplaying.resolvePlaybackActionToolbarLayout
+import androidx.compose.ui.focus.focusProperties
+import moe.ouom.neriplayer.ui.screen.nowplaying.NowPlayingSpeedPitchIcon
+import moe.ouom.neriplayer.ui.tv.TvNowPlayingFocus
 
 internal data class NowPlayingCoverToolbarLayoutSpec(
     val wideLandscape: Boolean,
@@ -89,9 +94,15 @@ internal data class NowPlayingCoverToolbarStatus(
 internal data class NowPlayingCoverToolbarActions(
     val onQueue: () -> Unit,
     val onSleepTimer: () -> Unit,
-    val onVolume: () -> Unit,
+    val onSpeedPitch: () -> Unit,
     val onLyrics: () -> Unit,
-    val onAddToPlaylist: () -> Unit
+    val onAddToPlaylist: () -> Unit,
+    /** 电视：歌词页/歌词相关面板关掉后，光标要还回这个按钮 */
+    val lyricsRequester: FocusRequester? = null,
+    /** 电视：播放队列面板关掉后，光标要还回这个按钮 */
+    val queueRequester: FocusRequester? = null,
+    /** 电视：添加到歌单面板关掉后，光标要还回这个按钮 */
+    val addToPlaylistRequester: FocusRequester? = null
 )
 
 internal fun resolveNowPlayingLyricsToolbarAction(
@@ -136,7 +147,9 @@ private fun toolbarExpandedPreferredPadding(spec: NowPlayingCoverToolbarLayoutSp
     if (spec.docked || spec.wideLandscape) 18.dp else 6.dp
 
 internal fun toolbarRowVerticalPadding(spec: NowPlayingCoverToolbarLayoutSpec): Dp =
-    if (spec.compactHeight) 0.dp else if (spec.docked || spec.wideLandscape) 12.dp else 8.dp
+    if (spec.compactHeight) 0.dp
+    else if (spec.docked || spec.wideLandscape) 12.dp
+    else 8.dp
 
 internal fun toolbarRowArrangement(
     layout: PlaybackActionToolbarLayout,
@@ -266,7 +279,13 @@ private fun NowPlayingCoverToolbarRow(
         val buttonModifier = Modifier.toolbarActionModifier(layout.useEqualWidthSlots, this)
         NowPlayingCoverToolbarButton(
             "btn_queue", Icons.AutoMirrored.Outlined.QueueMusic, stringResource(CoreCommonR.string.playlist_queue),
-            layout.iconSize, buttonModifier, sharedTransitionScope, animatedVisibilityScope,
+            layout.iconSize,
+            if (actions.queueRequester != null) {
+                buttonModifier.focusRequester(actions.queueRequester)
+            } else {
+                buttonModifier
+            },
+            sharedTransitionScope, animatedVisibilityScope,
             actions.onQueue, LocalContentColor.current
         )
         NowPlayingCoverToolbarButton(
@@ -277,19 +296,35 @@ private fun NowPlayingCoverToolbarRow(
                 status.sleepTimerActive, status.activeColor, LocalContentColor.current
             )
         )
-        val audioDevice = rememberAudioDeviceInfo()
+        // 原来的「选择扬声器」换成「倍速与音调」：直接改播放速度 / 音调，和设置里的同一套值。
         NowPlayingCoverToolbarButton(
-            "btn_volume", audioDevice.second, audioDevice.first,
+            "btn_speed_pitch", NowPlayingSpeedPitchIcon, SpeedPitchToolbarDescription,
             layout.iconSize, buttonModifier, sharedTransitionScope, animatedVisibilityScope,
-            actions.onVolume, LocalContentColor.current
+            actions.onSpeedPitch, LocalContentColor.current
         )
         NowPlayingCoverLyricsButton(
-            status, layout.iconSize, buttonModifier, sharedTransitionScope,
+            status, layout.iconSize,
+            if (actions.lyricsRequester != null) {
+                buttonModifier.focusRequester(actions.lyricsRequester)
+            } else {
+                buttonModifier
+            },
+            sharedTransitionScope,
             animatedVisibilityScope, actions.onLyrics, spec.lyricsAdjustBehavior
         )
         NowPlayingCoverToolbarButton(
             "btn_add", Icons.AutoMirrored.Outlined.PlaylistAdd, stringResource(CoreCommonR.string.playlist_add_to),
-            layout.iconSize, buttonModifier, sharedTransitionScope, animatedVisibilityScope,
+            layout.iconSize,
+            if (actions.addToPlaylistRequester != null) {
+                buttonModifier
+                    .focusRequester(actions.addToPlaylistRequester)
+                    // 电视：按右键直接落到右边那排最左的「随机播放」。
+                    // 不显式连的话，方向搜索会挑中横跨整个右栏的进度条。
+                    .focusProperties { right = TvNowPlayingFocus.shuffle }
+            } else {
+                buttonModifier
+            },
+            sharedTransitionScope, animatedVisibilityScope,
             actions.onAddToPlaylist, LocalContentColor.current
         )
     }
@@ -365,3 +400,6 @@ private fun NowPlayingCoverLyricsButton(
         }
     }
 }
+
+/** 工具栏按钮的无障碍描述 */
+private const val SpeedPitchToolbarDescription = "倍速与音调"

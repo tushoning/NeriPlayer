@@ -79,6 +79,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -122,6 +123,8 @@ import moe.ouom.neriplayer.ui.viewmodel.playlist.BiliVideoItem
 import moe.ouom.neriplayer.util.format.formatDurationSec
 import moe.ouom.neriplayer.util.format.formatPlayCount
 import moe.ouom.neriplayer.util.media.offlineCachedImageRequest
+import moe.ouom.neriplayer.ui.tv.rememberTvInitialFocus
+import moe.ouom.neriplayer.ui.tv.tvInitialFocus
 
 private const val UPLOADER_AVATAR_BACKDROP_BLUR_RADIUS = 100f
 private const val UPLOADER_AVATAR_BACKDROP_SIZE_PX = 256
@@ -172,6 +175,7 @@ fun BiliUploaderDetailScreen(
     offlineMode: Boolean = false
 ) {
     val context = LocalContext.current
+    val tvInitialFocus = rememberTvInitialFocus()
     val viewModel: BiliUploaderDetailViewModel = viewModel(
         key = "bili_uploader_detail_view_model_${uploader.mid}",
         factory = viewModelFactory {
@@ -206,6 +210,7 @@ fun BiliUploaderDetailScreen(
     Surface(modifier = Modifier.fillMaxSize(), color = Color.Transparent) {
         Column(modifier = Modifier.fillMaxSize()) {
             TopAppBar(
+                modifier = Modifier.padding(horizontal = pageSidePaddingOr(0.dp)),
                 title = {
                     Text(
                         text = ui.header?.name ?: uploader.name,
@@ -214,7 +219,12 @@ fun BiliUploaderDetailScreen(
                     )
                 },
                 navigationIcon = {
-                    HapticIconButton(onClick = onBack) {
+                    HapticIconButton(
+                        onClick = onBack,
+                        // 电视：从播放页跳进来时这一页没人要焦点，遥控器直接失灵。
+                        // 进来先把光标放到返回键上。
+                        modifier = Modifier.tvInitialFocus(tvInitialFocus)
+                    ) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = stringResource(CoreCommonR.string.cd_back)
@@ -315,8 +325,8 @@ internal fun BiliUploaderContent(
                     .weight(1f)
                     .fillMaxWidth(),
                 contentPadding = PaddingValues(
-                    start = if (tabletLayout) 16.dp else 20.dp,
-                    end = if (tabletLayout) 16.dp else 20.dp,
+                    start = pageSidePaddingOr(if (tabletLayout) 16.dp else 20.dp),
+                    end = pageSidePaddingOr(if (tabletLayout) 16.dp else 20.dp),
                     top = 4.dp,
                     bottom = if (tabletLayout) 16.dp else 40.dp + miniPlayerHeight
                 ),

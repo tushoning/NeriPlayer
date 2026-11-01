@@ -935,6 +935,7 @@ private fun SettingsHomeCardSwitch(
     )
 }
 
+@Composable
 private fun Modifier.homeCardInteractionModifier(
     enabled: Boolean,
     checked: Boolean,

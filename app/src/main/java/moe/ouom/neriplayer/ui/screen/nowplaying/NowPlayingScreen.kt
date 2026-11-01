@@ -40,6 +40,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -84,14 +86,19 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
@@ -148,6 +155,8 @@ import moe.ouom.neriplayer.ui.component.playback.resolvePlaybackWaiting
 import moe.ouom.neriplayer.ui.component.sheet.bottomSheetScrollGuard
 import moe.ouom.neriplayer.ui.feedback.showNeriSnackbar
 import moe.ouom.neriplayer.ui.theme.LocalNeriTargetColorScheme
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.TvNowPlayingFocus
 import moe.ouom.neriplayer.ui.component.lyrics.resolveLyricSeekPosition
 import moe.ouom.neriplayer.ui.viewmodel.NowPlayingViewModel
 import moe.ouom.neriplayer.data.model.NeteaseArtistSummary
@@ -205,6 +214,13 @@ import moe.ouom.neriplayer.ui.screen.playback.resolveListenTogetherProgressSeekE
 import moe.ouom.neriplayer.util.media.saveCoverToPictures
 import kotlin.time.Duration.Companion.milliseconds
 import moe.ouom.neriplayer.ui.screen.host.rememberHostPredictiveBackTransition
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import moe.ouom.neriplayer.R as AppR
 
 private const val LyricsPageTransitionDurationMs = 300
@@ -671,6 +687,22 @@ fun NowPlayingScreen(
     var showQualitySwitchDialog by remember { mutableStateOf(false) }
     val addSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
+    // 电视：面板 / 歌词页关闭后把光标还回打开它们的那个按钮。
+    // 之前关掉面板后焦点是「凭空消失」的——遥控器立刻失灵，而 Compose 的兜底又会把
+    // 焦点交给树里第一个可聚焦元素，底层页面里的输入框一旦中招就顺带把键盘顶出来。
+    // 这里显式归还落点，并在两帧后和收尾动画期间各收一次键盘。
+    val tvDeviceForFocus = LocalIsTelevision.current
+    // 电视：记录「播放/暂停」是不是当前焦点所在。返回键靠它区分
+    // 「先把光标送回播放键」和「退出播放页」两种意图。
+    var tvPlayPauseFocused by remember { mutableStateOf(false) }
+    TvRestoreFocusAfterPanel(showMoreOptions, TvNowPlayingFocus.moreOptions)
+    TvRestoreFocusAfterPanel(showLyricsScreen, TvNowPlayingFocus.lyrics)
+    // 这几个以前传的是 null，于是「面板关掉后光标一律落到播放/暂停键」——
+    // 用户按的是队列/评论/加歌单，光标却跑到播放键上。现在各自还回自己的按钮。
+    TvRestoreFocusAfterPanel(showQueueSheet, TvNowPlayingFocus.queue)
+    TvRestoreFocusAfterPanel(showCommentSheet, TvNowPlayingFocus.comment)
+    TvRestoreFocusAfterPanel(showAddSheet, TvNowPlayingFocus.addToPlaylist)
+
     // 评论来源只由「逻辑音源」决定 (平台 + 原始资源 id), 与最终播放地址无关 (§3/§49.2)
     val commentSource = remember(currentSong) { resolveCommentSource(currentSong) }
 
@@ -764,6 +796,7 @@ fun NowPlayingScreen(
     // 控制音量弹窗的显示
     var showVolumeSheet by remember { mutableStateOf(false) }
     val volumeSheetState = rememberModalBottomSheetState()
+    var showSpeedPitchSheet by remember { mutableStateOf(false) }
 
     val currentLyricSourceKey = currentSong?.stableKey()
     val lyricsLoadOwner = rememberNowPlayingLyricsLoadOwner(
@@ -978,11 +1011,15 @@ fun NowPlayingScreen(
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val phoneLandscape = isNowPlayingPhoneLandscape(isLandscape, configuration.smallestScreenWidthDp)
     val tabletLandscape = isLandscape && !phoneLandscape
-    // 平板横屏始终同时呈现封面与完整歌词，保留的手机页状态不能多消费一次返回
-    val effectiveShowLyricsScreen = showLyricsScreen && !tabletLandscape
+    // 平板横屏始终同时呈现封面与完整歌词，保留的手机页状态不能多消费一次返回。
+    // 电视同样走宽屏布局，但遥控器上必须能切到全屏歌词页，所以这里不对电视做屏蔽。
+    val effectiveShowLyricsScreen = showLyricsScreen && (!tabletLandscape || tvDeviceForFocus)
 
     LaunchedEffect(Unit) { contentVisible = true }
     LaunchedEffect(currentSong?.id) { showQualitySwitchDialog = false }
+    // 电视：进到整页歌词后光标由歌词页自己接管（LyricsScreen 里给返回键挂了初始焦点）。
+    // 这里**不能**再去请求封面页的歌词按钮：那张封面页此刻正在退场，
+    // 请求会把光标塞到一个马上被销毁的节点上，结果就是歌词页一片没有焦点框。
     LaunchedEffect(effectiveShowLyricsScreen, showCoverSourceBadge) {
         val returningFromLyrics = previousLyricsScreenState && !effectiveShowLyricsScreen
         previousLyricsScreenState = effectiveShowLyricsScreen
@@ -1142,10 +1179,13 @@ fun NowPlayingScreen(
                 onPreviewAnimationActiveChanged = { lyricsPredictiveBackPreviewActive = it },
                 primePreviewAtZero = true
             )
+            // 电视：宽屏分栏里歌词只是右侧一栏，但遥控器没有横向翻页手势，
+            // 必须能翻到整页歌词 —— 所以电视不受「宽屏就不单独出歌词页」的限制。
+            val standaloneLyricsOnlyInPortrait = useWideLandscapeLayout && !tvDeviceForFocus
             val rememberedCoverFlight = rememberNowPlayingLyricsCoverFlight(
                 lyricsTransition, predictiveBackPreviewActive = lyricsPredictiveBackPreviewActive
             )
-            val coverFlight = if (useWideLandscapeLayout) null else rememberedCoverFlight
+            val coverFlight = if (standaloneLyricsOnlyInPortrait) null else rememberedCoverFlight
             SharedTransitionLayout {
                 Box(modifier = Modifier.fillMaxSize()) {
                     lyricsTransition.AnimatedContent(
@@ -1163,7 +1203,7 @@ fun NowPlayingScreen(
                             )).using(nowPlayingLyricsSizeTransform(lyricsPredictiveBackPreviewActive))
                         }
                     ) { isLyricsMode ->
-                        if (shouldUseStandaloneNowPlayingLyricsPage(isLyricsMode, useWideLandscapeLayout)) {
+                        if (shouldUseStandaloneNowPlayingLyricsPage(isLyricsMode, standaloneLyricsOnlyInPortrait)) {
                             // 歌词全屏页面
                             LyricsScreen(
                                 lyrics = lyrics,
@@ -1244,7 +1284,7 @@ fun NowPlayingScreen(
                                 isLyricsMode -> { { onShowLyricsScreenChange(false) } }
                                 else -> onNavigateUp
                             }
-                            val horizontalPadding = if (isLandscape) 16.dp else 20.dp
+                            val horizontalPadding = pageSidePaddingOr(if (isLandscape) 16.dp else 20.dp)
                             val verticalPadding = if (isLandscape) 8.dp else 12.dp
                             var contentModifier = Modifier
                                 .fillMaxSize()
@@ -1257,6 +1297,30 @@ fun NowPlayingScreen(
                                 contentModifier = contentModifier.testTag(
                                     if (isLyricsMode) "nowPlayingLandscapeLyricsPage" else "nowPlayingLandscapeCoverPage"
                                 )
+                            }
+                            if (LocalIsTelevision.current) {
+                                contentModifier = contentModifier.onPreviewKeyEvent { event ->
+                                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                    when (event.key) {
+                                        // 菜单键 = 打开播放列表（队列）。两个 keycode 都收：
+                                        // 多数盒子发 MENU，少部分（和电视自带遥控）发 SETTINGS。
+                                        Key.Menu, Key.Settings -> {
+                                            if (currentSong != null) showQueueSheet = true
+                                            true
+                                        }
+                                        // 返回键：光标不在播放键上时，先把光标送回去；
+                                        // 已经在播放键上了才交还给系统 —— 那一层才是退出播放页。
+                                        Key.Back -> {
+                                            if (tvPlayPauseFocused) {
+                                                false
+                                            } else {
+                                                TvNowPlayingFocus.request(TvNowPlayingFocus.playPause)
+                                                true
+                                            }
+                                        }
+                                        else -> false
+                                    }
+                                }
                             }
 
                             // 手机横屏仍可左右切页，平板分栏不再切换隐藏的歌词子页
@@ -1283,6 +1347,9 @@ fun NowPlayingScreen(
                             }
 
                             val mainPlaybackControls: @Composable () -> Unit = {
+                                // 电视上浮层打开后要把光标落到这排按钮里，
+                                // 落点选播放/暂停（最常用），请求器定义在 TvNowPlayingFocus
+                                val tvDevice = LocalIsTelevision.current
                                 BoxWithConstraints(
                                     modifier = Modifier.fillMaxWidth(),
                                     contentAlignment = Alignment.Center
@@ -1309,7 +1376,15 @@ fun NowPlayingScreen(
                                     ) {
                                         HapticIconButton(
                                             onClick = { PlayerManager.setShuffle(!shuffleEnabled) },
-                                            modifier = Modifier.size(controlsLayout.secondaryButtonSize)
+                                            modifier = Modifier
+                                                .size(controlsLayout.secondaryButtonSize)
+                                                .then(
+                                                    if (tvDevice) {
+                                                        Modifier.focusRequester(TvNowPlayingFocus.shuffle)
+                                                    } else {
+                                                        Modifier
+                                                    }
+                                                )
                                         ) {
                                             Icon(
                                                 Icons.Outlined.Shuffle,
@@ -1347,6 +1422,15 @@ fun NowPlayingScreen(
                                             enabled = !usbPlaybackPreparing,
                                             modifier = Modifier
                                                 .nowPlayingLongPress(toggleImmersiveMode)
+                                                .then(
+                                                    if (tvDevice) {
+                                                        Modifier
+                                                            .focusRequester(TvNowPlayingFocus.playPause)
+                                                            .onFocusChanged { tvPlayPauseFocused = it.isFocused }
+                                                    } else {
+                                                        Modifier
+                                                    }
+                                                )
                                                 .sharedElement(
                                                     rememberSharedContentState(
                                                         key = NowPlayingLyricsSharedTransitionElement.PLAY.key
@@ -1438,7 +1522,16 @@ fun NowPlayingScreen(
                                         )
                                         .zIndex(1f),
                                     modifier = Modifier
-                                        .fillMaxWidth()
+                                        .fillMaxWidth(),
+                                    // 电视：进度条上按「上」，光标落到右上角的红心（收藏），
+                                    // 而不是跳到左栏的封面上。
+                                    seekModifier = if (LocalIsTelevision.current) {
+                                        Modifier.focusProperties {
+                                            up = TvNowPlayingFocus.favorite
+                                        }
+                                    } else {
+                                        Modifier
+                                    }
                                 )
                             }
 
@@ -1476,6 +1569,7 @@ fun NowPlayingScreen(
                                 lyricShareInitialLine = entry
                             }
                             val onCoverComment: () -> Unit = { showCommentSheet = true }
+                            val tvDeviceForActions = LocalIsTelevision.current
                             val onCoverMoreOptions: () -> Unit = {
                                 startMoreOptionsWithLyricBehavior = false
                                 showMoreOptions = true
@@ -1483,8 +1577,12 @@ fun NowPlayingScreen(
                             val coverToolbarActions = NowPlayingCoverToolbarActions(
                                 onQueue = { showQueueSheet = true },
                                 onSleepTimer = { showSleepTimerDialog = true },
-                                onVolume = { showVolumeSheet = true },
-                                onLyrics = if (immersiveMode && !tabletLandscape) {
+                                onSpeedPitch = { showSpeedPitchSheet = true },
+                                // 电视上一律是「翻到歌词页」：宽屏那套「点一下调歌词行为」
+                                // 在遥控器上就是个没反应的表现，而且这里也没有拖拽手势可用
+                                onLyrics = if (tvDeviceForActions) {
+                                    { onShowLyricsScreenChange(!showLyricsScreen) }
+                                } else if (immersiveMode && !tabletLandscape) {
                                     { onShowLyricsScreenChange(!showLyricsScreen) }
                                 } else resolveNowPlayingLyricsToolbarAction(
                                     lyricsAdjustBehavior = lyricsAdjustBehavior,
@@ -1494,7 +1592,22 @@ fun NowPlayingScreen(
                                     },
                                     onSwitchPage = { onShowLyricsScreenChange(!showLyricsScreen) }
                                 ),
-                                onAddToPlaylist = { showAddSheet = true }
+                                onAddToPlaylist = { showAddSheet = true },
+                                lyricsRequester = if (tvDeviceForActions) {
+                                    TvNowPlayingFocus.lyrics
+                                } else {
+                                    null
+                                },
+                                queueRequester = if (tvDeviceForActions) {
+                                    TvNowPlayingFocus.queue
+                                } else {
+                                    null
+                                },
+                                addToPlaylistRequester = if (tvDeviceForActions) {
+                                    TvNowPlayingFocus.addToPlaylist
+                                } else {
+                                    null
+                                }
                             )
 
                             val coverTopBar: @Composable () -> Unit = {
@@ -1511,7 +1624,12 @@ fun NowPlayingScreen(
                                     onFavorite = onFavoriteCover,
                                     onComment = onCoverComment,
                                     onMoreOptions = onCoverMoreOptions,
-                                    phoneLandscape = phoneLandscape
+                                    phoneLandscape = phoneLandscape,
+                                    moreOptionsRequester = if (tvDeviceForActions) {
+                                        TvNowPlayingFocus.moreOptions
+                                    } else {
+                                        null
+                                    }
                                 )
                             }
                             val coverBackBar: @Composable () -> Unit = {
@@ -1547,7 +1665,22 @@ fun NowPlayingScreen(
                                         onFavorite = onFavoriteCover,
                                         onComment = onCoverComment,
                                         onMoreOptions = onCoverMoreOptions,
-                                        modifier = Modifier.align(Alignment.CenterEnd)
+                                        modifier = Modifier.align(Alignment.CenterEnd),
+                                        commentRequester = if (tvDeviceForActions) {
+                                            TvNowPlayingFocus.comment
+                                        } else {
+                                            null
+                                        },
+                                        moreOptionsRequester = if (tvDeviceForActions) {
+                                            TvNowPlayingFocus.moreOptions
+                                        } else {
+                                            null
+                                        },
+                                        favoriteRequester = if (tvDeviceForActions) {
+                                            TvNowPlayingFocus.favorite
+                                        } else {
+                                            null
+                                        }
                                     )
                                 }
                             }
@@ -1606,7 +1739,8 @@ fun NowPlayingScreen(
                                         iconSize = nowPlayingToolbarIconSize,
                                         minimumTouchTarget = nowPlayingToolbarMinimumTouchTarget,
                                         compactHeight = compactHeight,
-                                        lyricsAdjustBehavior = coverPagePresentation.lyricsAdjustBehavior
+                                        lyricsAdjustBehavior = coverPagePresentation.lyricsAdjustBehavior &&
+                                            !tvDeviceForActions
                                     ),
                                     status = NowPlayingCoverToolbarStatus(
                                         sleepTimerActive = sleepTimerState.isActive,
@@ -1824,6 +1958,14 @@ fun NowPlayingScreen(
                             }
                         }
 
+                        // 倍速与音调（原来这里是「选择扬声器」）
+                        // 版式和「睡眠定时器」一样走对话框：顶部有标题，内容居中一栏
+                        if (showSpeedPitchSheet) {
+                            NowPlayingSpeedPitchSheet(
+                                onDismiss = { showSpeedPitchSheet = false }
+                            )
+                        }
+
                         // 音量控制弹窗
                         if (showVolumeSheet) {
                             ModalBottomSheet(
@@ -1978,5 +2120,36 @@ fun NowPlayingScreen(
                 }
             }
         }
+    }
+}
+
+/**
+ * 电视上的浮层（面板 / 歌词页）关掉之后，把光标显式还给打开它的那个按钮。
+ *
+ * Compose 在「持有焦点的节点被移除」时不会挑一个合理落点，而是把焦点交给窗口里
+ * 第一个可聚焦元素（常常是顶部标签栏的「正在播放」，或者页面里的输入框）。
+ * 用户看到的就是「焦点莫名跳走」甚至「键盘自己弹出来」。这里在关闭后主动归还，
+ * 并顺手收一次键盘（收两次是因为输入法窗口有自己的显示动画）。
+ */
+@Composable
+private fun TvRestoreFocusAfterPanel(visible: Boolean, requester: FocusRequester?) {
+    if (!LocalIsTelevision.current) return
+    val keyboard = LocalSoftwareKeyboardController.current
+    var wasVisible by remember { mutableStateOf(false) }
+    LaunchedEffect(visible) {
+        val previous = wasVisible
+        wasVisible = visible
+        if (!previous || visible) return@LaunchedEffect
+        // 立刻归还：面板这时候正在退场，不该再占着焦点。
+        // 以前等了两个 VSync 才归还 —— 用户在这段时间里按方向键，刚移开的光标
+        // 会被稍后那次 requestFocus 又拽回原来的按钮上（「添加到歌单」退出后按左被拉回来就是这个）。
+        val target = requester ?: TvNowPlayingFocus.playPause
+        if (!TvNowPlayingFocus.request(target)) {
+            withFrameNanos { }
+            if (!TvNowPlayingFocus.request(target)) {
+                TvNowPlayingFocus.request(TvNowPlayingFocus.playPause)
+            }
+        }
+        keyboard?.hide()
     }
 }

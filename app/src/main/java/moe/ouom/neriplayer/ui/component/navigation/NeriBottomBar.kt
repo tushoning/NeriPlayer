@@ -67,6 +67,8 @@ import moe.ouom.neriplayer.ui.effect.glass.AdvancedGlassRole
 import moe.ouom.neriplayer.ui.effect.glass.AdvancedGlassSurface
 import moe.ouom.neriplayer.ui.effect.glass.LocalAdvancedGlassController
 import moe.ouom.neriplayer.ui.haptic.performHapticFeedback
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.tvFocusRing
 
 internal const val DEFAULT_BOTTOM_BAR_SELECTION_ALPHA = 0.72f
 internal const val BOTTOM_BAR_FALLBACK_SCRIM_ALPHA = 0.28f
@@ -105,6 +107,7 @@ fun NeriBottomBar(
         baseBlurRequested = baseBlurRequested
     )
     val clean = NeriDesign.isClean
+    val isTelevision = LocalIsTelevision.current
     val fallbackColor = when {
         clean -> MaterialTheme.colorScheme.surfaceContainerLow.copy(
             alpha = if (LocalHasCustomBackground.current) 0.62f else 0.94f
@@ -136,6 +139,15 @@ fun NeriBottomBar(
                     onClick = {
                         context.performHapticFeedback()
                         onItemSelected(dest)
+                    },
+                    modifier = if (isTelevision) {
+                        Modifier.tvFocusRing(
+                            color = MaterialTheme.colorScheme.primary,
+                            cornerRadius = 16.dp,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Modifier
                     },
                     icon = {
                         if (clean) {

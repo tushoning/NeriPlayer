@@ -23,6 +23,9 @@ package moe.ouom.neriplayer.ui.screen.playlist
  * Created: 2025/8/15
  */
 
+import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.LocalIndication
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
 import moe.ouom.neriplayer.data.sync.mapping.toSongItem
 import android.app.Application
@@ -60,6 +63,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
+import moe.ouom.neriplayer.ui.tv.tvScrollToTopOnUp
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
@@ -101,6 +107,7 @@ import moe.ouom.neriplayer.ui.navigation.rememberMainTabDetailVisibilityState
 import moe.ouom.neriplayer.ui.screen.nowplaying.actions.BiliVideoSkipIntervalsSheet
 import moe.ouom.neriplayer.ui.component.download.BatchDownloadManagerSheet
 import moe.ouom.neriplayer.ui.component.overlay.DensityScaledModalBottomSheet
+import moe.ouom.neriplayer.ui.component.playlist.NeriSongRow
 import moe.ouom.neriplayer.ui.component.playlist.PlaylistExportSheet
 import moe.ouom.neriplayer.ui.component.playlist.PlaylistSelectionActions
 import moe.ouom.neriplayer.ui.component.playlist.PlaylistLoadErrorDialog
@@ -129,6 +136,13 @@ import moe.ouom.neriplayer.core.download.GlobalDownloadManager
 import kotlin.random.Random
 import kotlin.time.Duration.Companion.milliseconds
 import moe.ouom.neriplayer.R as AppR
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.TvRowMenuKeyEffect
+import moe.ouom.neriplayer.ui.tv.TvRowMenuKeyState
+import moe.ouom.neriplayer.ui.tv.rememberTvMenuFirstItemFocus
+import moe.ouom.neriplayer.ui.tv.rememberTvRowMenuKeyState
+import moe.ouom.neriplayer.ui.tv.tvBringIntoViewOnFocus
+import moe.ouom.neriplayer.ui.tv.tvRowMenuKeyPress
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -464,7 +478,20 @@ fun BiliPlaylistDetailScreen(
             val miniPlayerHeight = LocalMiniPlayerHeight.current
             Column {
                 if (!selectionMode) {
+                    Box(
+                        modifier = Modifier
+                            .padding(horizontal = pageSidePaddingOr(0.dp))
+                            .tvPlaylistTopBarShape()
+                    ) {
+                        // 顶栏背景直接用头图：和下面那张是同一块裁剪，接得上
+                        PlaylistTopBarCoverBackdrop(
+                            coverUrl = displayHeaderCoverUrl,
+                            offlineMode = offlineMode,
+                            heroHeight = playlistHeroHeight,
+                            alpha = 1f - playlistChromeCollapseProgress
+                        )
                     TopAppBar(
+                        modifier = Modifier.fillMaxWidth(),
                         title = {
                             Text(
                                 text = ui.header?.title ?: playlist.title,
@@ -537,16 +564,20 @@ fun BiliPlaylistDetailScreen(
                         },
                         windowInsets = WindowInsets.statusBars,
                         colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = playlistTopBarColor,
-                            scrolledContainerColor = playlistTopBarColor,
+                            containerColor = Color.Transparent,
+                            scrolledContainerColor = Color.Transparent,
                             titleContentColor = playlistTopBarContentColor,
                             navigationIconContentColor = playlistTopBarContentColor,
                             actionIconContentColor = playlistTopBarContentColor
                         )
                     )
+                    }
                 } else {
                     val allSelected = selectedIds.size == ui.videos.size && ui.videos.isNotEmpty()
                     TopAppBar(
+                        modifier = Modifier
+                            .padding(horizontal = pageSidePaddingOr(0.dp))
+                            .tvPlaylistTopBarShape(),
                     title = {
                         Text(
                             pluralStringResource(
@@ -631,7 +662,11 @@ fun BiliPlaylistDetailScreen(
                     ) {
                         LazyColumn(
                             state = listState,
-                            contentPadding = PaddingValues(bottom = 24.dp + miniPlayerHeight),
+                            contentPadding = PaddingValues(
+                                start = pageSidePaddingOr(0.dp),
+                                end = pageSidePaddingOr(0.dp),
+                                bottom = 24.dp + miniPlayerHeight
+                            ),
                             modifier = Modifier.fillMaxSize()
                         ) {
                             item {
@@ -646,6 +681,9 @@ fun BiliPlaylistDetailScreen(
                                     offlineMode = offlineMode,
                                     height = playlistHeroHeight,
                                     actionsRevealProgress = searchVisibilityEased,
+                                    // 头图继续铺到「全部播放」那一行下面
+                                    topBleed = playlistTopBarBleed(),
+                                            backgroundBleed = PlaylistActionSheetBleed,
                                     coverContentDescription = displayHeader.title,
                                     actions = if (headerSearchVisible) {
                                         {
@@ -681,9 +719,11 @@ fun BiliPlaylistDetailScreen(
                             PlaylistModernActionSheet(
                                 coverUrl = displayHeaderCoverUrl,
                                 offlineMode = offlineMode,
-                                hasCustomBackground = hasCustomBackground
+                                hasCustomBackground = hasCustomBackground,
+                                overHeroImage = true
                             ) {
                                     PlaylistModernPlaybackActions(
+                                        modifier = Modifier.tvScrollToTopOnUp(listState),
                                         songCount = ui.videos.size,
                                         shuffleEnabled = shuffleEnabled,
                                         repeatMode = repeatMode,
@@ -996,6 +1036,9 @@ fun BiliPlaylistDetailScreen(
                         AnimatedVisibility(visible = partsSelectionMode) {
                             val allSelected = selectedParts.size == currentPartsInfo.pages.size
                             TopAppBar(
+                                modifier = Modifier
+                                    .padding(horizontal = pageSidePaddingOr(0.dp))
+                                    .tvPlaylistTopBarShape(),
                     title = {
                         Text(
                             pluralStringResource(
@@ -1137,7 +1180,6 @@ private fun BiliVideoItem.toSongItem(): SongItem {
     )
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun VideoRow(
     index: Int,
@@ -1158,9 +1200,6 @@ internal fun VideoRow(
     offlineMode: Boolean
 ) {
     val context = LocalContext.current
-    val composeResources = LocalResources.current
-    val clipboard = LocalClipboard.current
-    val scope = rememberCoroutineScope()
     val thumbnailUrl = remember(video.coverUrl) {
         buildBiliThumbnailUrl(
             imageUrl = video.coverUrl,
@@ -1177,217 +1216,45 @@ internal fun VideoRow(
             offlineMode = offlineMode
         )
     }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .combinedClickable(
-                onClick = hapticRowAction(context, if (selectionMode) onToggleSelect else onClick),
-                onLongClick = onLongPress
-            )
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        VideoRowLeading(
-            index = index,
-            selectionMode = selectionMode,
-            selected = selected,
-            onToggleSelect = onToggleSelect
-        )
-
-        AsyncImage(
-            model = coverRequest,
-            contentDescription = video.title,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(width = 100.dp, height = 60.dp)
-                .clip(neriRoundedShape(8.dp))
-        )
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = video.title,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodyLarge,
-                color = playlistModernListPrimaryContentColor()
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = video.uploader,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodySmall,
-                color = playlistModernListSecondaryContentColor()
-            )
-        }
-        Spacer(Modifier.width(8.dp))
-        VideoRowTrailing(
-            isCurrentSong = isCurrentSong,
-            animatePlayingIndicator = animatePlayingIndicator,
-            durationSec = video.durationSec
-        )
-        
-        // 更多操作菜单
-        if (!selectionMode) {
-            VideoRowMoreMenu(
-                video = video,
-                songItem = songItem,
-                isFavorite = isFavorite,
-                onFavoriteToggle = onFavoriteToggle,
-                onPlayNext = onPlayNext,
-                onAddToQueueEnd = onAddToQueueEnd,
-                onCopySongInfo = copyVideoInfoAction(
-                    scope = scope,
-                    clipboard = clipboard,
-                    snackbarHostState = snackbarHostState,
-                    resources = composeResources,
-                    songInfo = "${video.title}-${video.uploader}"
-                )
-            )
-        }
-    }
-}
-
-private fun copyVideoInfoAction(
-    scope: CoroutineScope,
-    clipboard: Clipboard,
-    snackbarHostState: SnackbarHostState,
-    resources: Resources,
-    songInfo: String
-): () -> Unit = {
-    scope.launch {
-        val messageRes = clipboard.copyPlainTextSafely("text", songInfo).copyMessageRes()
-        snackbarHostState.showNeriSnackbar(resources.getString(messageRes))
-    }
-}
-
-@Composable
-private fun VideoRowLeading(
-    index: Int,
-    selectionMode: Boolean,
-    selected: Boolean,
-    onToggleSelect: () -> Unit
-) {
-    Box(
-        modifier = Modifier.width(40.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        if (selectionMode) {
-            Checkbox(
-                checked = selected,
-                onCheckedChange = { onToggleSelect() }
-            )
-        } else {
-            Text(
-                text = index.toString(),
-                style = MaterialTheme.typography.bodyMedium,
-                color = playlistModernListTertiaryContentColor(),
-                textAlign = TextAlign.Center
-            )
-        }
-    }
-}
-
-@Composable
-private fun VideoRowTrailing(
-    isCurrentSong: Boolean,
-    animatePlayingIndicator: Boolean,
-    durationSec: Int
-) {
-    if (isCurrentSong) {
-        PlayingIndicator(
-            color = MaterialTheme.colorScheme.primary,
-            animate = animatePlayingIndicator
-        )
-    } else {
-        Text(
-            text = formatDurationSec(durationSec),
-            style = MaterialTheme.typography.bodySmall,
-            color = playlistModernListSecondaryContentColor()
-        )
-    }
-}
-
-@Composable
-private fun VideoRowMoreMenu(
-    video: BiliVideoItem,
-    songItem: SongItem,
-    isFavorite: Boolean,
-    onFavoriteToggle: (SongItem, Boolean) -> Unit,
-    onPlayNext: () -> Unit,
-    onAddToQueueEnd: () -> Unit,
-    onCopySongInfo: () -> Unit
-) {
-    var showMoreMenu by remember { mutableStateOf(false) }
     var showVideoSkipSheet by remember(video.bvid) { mutableStateOf(false) }
-    Box {
-        IconButton(
-            onClick = { showMoreMenu = true }
-        ) {
-            Icon(
-                Icons.Filled.MoreVert,
-                contentDescription = stringResource(CoreCommonR.string.common_more_actions),
-                tint = playlistModernListSecondaryContentColor()
+
+    NeriSongRow(
+        index = index,
+        song = songItem,
+        onClick = onClick,
+        title = video.title,
+        subtitle = video.uploader,
+        titleMaxLines = 2,
+        titleStyle = MaterialTheme.typography.bodyLarge,
+        coverWidth = 100.dp,
+        coverHeight = 60.dp,
+        coverCornerRadius = 8.dp,
+        // B 站用 16:9 缩略图，请求参数和别处不同，走封面插槽
+        coverContent = {
+            AsyncImage(
+                model = coverRequest,
+                contentDescription = video.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(width = 100.dp, height = 60.dp)
+                    .clip(neriRoundedShape(8.dp))
             )
-        }
-        
-        DropdownMenu(
-            expanded = showMoreMenu,
-            onDismissRequest = { showMoreMenu = false }
-        ) {
-            DropdownMenuItem(
-                text = { Text(stringResource(CoreCommonR.string.local_playlist_play_next)) },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Outlined.PlaylistPlay,
-                        contentDescription = null
-                    )
-                },
-                onClick = {
-                    onPlayNext()
-                    showMoreMenu = false
-                }
-            )
-            DropdownMenuItem(
-                text = { Text(stringResource(CoreCommonR.string.playlist_add_to_end)) },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Outlined.PlaylistAdd,
-                        contentDescription = null
-                    )
-                },
-                onClick = {
-                    onAddToQueueEnd()
-                    showMoreMenu = false
-                }
-            )
-            DropdownMenuItem(
-                text = {
-                    Text(
-                        stringResource(
-                            if (isFavorite) {
-                                CoreCommonR.string.favorite_remove
-                            } else {
-                                CoreCommonR.string.favorite_add
-                            }
-                        )
-                    )
-                },
-                leadingIcon = {
-                    Icon(
-                        imageVector = if (isFavorite) {
-                            Icons.Filled.Favorite
-                        } else {
-                            Icons.Outlined.FavoriteBorder
-                        },
-                        contentDescription = null
-                    )
-                },
-                onClick = {
-                    onFavoriteToggle(songItem, isFavorite)
-                    showMoreMenu = false
-                }
-            )
+        },
+        offlineMode = offlineMode,
+        isCurrentSong = isCurrentSong,
+        animatePlayingIndicator = animatePlayingIndicator,
+        selectionMode = selectionMode,
+        selected = selected,
+        leadingWidth = 40.dp,
+        indexTextStyle = MaterialTheme.typography.bodyMedium,
+        onToggleSelect = onToggleSelect,
+        onLongClick = onLongPress,
+        isFavorite = isFavorite,
+        onFavoriteToggle = onFavoriteToggle,
+        onPlayNext = onPlayNext,
+        onAddToQueueEnd = onAddToQueueEnd,
+        // 页面专属：跳过片段管理
+        extraMenuBottom = { close ->
             DropdownMenuItem(
                 text = { Text(stringResource(CoreCommonR.string.bili_video_skip_manage)) },
                 leadingIcon = {
@@ -1397,25 +1264,14 @@ private fun VideoRowMoreMenu(
                     )
                 },
                 onClick = {
-                    showMoreMenu = false
+                    close()
                     showVideoSkipSheet = true
                 }
             )
-            DropdownMenuItem(
-                text = { Text(stringResource(CoreCommonR.string.action_copy_song_info)) },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Outlined.ContentCopy,
-                        contentDescription = null
-                    )
-                },
-                onClick = {
-                    onCopySongInfo()
-                    showMoreMenu = false
-                }
-            )
-        }
-    }
+        },
+        snackbarHostState = snackbarHostState
+    )
+
     if (showVideoSkipSheet) {
         BiliVideoSkipIntervalsSheet(
             title = stringResource(CoreCommonR.string.bili_video_skip_title),
@@ -1430,3 +1286,4 @@ private fun VideoRowMoreMenu(
         )
     }
 }
+

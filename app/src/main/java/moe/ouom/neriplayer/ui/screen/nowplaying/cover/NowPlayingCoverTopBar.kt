@@ -20,6 +20,8 @@ import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -89,7 +91,8 @@ internal fun NowPlayingCoverTopBar(
     onFavorite: () -> Unit,
     onComment: () -> Unit,
     onMoreOptions: () -> Unit,
-    phoneLandscape: Boolean = false
+    phoneLandscape: Boolean = false,
+    moreOptionsRequester: FocusRequester? = null
 ) {
     with(sharedTransitionScope) {
         BoxWithConstraints(modifier = Modifier.fillMaxWidth().height(height)) {
@@ -116,6 +119,7 @@ internal fun NowPlayingCoverTopBar(
                 onFavorite = onFavorite,
                 onComment = onComment,
                 onMoreOptions = onMoreOptions,
+                moreOptionsRequester = moreOptionsRequester,
                 modifier = Modifier.align(Alignment.CenterEnd)
             )
         }
@@ -167,7 +171,10 @@ internal fun NowPlayingCoverTopActions(
     onFavorite: () -> Unit,
     onComment: () -> Unit,
     onMoreOptions: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    commentRequester: FocusRequester? = null,
+    moreOptionsRequester: FocusRequester? = null,
+    favoriteRequester: FocusRequester? = null
 ) {
     with(sharedTransitionScope) {
         Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
@@ -178,7 +185,8 @@ internal fun NowPlayingCoverTopActions(
                 iconSize = iconSize,
                 sharedTransitionScope = sharedTransitionScope,
                 animatedVisibilityScope = animatedVisibilityScope,
-                onClick = onFavorite
+                onClick = onFavorite,
+                requester = favoriteRequester
             )
             NowPlayingCommentButton(
                 available = commentAvailable,
@@ -186,11 +194,19 @@ internal fun NowPlayingCoverTopActions(
                 iconSize = iconSize,
                 sharedTransitionScope = sharedTransitionScope,
                 animatedVisibilityScope = animatedVisibilityScope,
-                onClick = onComment
+                onClick = onComment,
+                requester = commentRequester
             )
             HapticIconButton(
                 onClick = onMoreOptions,
                 modifier = Modifier.size(buttonSize)
+                    .then(
+                        if (moreOptionsRequester != null) {
+                            Modifier.focusRequester(moreOptionsRequester)
+                        } else {
+                            Modifier
+                        }
+                    )
                     .sharedBounds(
                         rememberSharedContentState(key = "btn_more"),
                         boundsTransform = LocalNowPlayingLyricsBoundsTransform.current,
@@ -218,7 +234,8 @@ private fun NowPlayingFavoriteButton(
     iconSize: Dp,
     sharedTransitionScope: SharedTransitionScope,
     animatedVisibilityScope: AnimatedVisibilityScope,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    requester: FocusRequester? = null
 ) {
     val presentation = nowPlayingFavoritePresentation(
         isFavorite = isFavorite,
@@ -229,6 +246,9 @@ private fun NowPlayingFavoriteButton(
             onClick = onClick,
             enabled = enabled,
             modifier = Modifier.size(buttonSize)
+                .then(
+                    if (requester != null) Modifier.focusRequester(requester) else Modifier
+                )
                 .sharedElement(
                     rememberSharedContentState(key = "btn_favorite"),
                     boundsTransform = LocalNowPlayingLyricsBoundsTransform.current,
@@ -253,13 +273,17 @@ private fun NowPlayingCommentButton(
     iconSize: Dp,
     sharedTransitionScope: SharedTransitionScope,
     animatedVisibilityScope: AnimatedVisibilityScope,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    requester: FocusRequester? = null
 ) {
     if (!available) return
     with(sharedTransitionScope) {
         HapticIconButton(
             onClick = onClick,
             modifier = Modifier.size(buttonSize)
+                .then(
+                    if (requester != null) Modifier.focusRequester(requester) else Modifier
+                )
                 .sharedBounds(
                     rememberSharedContentState(key = "btn_comment"),
                     boundsTransform = LocalNowPlayingLyricsBoundsTransform.current,

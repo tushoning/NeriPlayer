@@ -36,6 +36,11 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Indication
+import androidx.compose.ui.unit.Dp
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -85,14 +90,60 @@ import moe.ouom.neriplayer.ui.effect.glass.AdvancedGlassRole
 import moe.ouom.neriplayer.ui.effect.glass.AdvancedGlassSurface
 import moe.ouom.neriplayer.ui.haptic.HapticIconButton
 import moe.ouom.neriplayer.ui.screen.tab.settings.page.settingsHighlightTarget
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.theme.NeriDesign
+import moe.ouom.neriplayer.ui.tv.TvFocusIndication
+import moe.ouom.neriplayer.ui.tv.tvBringIntoViewOnFocus
+import moe.ouom.neriplayer.ui.tv.tvClampLeft
 
 private val SettingsItemShape = RoundedCornerShape(18.dp)
 
+/** 设置页二级/三级条目底盘圆角（= [SettingsItemShape]），焦点环也按它画，四角才对得上 */
+internal val SettingsRowRingRadius = 18.dp
+
+/**
+ * 设置页统一的焦点环。
+ *
+ * 环的圆角**必须等于条目自己的圆角**：`drawTvFocusRing` 会把半径减去那 1dp 基础内缩，
+ * 所以传底盘圆角进去，环和底盘就是完全同心的，四个角严丝合缝，也不会被外层 `clip` 削掉。
+ *
+ * @param radius 底盘圆角，一级界面是卡片 16dp，二级/三级是条目 18dp
+ */
+@Composable
+internal fun rememberSettingsRingIndication(radius: Dp, cleanExtra: Dp = 0.dp): Indication {
+    val current = LocalIndication.current
+    // 「简洁」风格只在设置**一级**首页放大（cleanExtra 由调用点给），
+    // 二级子页面保持原来的圆角，不然点进去整页的环都圆得离谱。
+    val effectiveRadius = if (LocalIsTelevision.current && NeriDesign.isClean) {
+        radius + cleanExtra
+    } else {
+        radius
+    }
+    return if (LocalIsTelevision.current && current is TvFocusIndication) {
+        remember(current, effectiveRadius) { current.withRing(radius = effectiveRadius) }
+    } else {
+        current
+    }
+}
+
+@Composable
 internal fun Modifier.settingsItemClickable(
     enabled: Boolean = true,
     onClick: () -> Unit
 ): Modifier {
-    return clip(SettingsItemShape).clickable(enabled = enabled, onClick = onClick)
+    // 不再往里缩：环圆角改成跟条目底盘一致（18dp），同心之后四角自然对齐。
+    val ringIndication = rememberSettingsRingIndication(SettingsRowRingRadius)
+    return clip(SettingsItemShape)
+        .tvBringIntoViewOnFocus()
+        // 电视：设置条目都是整行占满宽度，最左边再按左会穿到页面外面，
+        // 被方向搜索一路带到顶部主标签栏上（「按左就跳到标签页」）
+        .tvClampLeft()
+        .clickable(
+            enabled = enabled,
+            interactionSource = remember { MutableInteractionSource() },
+            indication = ringIndication,
+            onClick = onClick
+        )
 }
 
 /** 可复用的折叠区头部 */

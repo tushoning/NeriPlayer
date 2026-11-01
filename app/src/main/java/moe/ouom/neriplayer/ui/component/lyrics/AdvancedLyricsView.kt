@@ -38,6 +38,7 @@ import com.mocharealm.accompanist.lyrics.core.model.synced.SyncedLine
 import com.mocharealm.accompanist.lyrics.core.parser.AutoParser
 import com.mocharealm.accompanist.lyrics.ui.composable.lyrics.KaraokeLyricsView
 import moe.ouom.neriplayer.data.settings.lyrics.scaledLyricFontSize
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 import kotlin.math.abs
 import kotlin.math.max
 
@@ -166,6 +167,8 @@ fun AdvancedLyricsView(
                         onSeekTo(line.start.toLong())
                     }
                 },
+                // 电视上没有触摸：歌词行不挂点击/长按，也就不会成为方向键的停留点
+                linesInteractive = !LocalIsTelevision.current,
                 modifier = Modifier
                     .fillMaxSize()
                     .then(

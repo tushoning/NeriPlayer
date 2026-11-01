@@ -27,7 +27,11 @@ import androidx.compose.runtime.CompositionLocalProvider
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
 import android.content.Context
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -58,6 +62,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
@@ -97,6 +102,9 @@ import moe.ouom.neriplayer.ui.viewmodel.tab.LibraryViewModel
 import moe.ouom.neriplayer.ui.viewmodel.tab.PlaylistSummary
 import moe.ouom.neriplayer.ui.viewmodel.tab.YouTubeMusicPlaylist
 import moe.ouom.neriplayer.ui.haptic.HapticIconButton
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.TvTabConfirmBus
+import moe.ouom.neriplayer.navigation.Destinations
 import moe.ouom.neriplayer.ui.util.currentWindowWidthDp
 import moe.ouom.neriplayer.R as AppR
 import moe.ouom.neriplayer.platform.subsonic.repository.ServerAlbum
@@ -281,6 +289,32 @@ fun LibraryScreen(
         initialPage = initialPage,
         pageCount = { orderedTabs.size }
     )
+    // MY_MUSIC（音乐服务器）分页自己维护滚动状态，这里拿不到，返回 null 由调用方跳过
+    fun listStateOf(tab: LibraryTab): LazyListState? = when (tab) {
+        LibraryTab.LOCAL -> localListState
+        LibraryTab.FAVORITE -> favoriteListState
+        LibraryTab.NETEASE -> neteaseListState
+        LibraryTab.NETEASEALBUM -> neteaseAlbumState
+        LibraryTab.YTMUSIC -> youtubeMusicListState
+        LibraryTab.BILI -> biliListState
+        LibraryTab.QQMUSIC -> qqMusicListState
+        LibraryTab.MY_MUSIC -> null
+    }
+    // 电视：停在「媒体库」标签上再按一次确定键 = 刷新当前分页 + 回到顶部
+    //（本地/收藏/QQ音乐没有远端数据可刷，只回顶部）
+    LaunchedEffect(pagerState, orderedTabs) {
+        TvTabConfirmBus.events.collect { route ->
+            if (route != Destinations.Library.route) return@collect
+            val tab = orderedTabs.getOrNull(pagerState.currentPage) ?: return@collect
+            listStateOf(tab)?.let { state -> runCatching { state.scrollToItem(0) } }
+            when (tab.asVisibleLibraryTab()) {
+                LibraryTab.NETEASE -> vm.refreshNeteaseLibrary()
+                LibraryTab.YTMUSIC -> vm.refreshYouTubeMusicPlaylists()
+                LibraryTab.BILI -> vm.refreshBilibili()
+                else -> Unit
+            }
+        }
+    }
     var selectedNeteaseCategory by rememberSaveable {
         mutableIntStateOf(NETEASE_CATEGORY_PLAYLIST)
     }
@@ -350,6 +384,7 @@ fun LibraryScreen(
     val scope = rememberCoroutineScope()
     val windowWidthDp = currentWindowWidthDp()
     val isTabletLayout = windowWidthDp >= 720.dp
+    val isTelevision = LocalIsTelevision.current
     val pageHorizontalPadding = if (isTabletLayout) 28.dp else 0.dp
 
     LaunchedEffect(initialTab, orderedTabs) {
@@ -370,31 +405,42 @@ fun LibraryScreen(
     Column(
         Modifier
             .fillMaxSize()
-            .nestedScroll(scrollBehavior.nestedScrollConnection),
+            .then(
+                // 电视上没有可折叠的大标题，这个 scrollBehavior 却仍然挂在嵌套滚动链上，
+                // 会把列表的滚动吃掉（表现为焦点能走出屏幕、页面不动）。电视上不接。
+                if (LocalIsTelevision.current) Modifier
+                else Modifier.nestedScroll(scrollBehavior.nestedScrollConnection)
+            ),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        LargeTopAppBar(
-            title = { Text(stringResource(CoreCommonR.string.library_title)) },
-            scrollBehavior = scrollBehavior,
-            colors = TopAppBarDefaults.topAppBarColors(
-                containerColor = Color.Transparent,
-                scrolledContainerColor = Color.Transparent
-            ),
-            actions = {
-                HapticIconButton(onClick = onOpenStats) {
-                    Icon(
-                        Icons.Filled.BarChart,
-                        contentDescription = stringResource(AppR.string.stats_title)
-                    )
+        // 电视上不放大标题。原来这里还有一行放「最近播放」图标按钮，
+        // 现在「最近播放」和「播放统计」都并进下面的标签栏了，这一行整个去掉，
+        // 省下 44dp 的高度。
+        if (!LocalIsTelevision.current) {
+            LargeTopAppBar(
+                modifier = Modifier.padding(horizontal = pageSidePaddingOr(0.dp)),
+                title = { Text(stringResource(CoreCommonR.string.library_title)) },
+                scrollBehavior = scrollBehavior,
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                    scrolledContainerColor = Color.Transparent
+                ),
+                actions = {
+                    HapticIconButton(onClick = onOpenStats) {
+                        Icon(
+                            Icons.Filled.BarChart,
+                            contentDescription = stringResource(AppR.string.stats_title)
+                        )
+                    }
+                    HapticIconButton(onClick = onOpenRecent) {
+                        Icon(
+                            Icons.Outlined.History,
+                            contentDescription = stringResource(CoreCommonR.string.library_recent_played)
+                        )
+                    }
                 }
-                HapticIconButton(onClick = onOpenRecent) {
-                    Icon(
-                        Icons.Outlined.History,
-                        contentDescription = stringResource(CoreCommonR.string.library_recent_played)
-                    )
-                }
-            }
-        )
+            )
+        }
 
         Card(
             shape = neriRoundedShape(16.dp),
@@ -414,8 +460,25 @@ fun LibraryScreen(
                     tabs = orderedTabs,
                     selectedTabIndex = pagerState.currentPage,
                     onTabSelected = { index ->
-                        scope.launch {
-                            pagerState.animateScrollToPage(index)
+                        if (isTelevision) {
+                            // 电视上直接跳，不做逐页滑动的动画：
+                            // 动画期间 currentPage 会依次经过中间几页，标签高亮跟着乱跳，
+                            // 还会把 onTabChange 一股脑甩给宿主，看起来就是「几个标签来回跳」。
+                            scope.launch { pagerState.scrollToPage(index) }
+                        } else {
+                            scope.launch { pagerState.animateScrollToPage(index) }
+                        }
+                    },
+                    onOpenStats = onOpenStats,
+                    onOpenRecent = onOpenRecent,
+                    onRefreshCurrentTab = {
+                        when (orderedTabs.getOrNull(pagerState.currentPage)) {
+                            LibraryTab.NETEASE,
+                            LibraryTab.NETEASEALBUM -> vm.refreshNeteaseLibrary()
+                            LibraryTab.YTMUSIC -> vm.refreshYouTubeMusicPlaylists()
+                            LibraryTab.BILI -> vm.refreshBilibili()
+                            // 本地/收藏/QQ音乐没有可刷新的远端数据，保持不动
+                            else -> Unit
                         }
                     }
                 )
@@ -423,7 +486,11 @@ fun LibraryScreen(
                 HorizontalPager(
                     state = pagerState,
                     modifier = Modifier.fillMaxSize(),
-                    pageSpacing = 0.dp
+                    pageSpacing = 0.dp,
+                    // 电视上没有滑动操作，翻页只由标签点击驱动。
+                    // 打开横向滑动后，遥控器方向键可以把焦点带到相邻页，
+                    // 分页器会跟着一路翻过去（B站搜索框聚焦后"往左跑"就是这个）。
+                    userScrollEnabled = !isTelevision
                 ) { page ->
                     when (orderedTabs[page]) {
                         LibraryTab.MY_MUSIC -> moe.ouom.neriplayer.ui.screen.server.MusicServerScreen(
