@@ -521,6 +521,9 @@ fun LibraryHostScreen(
         )
 
     Surface(modifier = Modifier.fillMaxSize(), color = Color.Transparent) {
+    // 电视：整页转场（300ms、双场景、reveal 裁剪 + 缩放重测）在弱 GPU/弱 CPU 上是
+    // 「切页面卡一下」的主要来源，且没人要求电视上有这个动效。
+    val tvSkipSceneMotion = moe.ouom.neriplayer.ui.tv.LocalIsTelevision.current
         navigationTransition.AnimatedContent(
             modifier = Modifier.fillMaxSize(),
             contentKey = { scene ->
@@ -533,7 +536,11 @@ fun LibraryHostScreen(
                 }
             },
             transitionSpec = {
-                if (
+                if (tvSkipSceneMotion) {
+
+                    EnterTransition.None togetherWith ExitTransition.None
+
+                } else if (
                     shouldSuppressRestoredMainTabHostEntry(
                         restoredEntry = suppressRestoredSceneEntry,
                         initialDepth = initialState.navigationDepth,

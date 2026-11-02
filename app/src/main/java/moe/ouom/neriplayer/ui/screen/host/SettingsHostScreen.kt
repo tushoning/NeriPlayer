@@ -23,6 +23,9 @@ package moe.ouom.neriplayer.ui.screen.host
  * Created: 2025/1/17
  */
 
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
 import androidx.compose.foundation.lazy.LazyListState
@@ -212,13 +215,20 @@ internal fun SettingsHostScreen(
     }
 
     Surface(color = Color.Transparent) {
+    // 电视：整页转场（300ms、双场景、reveal 裁剪 + 缩放重测）在弱 GPU/弱 CPU 上是
+    // 「切页面卡一下」的主要来源，且没人要求电视上有这个动效。
+    val tvSkipSceneMotion = moe.ouom.neriplayer.ui.tv.LocalIsTelevision.current
         navigationTransition.AnimatedContent(
             transitionSpec = {
-                advancedGlassHostNavigationTransition(
-                    forward = targetState.navigationDepth > initialState.navigationDepth,
-                    coherentFeedbackEnabled = coherentFeedbackEnabled,
-                    targetContentZIndex = targetState.navigationDepth.toFloat()
-                ).using(SizeTransform(clip = true))
+                if (tvSkipSceneMotion) {
+                    EnterTransition.None togetherWith ExitTransition.None
+                } else {
+                    advancedGlassHostNavigationTransition(
+                        forward = targetState.navigationDepth > initialState.navigationDepth,
+                        coherentFeedbackEnabled = coherentFeedbackEnabled,
+                        targetContentZIndex = targetState.navigationDepth.toFloat()
+                    ).using(SizeTransform(clip = true))
+                }
             }
         ) { state ->
             DisposableEffect(state) {
