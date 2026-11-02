@@ -237,9 +237,17 @@ private val EdgeFadeWidth = 28.dp
  * ease in and out as the row reaches either end without recomposing the row.
  */
 private fun Modifier.softHorizontalEdgeFade(startFade: () -> Float, endFade: () -> Float): Modifier =
-    graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+    graphicsLayer {
+        // 电视：不要离屏图层（见 TvPerf.disableOffscreenMasks）
+        compositingStrategy = if (moe.ouom.neriplayer.ui.tv.TvPerf.disableOffscreenMasks) {
+            CompositingStrategy.Auto
+        } else {
+            CompositingStrategy.Offscreen
+        }
+    }
         .drawWithContent {
             drawContent()
+            if (moe.ouom.neriplayer.ui.tv.TvPerf.disableOffscreenMasks) return@drawWithContent
             val width = EdgeFadeWidth.toPx().coerceAtMost(size.width / 2f)
             val start = startFade().coerceIn(0f, 1f)
             val end = endFade().coerceIn(0f, 1f)

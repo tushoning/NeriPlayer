@@ -39,4 +39,15 @@ object TvPerf {
     /** 关掉玻璃模糊取样 */
     @Volatile
     var disableBlur: Boolean = false
+
+    /**
+     * 关掉「离屏图层 + DstIn 渐变遮罩」这类边缘渐隐装饰。
+     *
+     * 它的实现是 `compositingStrategy = Offscreen` + `BlendMode.DstIn`：内容要先整块渲染进
+     * 一张离屏纹理，再拿渐变去混合一次。手机上有 GPU 分块（tile）和充足带宽，几乎不花钱；
+     * 电视盒子（尤其 1080p 大面积的歌词区域）每帧都要多分配、多写、多读一张全程纹理，
+     * 是这批装饰里最贵的一档，比模糊更贵，因为它不依赖 Android 12 的 RenderEffect。
+     */
+    @Volatile
+    var disableOffscreenMasks: Boolean = false
 }

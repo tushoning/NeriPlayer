@@ -158,7 +158,14 @@ private fun BouncingSongTitle(
 }
 
 private fun Modifier.horizontalTitleEdgeFade(fadeWidth: Dp): Modifier = this
-    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+    .graphicsLayer {
+        // 电视：不要离屏图层（见 TvPerf.disableOffscreenMasks）
+        compositingStrategy = if (moe.ouom.neriplayer.ui.tv.TvPerf.disableOffscreenMasks) {
+            CompositingStrategy.Auto
+        } else {
+            CompositingStrategy.Offscreen
+        }
+    }
     .drawWithCache {
         val edge = (fadeWidth.toPx() / size.width).coerceIn(0f, 0.22f)
         val brush = if (edge > 0f) {
@@ -177,7 +184,8 @@ private fun Modifier.horizontalTitleEdgeFade(fadeWidth: Dp): Modifier = this
         }
         onDrawWithContent {
             drawContent()
-            if (brush != null) {
+            // 电视上没有离屏图层，DstIn 会直接擦掉父容器的内容，必须跳过
+            if (brush != null && !moe.ouom.neriplayer.ui.tv.TvPerf.disableOffscreenMasks) {
                 drawRect(
                     brush = brush,
                     size = size,
