@@ -23,6 +23,7 @@ package moe.ouom.neriplayer.ui.component.lyrics
  * Created: 2025/8/13
  */
 
+import moe.ouom.neriplayer.ui.tv.TvPerf
 import moe.ouom.neriplayer.data.model.lyrics.LyricEntry
 import moe.ouom.neriplayer.data.model.lyrics.WordTiming
 import moe.ouom.neriplayer.lyrics.parser.calculateLineProgress
@@ -696,7 +697,11 @@ fun SyncedLyricsView(
         val requestTarget = autoScrollTarget
         isAutoScrolling = true
         try {
-            listState.animateScrollToItem(currentIndex)
+            if (TvPerf.reduceMotion) {
+                listState.scrollToItem(currentIndex)
+            } else {
+                listState.animateScrollToItem(currentIndex)
+            }
         } finally {
             if (shouldFinishLyricAutoScroll(requestTarget, latestAutoScrollTarget)) {
                 isAutoScrolling = false
@@ -848,7 +853,8 @@ fun SyncedLyricsView(
                     )
 
                     val playbackBlurRadiusPx =
-                        if (isActive || !lyricBlurEnabled || !visualEffectsEnabled) {
+                        // 电视：关掉逐行模糊。每一行都要单独的 BlurEffect/阴影，滚动时等于每帧几十次模糊。
+                        if (isActive || !lyricBlurEnabled || !visualEffectsEnabled || TvPerf.disableBlur) {
                             0f
                         } else {
                             blurForDistance(distance, lyricBlurAmount)
