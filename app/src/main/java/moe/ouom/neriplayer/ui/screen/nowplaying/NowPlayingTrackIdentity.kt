@@ -48,7 +48,6 @@ import moe.ouom.neriplayer.data.local.media.displayName
 import moe.ouom.neriplayer.ui.component.playback.NowPlayingSongTitle
 import androidx.compose.ui.focus.focusProperties
 import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
-import androidx.compose.ui.unit.sp
 
 internal data class NowPlayingTrackDisplay(
     val name: String?,
@@ -76,11 +75,11 @@ internal fun resolveNowPlayingTrackIdentityPresentation(
     typography: Typography,
     isTelevision: Boolean = false
 ): NowPlayingTrackIdentityPresentation = when (layout) {
-    // 电视：坐在两三米外看，这两行字要明显大一号；两行都居中（容器会按整屏宽度居中）
+    // 电视：和整页歌词的歌名/歌手名同号（titleLarge / bodyLarge），两行居中
     NowPlayingTrackIdentityLayout.Compact -> if (isTelevision) {
         NowPlayingTrackIdentityPresentation(
-            typography.titleLarge.copy(fontSize = 32.sp, lineHeight = 42.sp),
-            typography.bodyMedium.copy(fontSize = 18.sp, lineHeight = 26.sp),
+            typography.titleLarge,
+            typography.bodyLarge,
             Alignment.CenterHorizontally,
             Modifier
         )
@@ -89,9 +88,18 @@ internal fun resolveNowPlayingTrackIdentityPresentation(
             typography.titleLarge, typography.bodyMedium, Alignment.Start, Modifier
         )
     }
-    NowPlayingTrackIdentityLayout.Expanded -> NowPlayingTrackIdentityPresentation(
-        typography.headlineSmall, typography.bodyLarge, Alignment.CenterHorizontally, Modifier
-    )
+    NowPlayingTrackIdentityLayout.Expanded -> if (isTelevision) {
+        NowPlayingTrackIdentityPresentation(
+            typography.titleLarge,
+            typography.bodyLarge,
+            Alignment.CenterHorizontally,
+            Modifier
+        )
+    } else {
+        NowPlayingTrackIdentityPresentation(
+            typography.headlineSmall, typography.bodyLarge, Alignment.CenterHorizontally, Modifier
+        )
+    }
     NowPlayingTrackIdentityLayout.LargeCover -> NowPlayingTrackIdentityPresentation(
         typography.headlineMedium,
         typography.titleMedium.copy(fontWeight = FontWeight.Normal),
