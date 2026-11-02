@@ -23,6 +23,7 @@ package moe.ouom.neriplayer.ui.screen.history
  * Updated: 2026/3/23
  */
 
+import moe.ouom.neriplayer.ui.tv.TvPerf
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
 import moe.ouom.neriplayer.data.identity.sameIdentityAs
 import moe.ouom.neriplayer.data.identity.stableKey
@@ -894,6 +895,11 @@ private fun RecentRowText(
 /** 播放中指示 */
 @Composable
 private fun PlayingIndicator(color: Color, animate: Boolean) {
+    // 电视：不创建无限动画。只要还读着动画 state，这一行就会一直重绘，列表滚动时尤其浪费。
+    if (TvPerf.reduceMotion) {
+        StaticPlayingIndicator(color)
+        return
+    }
     // 三条不同节奏/相位的无限动画
     val t = rememberInfiniteTransition(label = "playing")
     val flatHeight = 8f
@@ -963,5 +969,22 @@ private fun PlayingIndicator(color: Color, animate: Boolean) {
                 .clip(neriRoundedShape(1.dp))
                 .background(color)
         )
+    }
+}
+
+/** 电视用的静态「播放中」指示：固定高度，不读任何动画 state。 */
+@Composable
+private fun StaticPlayingIndicator(color: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.width(24.dp)) {
+        listOf(12f, 15f, 10f).forEachIndexed { index, height ->
+            if (index > 0) Spacer(Modifier.width(3.dp))
+            Box(
+                Modifier
+                    .width(3.dp)
+                    .height(height.dp)
+                    .clip(neriRoundedShape(1.dp))
+                    .background(color)
+            )
+        }
     }
 }

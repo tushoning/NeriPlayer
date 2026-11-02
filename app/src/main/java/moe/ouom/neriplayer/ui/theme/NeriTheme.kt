@@ -161,7 +161,11 @@ fun NeriTheme(
                 TvFocusIndication(tvRingColor, cornerRadius = tvRingRadius)
             }
             // 电视上关掉所有装饰性动效（标签切换、页面进出场），只保留播放页动画
-            SideEffect { TvPerf.reduceMotion = isTelevision }
+            // 玻璃模糊同样关掉：RenderEffect 在电视 GPU 上每帧都要重新取样，是最大的一个开销
+            SideEffect {
+                TvPerf.reduceMotion = isTelevision
+                TvPerf.disableBlur = isTelevision
+            }
             // Material3 的组件（Surface/Card/Button/列表项）内部硬写 ripple()，不读 LocalIndication，
             // 所以额外把 ripple 的焦点态叠加强化，否则电视上看不出光标停在哪
             val tvRipple = remember(colorScheme.primary) {

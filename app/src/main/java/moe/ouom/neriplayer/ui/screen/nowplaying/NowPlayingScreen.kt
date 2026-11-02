@@ -1706,7 +1706,7 @@ fun NowPlayingScreen(
                                 NowPlayingTrackIdentity(
                                     display = resolveNowPlayingTrackDisplay(currentSong),
                                     visible = contentVisible,
-                                    marqueeEnabled = nowPlayingSongTitleMarqueeEnabled,
+                                    marqueeEnabled = nowPlayingSongTitleMarqueeEnabled && !LocalIsTelevision.current,
                                     titleColor = targetNowPlayingColorScheme.onSurface,
                                     sharedTransitionScope = this@SharedTransitionLayout,
                                     animatedVisibilityScope = this@AnimatedContent,
@@ -1718,7 +1718,7 @@ fun NowPlayingScreen(
                                 NowPlayingTrackIdentity(
                                     display = resolveNowPlayingTrackDisplay(currentSong),
                                     visible = contentVisible,
-                                    marqueeEnabled = nowPlayingSongTitleMarqueeEnabled,
+                                    marqueeEnabled = nowPlayingSongTitleMarqueeEnabled && !LocalIsTelevision.current,
                                     titleColor = targetNowPlayingColorScheme.onSurface,
                                     sharedTransitionScope = this@SharedTransitionLayout,
                                     animatedVisibilityScope = this@AnimatedContent,

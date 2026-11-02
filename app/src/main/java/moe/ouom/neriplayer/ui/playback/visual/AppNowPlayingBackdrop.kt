@@ -14,6 +14,7 @@ import coil.Coil
 import coil.ImageLoader
 import coil.request.CachePolicy
 import kotlinx.coroutines.flow.StateFlow
+import moe.ouom.neriplayer.ui.tv.TvPerf
 import moe.ouom.neriplayer.data.identity.stableKey
 import moe.ouom.neriplayer.data.local.storage.LocalAssetInvalidationBus
 import moe.ouom.neriplayer.data.model.SongItem
@@ -85,6 +86,23 @@ internal fun nowPlayingBackdropFrame(
     blurAvailable: Boolean
 ): NowPlayingBackdropFrame {
     val effectiveCover = if (cover.clearCover) cover.copy(url = null) else cover
+    // 电视：不做封面模糊。它要解码一张大图再在 CPU/GPU 上模糊，切歌和进出播放页都会卡一下，
+    // 而画面观感靠渐变底色就够了。
+    if (TvPerf.disableBlur) {
+        return NowPlayingBackdropFrame(
+            cover = effectiveCover,
+            background = background,
+            blurState = blurState,
+            hasCoverBlur = false,
+            blurStrength = 0f,
+            imageSizePx = resolvedNowPlayingBlurImageSizePx(effectiveCover.url),
+            assetVersion = nowPlayingBlurAssetVersion(effectiveCover),
+            requestKey = nowPlayingBlurRequestKey(
+                effectiveCover.url, effectiveCover.songKey, 0f, nowPlayingBlurAssetVersion(effectiveCover)
+            ),
+            latestRequestKey = null
+        )
+    }
     val blurStrength = background.blurAmount.coerceIn(0f, 500f)
     val effectiveBlurStrength = resolvedNowPlayingBlurStrength(effectiveCover.url, blurStrength)
     val assetVersion = nowPlayingBlurAssetVersion(effectiveCover)

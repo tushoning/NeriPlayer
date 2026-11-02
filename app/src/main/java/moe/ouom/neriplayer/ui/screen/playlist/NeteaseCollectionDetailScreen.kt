@@ -23,6 +23,7 @@ package moe.ouom.neriplayer.ui.screen.playlist
  * Created: 2025/8/10
  */
 
+import moe.ouom.neriplayer.ui.tv.TvPerf
 import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.LocalIndication
@@ -1202,6 +1203,11 @@ fun PlayingIndicator(
     color: Color = MaterialTheme.colorScheme.primary,
     animate: Boolean = true
 ) {
+    // 电视：不创建无限动画。只要还读着动画 state，这一行就永远在重绘，列表滚动时尤其浪费。
+    if (TvPerf.reduceMotion) {
+        StaticPlayingIndicator(modifier = modifier, color = color)
+        return
+    }
     val transition = rememberInfiniteTransition(label = "playing")
     val flatHeight = 0.35f
     val transitionSpec: FiniteAnimationSpec<Float> =
@@ -1275,3 +1281,23 @@ fun PlayingIndicator(
 
 private fun playingBarHoldTarget(animate: Boolean, animated: State<Float>, flatHeight: Float): Float =
     if (animate) animated.value else flatHeight
+
+/** 电视用的静态「播放中」指示：固定高度，不读任何动画 state。 */
+@Composable
+private fun StaticPlayingIndicator(modifier: Modifier = Modifier, color: Color) {
+    Row(
+        modifier = modifier.height(12.dp),
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(1.dp)
+    ) {
+        listOf(0.45f, 0.7f, 0.55f).forEach { fraction ->
+            Box(
+                Modifier
+                    .width(3.dp)
+                    .height(12.dp * fraction)
+                    .clip(RoundedCornerShape(50))
+                    .background(color)
+            )
+        }
+    }
+}

@@ -43,6 +43,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import moe.ouom.neriplayer.ui.tv.TvPerf
 import moe.ouom.neriplayer.ui.effect.glass.AdvancedGlassRole
 import moe.ouom.neriplayer.ui.effect.glass.AdvancedGlassSurface
 import moe.ouom.neriplayer.ui.effect.glass.LocalAdvancedGlassController
@@ -261,6 +262,8 @@ private class LensRefractionEffect {
         edgeBandPx: Float,
         refractionPx: Float
     ): androidx.compose.ui.graphics.RenderEffect? {
+        // 电视：镜头折射是逐像素着色器，弱 GPU 上直接拖垮整条标签栏
+        if (TvPerf.disableBlur) return null
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return null
         val runtime = shader as? RuntimeShader ?: return null
         return build(runtime, width, height, edgeBandPx, refractionPx)

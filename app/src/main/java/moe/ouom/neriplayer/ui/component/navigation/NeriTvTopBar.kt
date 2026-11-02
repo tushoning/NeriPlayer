@@ -63,6 +63,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavDestination
+import moe.ouom.neriplayer.ui.tv.TvPerf
 import moe.ouom.neriplayer.navigation.Destinations
 import moe.ouom.neriplayer.ui.haptic.performHapticFeedback
 import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
@@ -376,7 +377,8 @@ private fun TvNowPlayingTab(
  */
 @Composable
 private fun TvNowPlayingBars(color: Color, animate: Boolean) {
-    if (!animate) {
+    // 电视：顶栏是常驻的，频谱柱一直动就等于一直重绘，直接静态化
+    if (!animate || TvPerf.reduceMotion) {
         TvNowPlayingBarsRow(color = color, heights = StaticBarHeights)
         return
     }

@@ -591,7 +591,7 @@ fun LyricsScreen(
                         BoxWithConstraints {
                             NowPlayingSongTitle(
                                 text = currentSong?.displayName() ?: stringResource(CoreCommonR.string.lyrics_unknown_song),
-                                marqueeEnabled = nowPlayingSongTitleMarqueeEnabled,
+                                marqueeEnabled = nowPlayingSongTitleMarqueeEnabled && !LocalIsTelevision.current,
                                 style = MaterialTheme.typography.titleLarge,
                                 color = LocalNeriTargetColorScheme.current.onSurface,
                                 modifier = Modifier
