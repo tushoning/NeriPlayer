@@ -23,6 +23,7 @@ package moe.ouom.neriplayer.ui.screen.nowplaying
  * Updated: 2026/3/23
  */
 
+import moe.ouom.neriplayer.ui.tv.TvPerf
 import moe.ouom.neriplayer.ui.haptic.performHapticFeedback
 import moe.ouom.neriplayer.data.identity.sameIdentityAs
 import moe.ouom.neriplayer.data.identity.stableKey
@@ -1190,17 +1191,22 @@ fun NowPlayingScreen(
                 Box(modifier = Modifier.fillMaxSize()) {
                     lyricsTransition.AnimatedContent(
                         transitionSpec = {
-                            (fadeIn(
-                                animationSpec = tween(
-                                    durationMillis = LyricsPageTransitionDurationMs,
-                                    easing = LinearEasing
-                                )
-                            ) togetherWith fadeOut(
-                                animationSpec = tween(
-                                    durationMillis = LyricsPageTransitionDurationMs,
-                                    easing = LinearEasing
-                                )
-                            )).using(nowPlayingLyricsSizeTransform(lyricsPredictiveBackPreviewActive))
+                            // 电视：封面飞行 + 整页尺寸变换是最贵的一段动画，直接瞬切
+                            if (TvPerf.reduceMotion) {
+                                EnterTransition.None togetherWith ExitTransition.None
+                            } else {
+                                (fadeIn(
+                                    animationSpec = tween(
+                                        durationMillis = LyricsPageTransitionDurationMs,
+                                        easing = LinearEasing
+                                    )
+                                ) togetherWith fadeOut(
+                                    animationSpec = tween(
+                                        durationMillis = LyricsPageTransitionDurationMs,
+                                        easing = LinearEasing
+                                    )
+                                )).using(nowPlayingLyricsSizeTransform(lyricsPredictiveBackPreviewActive))
+                            }
                         }
                     ) { isLyricsMode ->
                         if (shouldUseStandaloneNowPlayingLyricsPage(isLyricsMode, standaloneLyricsOnlyInPortrait)) {

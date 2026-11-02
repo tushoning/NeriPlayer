@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
+import moe.ouom.neriplayer.ui.tv.TvPerf
 import moe.ouom.neriplayer.common.R as CoreCommonR
 import coil.request.ImageRequest
 import coil.size.Size
@@ -99,7 +100,10 @@ fun CustomBackground(
                 modifier = Modifier
                     .fillMaxSize()
                     .let { base ->
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && blur > 0f) {
+                        // 电视上不模糊背景图：整屏 RenderEffect 是最贵的一档
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && blur > 0f &&
+                            !TvPerf.disableBlur
+                        ) {
                             base.blur(blur.dp)
                         } else {
                             base
@@ -181,4 +185,5 @@ class BlurTransformation(
             rs?.destroy()
         }
     }
+
 }
