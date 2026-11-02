@@ -1775,7 +1775,12 @@ private fun NeriAppContent(
             NowPlayingPresentationEffects(
                 showNowPlaying = showNowPlaying,
                 lifecycleResumed = lifecycleResumed,
-                audioReactiveEnabled = backgroundMode.audioReactive,
+                // 电视：永远不开「音频响应」。
+                // 它会在音频链路上挂一个 TeeAudioProcessor，**每个 PCM buffer 都在 Kotlin 里
+                // 逐样本算能量/节拍**，而且只在播放页打开时才启用/禁用——等于每次进出播放页
+                // 都要重配一次音频管线。在 4 核 1.45GHz 的盒子上这是实打实的持续 CPU 负载，
+                // 而它算出来的 level/beat 目前在 UI 里没有任何消费者。
+                audioReactiveEnabled = backgroundMode.audioReactive && !LocalIsTelevision.current,
                 keepScreenOn = nowPlayingKeepScreenOn
             )
 
