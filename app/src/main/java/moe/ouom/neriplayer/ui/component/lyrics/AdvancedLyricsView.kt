@@ -172,7 +172,8 @@ fun AdvancedLyricsView(
                 modifier = Modifier
                     .fillMaxSize()
                     .then(
-                        if (useAdditiveBlend) {
+                        // 电视：加色混合要把整个歌词区先离屏渲染再 Plus 混合，是最贵的一档
+                        if (useAdditiveBlend && !LocalIsTelevision.current) {
                             Modifier.graphicsLayer {
                                 blendMode = BlendMode.Plus
                                 compositingStrategy = CompositingStrategy.Offscreen

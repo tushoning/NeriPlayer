@@ -165,6 +165,7 @@ fun NeriTheme(
             SideEffect {
                 TvPerf.reduceMotion = isTelevision
                 TvPerf.disableBlur = isTelevision
+                TvPerf.disableOffscreenMasks = isTelevision
             }
             // Material3 的组件（Surface/Card/Button/列表项）内部硬写 ripple()，不读 LocalIndication，
             // 所以额外把 ripple 的焦点态叠加强化，否则电视上看不出光标停在哪

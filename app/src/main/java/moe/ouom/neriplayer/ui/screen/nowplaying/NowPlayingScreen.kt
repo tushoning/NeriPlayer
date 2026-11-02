@@ -1104,7 +1104,11 @@ fun NowPlayingScreen(
         compactWideLayout = windowWidthDp < 720.dp,
         compactPortrait = useCompactPortraitLayout
     )
-    val lowPowerLyricsRendering = remember(context, effectiveShowLyricsScreen) { context.isSystemPowerSaveMode() }
+    // 电视：无条件走低功耗歌词渲染（见 LyricsScreen 同名开关）
+    val tvLyricsLowPower = LocalIsTelevision.current
+    val lowPowerLyricsRendering = remember(context, effectiveShowLyricsScreen, tvLyricsLowPower) {
+        context.isSystemPowerSaveMode() || tvLyricsLowPower
+    }
 
     // 歌词偏移 (平台 + 用户自定义)
     val totalOffset = rememberNowPlayingLyricOffset(

@@ -552,14 +552,23 @@ private fun rememberSmoothedLyricTimeMs(
 
 /** 上下渐隐 */
 fun Modifier.verticalEdgeFade(fadeHeight: Dp): Modifier = this
-    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+    .graphicsLayer {
+        // 电视：不要离屏图层（见 TvPerf.disableOffscreenMasks）
+        compositingStrategy = if (TvPerf.disableOffscreenMasks) {
+            CompositingStrategy.Auto
+        } else {
+            CompositingStrategy.Offscreen
+        }
+    }
     .drawWithCache {
         // 遮罩只随尺寸变化，滚动和逐帧重绘时复用同一个渐变
         val edge = (fadeHeight.toPx() / size.height).coerceIn(0f, 0.44f)
         val brush = if (edge > 0f) verticalEdgeFadeBrush(edge) else null
         onDrawWithContent {
             drawContent()
-            if (brush != null) drawRect(brush = brush, size = size, blendMode = BlendMode.DstIn)
+            if (brush != null && !TvPerf.disableOffscreenMasks) {
+                drawRect(brush = brush, size = size, blendMode = BlendMode.DstIn)
+            }
         }
     }
 
@@ -621,6 +630,9 @@ fun SyncedLyricsView(
     stableEmbeddedViewport: Boolean = false,
     bilingualDisplayEnabled: Boolean = true
 ) {
+    // 电视：上下渐隐用的是 compositingStrategy=Offscreen + DstIn，等于把整个歌词视口
+    // 每帧先渲染到一张离屏纹理再混合。歌词本来就逐帧刷新，这一层是播放页/歌词页最贵的开销。
+    val tvNoEdgeFade = LocalIsTelevision.current
     val translationMatchesByIndex = remember(lyrics, translatedLyrics) {
         matchTranslationsToLineIndices(
             lines = lyrics,
@@ -766,7 +778,7 @@ fun SyncedLyricsView(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
                 .fillMaxSize()
-                .verticalEdgeFade(fadeHeight = edgeFadeHeight)
+                .then(if (tvNoEdgeFade) Modifier else Modifier.verticalEdgeFade(fadeHeight = edgeFadeHeight))
         ) {
             itemsIndexed(
                 items = displayLyrics,
@@ -1294,7 +1306,10 @@ fun SyncedLyricsActiveLine(
         playbackSpeed = playbackSpeed
     )
     val targetLyricTimeMs = (currentTimeMs + lyricOffsetMs).coerceAtLeast(0L)
-    val smoothedLyricTimeMs = if (animateProgress) {
+    // 电视：不做逐帧平滑。这个平滑循环每帧写一次 state，会把每一行歌词每帧重绘一遍，
+    // 是播放页在低端盒子上「一直卡」的根源之一。
+    val tvStaticReveal = LocalIsTelevision.current
+    val smoothedLyricTimeMs = if (animateProgress && !tvStaticReveal) {
         rememberSmoothedLyricTimeMs(targetLyricTimeMs)
     } else {
         targetLyricTimeMs
@@ -1365,14 +1380,18 @@ fun SyncedLyricsActiveLine(
         )
 
         // 高亮文本 - 仅在布局准备好后渲染, 避免旧数据导致的异常
-        if (isLayoutReady) {
+        // 电视：逐字擦除（multilineGradientReveal）会为**每一行**建一张离屏图层再做 DstIn 混合，
+        // 十几行叠在一起每帧重混一次，是这个页面最重的地方。电视上只有「正在唱的这一行」保留
+        // 逐字推进（最多一两张图层），已经唱完的行直接整行上高亮色。
+        if (isLayoutReady && (!tvStaticReveal || progressTarget > 0f)) {
+            val needsReveal = !tvStaticReveal || progressTarget < 1f
             Text(
                 text = line.text,
                 style = textStyle.copy(color = activeColor),
                 maxLines = Int.MAX_VALUE,
                 softWrap = true,
-                modifier = Modifier
-                    .multilineGradientReveal(
+                modifier = (if (needsReveal) {
+                    Modifier.multilineGradientReveal(
                         layout = layout,
                         revealOffsetChars = revealOffsetChars,
                         textLength = line.text.length,
@@ -1387,7 +1406,9 @@ fun SyncedLyricsActiveLine(
                         horizontalContentInset = revealHorizontalPadding,
                         parallelParagraphs = parallelParagraphs
                     )
-                    .padding(horizontal = revealHorizontalPadding)
+                } else {
+                    Modifier
+                }).padding(horizontal = revealHorizontalPadding)
             )
         }
     }

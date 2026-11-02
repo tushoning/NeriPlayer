@@ -1642,9 +1642,17 @@ internal fun Modifier.exploreHorizontalEdgeFade(
     showEndFade: Boolean,
     fadeWidth: Dp = 28.dp
 ): Modifier = this
-    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+    .graphicsLayer {
+        // 电视：不要离屏图层（见 TvPerf.disableOffscreenMasks）
+        compositingStrategy = if (moe.ouom.neriplayer.ui.tv.TvPerf.disableOffscreenMasks) {
+            CompositingStrategy.Auto
+        } else {
+            CompositingStrategy.Offscreen
+        }
+    }
     .drawWithContent {
         drawContent()
+        if (moe.ouom.neriplayer.ui.tv.TvPerf.disableOffscreenMasks) return@drawWithContent
         val resolvedFadeWidth = fadeWidth.toPx().coerceAtMost(size.width / 2f)
         if (resolvedFadeWidth <= 0f) return@drawWithContent
         if (showStartFade) {

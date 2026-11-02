@@ -343,8 +343,11 @@ fun LyricsScreen(
     val durationMs = currentSong?.durationMs ?: 0L
 
     val context = LocalContext.current
-    val lowPowerLyricsRendering = remember(context) {
-        context.isSystemPowerSaveMode()
+    // 电视：无条件走低功耗歌词渲染（关加色混合、拉长帧格、减模糊）。
+    // 这个开关本来就是给弱设备准备的，只是原来只认系统省电模式。
+    val tvLyricsLowPower = LocalIsTelevision.current
+    val lowPowerLyricsRendering = remember(context, tvLyricsLowPower) {
+        context.isSystemPowerSaveMode() || tvLyricsLowPower
     }
     val currentCoverUrl = rememberSongDisplayCoverUrl(currentSong)
     val clipboard = LocalClipboard.current
