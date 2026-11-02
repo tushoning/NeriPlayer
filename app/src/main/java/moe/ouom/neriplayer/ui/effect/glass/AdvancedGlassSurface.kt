@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.toSize
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlin.math.max
 import kotlin.math.min
+import moe.ouom.neriplayer.ui.tv.TvPerf
 import moe.ouom.neriplayer.ui.theme.NeriDesign
 
 internal fun isAdvancedGlassNavigationOwnerActive(
@@ -130,7 +131,7 @@ internal fun AdvancedGlassSurface(
         navigationOwner = navigationOwner
     )
     val belongsToPrewarmedNavigationScreen = navigationOwner in prewarmedNavigationOwners
-    val canRenderGlass = enabled && sceneActive && backdropsReady &&
+    val canRenderGlass = enabled && !TvPerf.disableBlur && sceneActive && backdropsReady &&
         canSampleAdvancedGlassBackdrop(controller, glassDepth, role)
     val glassEnabled = canRenderGlass && belongsToActiveNavigationScreen
     val suppressesInactiveNavigationSurface =
