@@ -1827,7 +1827,9 @@ private fun NeriAppContent(
                             .drawNowPlayingUnderlay(
                                 flight = sharedCoverFlight,
                                 playbackVisible = { showNowPlaying },
-                                backProgress = { nowPlayingDismissState.progress }
+                                backProgress = { nowPlayingDismissState.progress },
+                                // 电视：播放页是整屏瞬切，没有变形交接，一出现就是完整遮挡
+                                alwaysCovered = LocalIsTelevision.current
                             )
                     ) {
                     AppNavigationScaffold(

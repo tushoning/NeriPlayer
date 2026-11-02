@@ -817,12 +817,17 @@ fun SyncedLyricsView(
                         if (!visualEffectsEnabled) resolveEmbeddedLyricScale(isActive)
                         else if (isActive) visualSpec.activeScale
                         else scaleForDistance(distance, visualSpec)
-                    val animatedPlaybackScale by if (visualEffectsEnabled) {
+                    // 电视：每行都挂着「缩放 + 3D 翻转」两条动画，换行时十几行同时起动画，
+                    // 每帧十几行重绘。电视上直接取目标值，不做过渡。
+                    val tvStaticLineMotion = LocalIsTelevision.current
+                    val animatedPlaybackScale: Float = if (tvStaticLineMotion) {
+                        playbackScaleTarget
+                    } else if (visualEffectsEnabled) {
                         animateFloatWhenEnabled(
                             targetValue = playbackScaleTarget,
                             enabled = true,
                             label = "lyric_scale"
-                        )
+                        ).value
                     } else {
                         animateFloatAsState(
                             targetValue = playbackScaleTarget,
@@ -831,7 +836,7 @@ fun SyncedLyricsView(
                                 easing = FastOutSlowInEasing
                             ),
                             label = "embedded_lyric_scale"
-                        )
+                        ).value
                     }
                     val playbackScale = if (isActive && visualEffectsEnabled) {
                         1f
@@ -852,12 +857,16 @@ fun SyncedLyricsView(
                         } else {
                             -visualSpec.pageTiltDeg
                         }
-                    val animatedPlaybackRotationX by animateFloatWhenEnabled(
-                        targetValue = playbackTilt,
-                        enabled = visualEffectsEnabled,
-                        animationDurationMs = visualSpec.flipDurationMs,
-                        label = "lyric_flip"
-                    )
+                    val animatedPlaybackRotationX: Float = if (tvStaticLineMotion) {
+                        playbackTilt
+                    } else {
+                        animateFloatWhenEnabled(
+                            targetValue = playbackTilt,
+                            enabled = visualEffectsEnabled,
+                            animationDurationMs = visualSpec.flipDurationMs,
+                            label = "lyric_flip"
+                        ).value
+                    }
                     val rotationX = interpolateLyricVisualValue(
                         playbackValue = animatedPlaybackRotationX,
                         clearValue = 0f,

@@ -60,14 +60,20 @@ private val BackdropRecedeCorner = 28.dp
 internal fun Modifier.drawNowPlayingUnderlay(
     flight: SharedCoverFlightState,
     playbackVisible: () -> Boolean,
-    backProgress: () -> Float
+    backProgress: () -> Float,
+    /**
+     * 电视：播放页没有任何容器变形动画（没有 mini player 长成整页那一段），
+     * 所以「完全遮挡」的判定不能等 morphProgress 到 1——那个值在电视上永远是 0，
+     * 结果是播放页打开时，底下整个标签页每帧还在被光栅化一遍。
+     */
+    alwaysCovered: Boolean = false
 ): Modifier = drawWithContent {
     // 完整遮挡才省去下层绘制，任何露底或交接阶段都沿用原画面
     val completelyCovered = playbackVisible() &&
         backProgress() == 0f &&
         flight.dragOpenProgress == null &&
         !flight.linked &&
-        flight.nowPlayingMorphProgressState?.value == 1f
+        (alwaysCovered || flight.nowPlayingMorphProgressState?.value == 1f)
     if (!completelyCovered) drawContent()
 }
 
