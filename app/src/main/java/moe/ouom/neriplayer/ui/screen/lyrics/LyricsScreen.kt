@@ -132,6 +132,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.unit.Constraints
@@ -166,6 +167,7 @@ import moe.ouom.neriplayer.ui.component.local.LocalSongSyncConfirmDialog
 import moe.ouom.neriplayer.ui.component.lyrics.LyricVisualSpec
 import moe.ouom.neriplayer.ui.component.playback.PlaybackControlIndicator
 import moe.ouom.neriplayer.ui.component.playback.NowPlayingSongTitle
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 import moe.ouom.neriplayer.ui.theme.LocalNeriTargetColorScheme
 import moe.ouom.neriplayer.ui.component.playback.scaleButtonSize
 import moe.ouom.neriplayer.ui.component.playback.scaleIconSize
@@ -595,6 +597,12 @@ fun LyricsScreen(
                                 modifier = Modifier
                                     .widthIn(max = maxWidth)
                                     .clip(RoundedCornerShape(6.dp))
+                                    // 电视：歌名是纯展示，不要焦点框（方向键移到这一行会亮一圈很脏）
+                                    .then(
+                                        if (LocalIsTelevision.current) {
+                                            Modifier.focusProperties { canFocus = false }
+                                        } else Modifier
+                                    )
                                     .combinedClickable(
                                         onClick = {},
                                         onLongClick = { showSongNameMenu = true }
