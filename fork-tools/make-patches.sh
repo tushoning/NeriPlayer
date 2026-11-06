@@ -50,8 +50,7 @@ mkdir -p patches/series
     "# NeriPlayer TV fork — 相对上游的完整改动（单个合并补丁）" \
     "# 基线 upstream commit : $BASE_SHA  ($BASE_SUBJECT)" \
     "# 我方 tip             : $HEAD_SHA  ($(git log -1 --format=%s HEAD))" \
-    "# 生成时间             : $(date -Iseconds)" \
-    "# 生成命令             : bash tools/make-patches.sh $BASE_SHA" \
+    "# 生成命令             : bash fork-tools/make-patches.sh $BASE_SHA" \
     "# 应用                 : git apply -3 patches/tv-fork.diff" \
     ""
   git diff "$BASE_FULL" HEAD "${FILTER[@]}"
@@ -72,7 +71,6 @@ base_sha=$BASE_SHA
 base_full_sha=$BASE_FULL
 base_subject=$BASE_SUBJECT
 tip_sha=$HEAD_SHA
-created=$(date -Iseconds)
 commits=${#COMMITS[@]}
 EOF
 
