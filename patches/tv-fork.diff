@@ -1,6 +1,6 @@
 # NeriPlayer TV fork — 相对上游的完整改动（单个合并补丁）
 # 基线 upstream commit : 1ce32a4b  (fix(settings): 修复设置默认启动页后启动应用时需要从首页跳转到启动页 (#641))
-# 我方 tip             : 7298dab1  (fix(ci): CI 上跳过阿里云 Maven 镜像)
+# 我方 tip             : ebac1c3c  (fix(ci): 主仓库带一份改过的 KaraokeLyricsView.kt，构建前覆盖回子模块)
 # 生成命令             : bash fork-tools/make-patches.sh 1ce32a4b
 # 应用                 : git apply -3 patches/tv-fork.diff
 
@@ -18,10 +18,10 @@ index 00000000..94431c7a
 +patches/BASE -text
 diff --git a/.github/workflows/fork-sync.yml b/.github/workflows/fork-sync.yml
 new file mode 100644
-index 00000000..bd81336c
+index 00000000..b1ba3273
 --- /dev/null
 +++ b/.github/workflows/fork-sync.yml
-@@ -0,0 +1,282 @@
+@@ -0,0 +1,308 @@
 +name: 同步上游并发布 TV 版
 +
 +# 干什么：
@@ -146,6 +146,32 @@ index 00000000..bd81336c
 +            git am --abort || true
 +            exit 1
 +          fi
++
++      - name: 给子模块打补丁
++        if: steps.apply.outputs.ok == 'true'
++        run: |
++          set -euo pipefail
++          # np-submodule/accompanist-lyrics-ui 里的 KaraokeLyricsView.kt 被我方改过
++          # （加 linesInteractive 参数、亚像素滚动容差）。submodule 是别人的仓库，
++          # 我们的改动推不上去，本地一直是「工作区裸文件」状态，CI 按 .gitmodules
++          # 拉到的上游原版没有这些改动，app 模块调用 linesInteractive 就编译失败。
++          # 这里用主仓库随带的整份文件覆盖回去。
++          DEST=np-submodule/accompanist-lyrics-ui
++          # 走 rebase 时工作区已经切到 upstream/master，本仓库的 patches/ 被删掉了，
++          # apply 步骤开头曾把整份 patches 备份到 /tmp/patches。先把它搬回来（后面的
++          # 「刷新补丁快照」要保留其中的 README.md 和 submodule/ 目录）。
++          if [ ! -d patches ] && [ -d /tmp/patches ]; then
++            cp -r /tmp/patches patches
++            echo "已从 /tmp/patches 恢复 patches/ 目录"
++          fi
++          SRC=patches/submodule/accompanist-lyrics-ui
++          test -d "$DEST" || { echo "::error::找不到子模块 $DEST，检查 checkout 的 submodules: recursive"; exit 1; }
++          test -d "$SRC"  || { echo "::error::找不到 $SRC"; exit 1; }
++          cp -r "$SRC"/. "$DEST"/
++          TARGET="$DEST/src/src/commonMain/kotlin/com/mocharealm/accompanist/lyrics/ui/composable/lyrics/KaraokeLyricsView.kt"
++          grep -q "linesInteractive" "$TARGET" \
++            || { echo "::error::覆盖后 $TARGET 里仍然没有 linesInteractive"; exit 1; }
++          echo "子模块已覆盖：$(basename "$TARGET")"
 +
 +      - name: 刷新补丁快照（基线指向新上游）
 +        if: steps.apply.outputs.ok == 'true' && steps.apply.outputs.rebased == 'true'
@@ -320,10 +346,10 @@ index d5a9de77..a636a321 100644
 +/local/
 diff --git a/FORK.md b/FORK.md
 new file mode 100644
-index 00000000..3a859344
+index 00000000..5eab06f9
 --- /dev/null
 +++ b/FORK.md
-@@ -0,0 +1,348 @@
+@@ -0,0 +1,362 @@
 +# 这个 fork 怎么维护
 +
 +上游：[cwuom/NeriPlayer](https://github.com/cwuom/NeriPlayer)（Android 音乐播放器，手机版 UI）。
@@ -656,6 +682,20 @@ index 00000000..3a859344
 +**Q：CI 失败怎么通知我？会往 Issues 里发东西吗？**
 +A：**不会开 Issue**，仓库里一个 Issue 都不会有。失败通知只走 GitHub 自己的渠道
 +（邮件 + 手机 App 的 Inbox），点进那次运行，最上方 **Summary** 区就是冲突详情。
++
++**Q：`np-submodule/` 里头模块的改动提交到哪了？**
++A：**没有提交到任何地方**——那是上游别人的仓库，我们推不上去。本地那几份文件一直是「工作区裸文件」状态。
++主仓库在 `patches/submodule/` 存了一份改后的整文件，CI 编译前会覆盖回子模块目录
++（否则 app 里调用 `linesInteractive` 参数会报「No parameter with name ... found」）。
++
++本地如果执行过 `git submodule update --init --recursive`，把改动冲掉了，跑这条恢复：
++
++```bash
++cp -r patches/submodule/accompanist-lyrics-ui/. np-submodule/accompanist-lyrics-ui/
++```
++
++> 目前只有 `accompanist-lyrics-ui/…/KaraokeLyricsView.kt` 一个文件有改动
++> （加 `linesInteractive` 参数 + 亚像素滚动容差）。其余三个子模块与上游一致。
 +
 +**Q：Release 里的包和电视上装的对不上 / 装不上**
 +A：CI 有两道校验——密钥库指纹（编译前）和 APK 签名指纹（发布前），
@@ -27200,10 +27240,10 @@ index 5c31ec1a..00000000
 -}
 diff --git a/fork-tools/make-patches.sh b/fork-tools/make-patches.sh
 new file mode 100644
-index 00000000..f41e8b00
+index 00000000..6c4d61de
 --- /dev/null
 +++ b/fork-tools/make-patches.sh
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,158 @@
 +#!/usr/bin/env bash
 +# ---------------------------------------------------------------------------
 +# 生成「我方改动 vs 上游」补丁快照
@@ -27270,13 +27310,11 @@ index 00000000..f41e8b00
 +echo "基线: $BASE_SHA  $BASE_SUBJECT"
 +echo "tip : $CODE_TIP  $CODE_TIP_SUBJECT（共 ${#COMMITS[@]} 个提交）"
 +
-+# patches/ 会整个重建，但里面的说明文档要保留
-+KEEP_README=""
-+[ -f patches/README.md ] && KEEP_README=$(cat patches/README.md)
-+
-+rm -rf patches
++# 只重建生成物，保留 patches/ 下的手写内容：
++#   README.md                         说明文档
++#   submodule/                        子模块里我方改动的整份文件（CI 构建前覆盖用）
 +mkdir -p patches/series
-+[ -n "$KEEP_README" ] && printf '%s\n' "$KEEP_README" > patches/README.md
++rm -f patches/series/*.patch patches/tv-fork.diff patches/BASE
 +
 +# ---- 1. 单个合并补丁 ------------------------------------------------------
 +{
