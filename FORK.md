@@ -278,6 +278,22 @@ GitHub 的 Secret 分三级，**只有 Organization secrets 是「配一次全�
 
 ## 6. 常见问题
 
+**Q：GitHub 仓库页上那个「Sync fork」按钮要不要点？**
+A：**不要点。** 一次都不要。
+
+那个按钮做的事是把上游的提交 **merge 进你的分支**。只要 `main` 上有你自己的提交
+（我们有一堆），它就一定产生一个 merge commit，而 `patches/series/` 是靠
+`git am` 逐个重放的，merge 之后的提交其 diff 基准是合并结果而不是上游，补丁立刻错乱。
+2026-11-06 之前的历史里就有一个这样的 merge（`bb54fb58`），当时拆补丁拆不出来，
+只能整条历史重建一次。
+
+更危险的是同一个位置还有一个 **「Discard N commits」**——点了会把你所有 TV 改动
+直接删掉，回到上游原样。
+
+上游更新交给两样东西就够了：
+- 平时：CI 每 6 小时自动做（`fork-sync.yml`）
+- 本地手动：`bash fork-tools/sync-upstream.sh`
+
 **Q：Release 里的包和电视上装的对不上 / 装不上**
 A：CI 有两道校验——密钥库指纹（编译前）和 APK 签名指纹（发布前），
 签名不对会直接失败，不会发出装不上的包。
