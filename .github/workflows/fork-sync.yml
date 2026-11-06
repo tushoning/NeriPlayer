@@ -198,6 +198,13 @@ jobs:
 
           与本次 APK 完全对应的源码：**本仓库 tag \`$(git rev-parse --short=7 HEAD)\`**
           （GitHub 已自动为该 tag 提供 Source code 压缩包）。
+
+          GitHub 的源码包**不包含子模块**。构建还需要下列子模块（仓库内 \`.gitmodules\` 有地址）：
+
+          \`\`\`
+          $(git submodule status --recursive | sed 's/^[ +-]*//' | awk '{printf "%s @ %s\n", $2, $1}')
+          \`\`\`
+
           上游项目：https://github.com/cwuom/NeriPlayer
 
           ## 许可
