@@ -72,6 +72,7 @@ import moe.ouom.neriplayer.ui.theme.LocalHasCustomBackground
 import moe.ouom.neriplayer.ui.theme.NeriDesign
 import moe.ouom.neriplayer.ui.tv.TvFocusIndication
 import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.TvUserInput
 import moe.ouom.neriplayer.ui.tv.tvPageSidePadding
 import moe.ouom.neriplayer.ui.tv.tvBringIntoViewOnFocus
 import moe.ouom.neriplayer.ui.tv.tvClampLeft
@@ -603,15 +604,25 @@ internal fun MiuixSettingsDetailScaffold(
     // 全站详情页的返回键才落在同一条竖线上（手机/平板本来就没有 gutter）。
     // 二级页一进来光标默认落在左上角的返回按钮上（标题就是这一页的身份，
     // 换页时 title 变，等于「又进了一个二级页」）。页面刚切过来时焦点节点还没挂好，
-    // 单次 requestFocus 会失败，所以逐帧试几帧。
+    // 单次 requestFocus 会失败，所以逐帧试几帧 —— **但用户一按键就立刻停手**。
+    // 否则用户按左把光标送进侧栏后，下一帧这个循环又把它抢回返回键，
+    // 表现就是「返回键闪一下、焦点还留在返回键上」。
     val backFocusRequester = remember { FocusRequester() }
     val settingsScrollScope = rememberCoroutineScope()
+    // 这次焦点是程序自己抢的：抢到时不要顺手把正文滚回顶部 —— 那是「用户按上键
+    // 走回返回键」才需要的动作，进页面时执行会把这一页记住的位置清掉（看着就是
+    // 「返回上一页，列表回顶了」）。
+    val autoFocusingBack = remember { mutableStateOf(false) }
     LaunchedEffect(title, showBackButton, isTelevision) {
         if (!isTelevision || !showBackButton) return@LaunchedEffect
+        val startTick = TvUserInput.keyDownTick
         repeat(6) {
-            if (runCatching { backFocusRequester.requestFocus() }.getOrDefault(false)) {
-                return@LaunchedEffect
-            }
+            // 用户已经自己按过键，别再跟用户抢光标
+            if (TvUserInput.keyDownTick != startTick) return@LaunchedEffect
+            autoFocusingBack.value = true
+            val focused = runCatching { backFocusRequester.requestFocus() }.getOrDefault(false)
+            autoFocusingBack.value = false
+            if (focused) return@LaunchedEffect
             withFrameNanos { }
         }
     }
@@ -641,8 +652,13 @@ internal fun MiuixSettingsDetailScaffold(
                                         // 电视：光标从正文走到返回键时，正文如果还停在中间，
                                         // 顺手把它带回顶部 —— 页面顶部那段说明文字是纯文字、
                                         // 拿不到焦点，不这样处理就永远滚不回来了。
+                                        // 程序自己抢焦点那一次不算（autoFocusingBack）。
                                         .onFocusChanged { focus ->
-                                            if (focus.isFocused && listState.canScrollBackward) {
+                                            if (
+                                                focus.isFocused &&
+                                                !autoFocusingBack.value &&
+                                                listState.canScrollBackward
+                                            ) {
                                                 // 瞬时到位：动画还没跑完就按下键的话，
                                                 // 焦点项的 bringIntoView 会再抢一次滚动，页面会抖一下。
                                                 settingsScrollScope.launch {

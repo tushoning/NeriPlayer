@@ -116,6 +116,29 @@ object TvFocusEdge {
 }
 
 /**
+ * 电视：内容区里「用户按过多少下键」的计数器。
+ *
+ * 页面切过来之后，有几处逻辑会「逐帧重试 requestFocus」来补偿初始焦点（设置二级页
+ * 要把光标送到返回键）。用户一旦自己按键，这些补偿必须立刻停手 —— 否则就会出现
+ * 「按左已经把光标送进侧栏，下一帧又被拽回返回键」的闪烁。
+ *
+ * 判断方式不是「最近 N 毫秒内按过键」（进页面的那一下确定键本身就会命中），
+ * 而是「重试开始之后有没有新按键」：调用方记下一次计数值，循环里比对。
+ *
+ * 写入点是内容区根节点的按键监听（[tvSealVerticalEdges]），内容区里任何一次按键
+ * 都会经过它。必须是 @Volatile 普通字段：按键回调与协程要读到同一份最新值。
+ */
+object TvUserInput {
+    @Volatile
+    var keyDownTick: Int = 0
+        private set
+
+    fun stampKeyDown() {
+        keyDownTick++
+    }
+}
+
+/**
  * 把这个可聚焦项标记为「所在行的第 0 列」。
  *
  * 必须和它的 `clickable` 挂在同一条修饰符链上，`isFocused` 才精确等于「这一项自己有焦点」，
@@ -163,6 +186,9 @@ fun Modifier.tvSealVerticalEdges(): Modifier {
         .onPreviewKeyEvent { event ->
             when {
                 event.type == KeyEventType.KeyDown -> {
+                    // 任何一次按键都算「用户已接管光标」：页面里那些逐帧重试
+                    // requestFocus 的补偿逻辑靠这个计数及时收手（见 [TvUserInput]）
+                    TvUserInput.stampKeyDown()
                     lastVertical.intValue = when (event.key) {
                         Key.DirectionUp -> -1
                         Key.DirectionDown -> 1

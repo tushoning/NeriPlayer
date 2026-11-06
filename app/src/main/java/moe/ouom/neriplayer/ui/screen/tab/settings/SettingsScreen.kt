@@ -157,6 +157,7 @@ import moe.ouom.neriplayer.ui.screen.tab.settings.navigation.canNavigateBackFrom
 import moe.ouom.neriplayer.ui.screen.tab.settings.page.SettingsEntryFocus
 import moe.ouom.neriplayer.ui.component.navigation.TvTopBarFocus
 import moe.ouom.neriplayer.navigation.Destinations
+import moe.ouom.neriplayer.ui.tv.TvUserInput
 import moe.ouom.neriplayer.ui.tv.TvTabRootBus
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -312,11 +313,18 @@ internal fun SettingsScreen(
             val previous = previousSettingsPage
             previousSettingsPage = activeSettingsPage
             if (previous == null || activeSettingsPage != null) return@LaunchedEffect
-            withFrameNanos { }
-            withFrameNanos { }
-            if (!SettingsEntryFocus.request(SettingsEntryFocus.lastFocusedPage)) {
-                TvTopBarFocus.requestTab(Destinations.Settings.route)
+            // 首页的行是懒加载的：返回瞬间那一行可能还没挂上节点，单次 requestFocus
+            // 会失败，退到「光标回标签栏」——用户看到的就是「返回上一页没有记忆了」。
+            // 逐帧试几帧；但用户一按键就收手，别和用户抢光标。
+            val startTick = TvUserInput.keyDownTick
+            repeat(6) {
+                withFrameNanos { }
+                if (TvUserInput.keyDownTick != startTick) return@LaunchedEffect
+                if (SettingsEntryFocus.request(SettingsEntryFocus.lastFocusedPage)) {
+                    return@LaunchedEffect
+                }
             }
+            TvTopBarFocus.requestTab(Destinations.Settings.route)
         }
     }
     ObserveSettingsBackupPlaylistCount(activeSettingsPage, context, backupTransfer)
