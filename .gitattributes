@@ -2,3 +2,5 @@
 # 补丁的上下文行随之失配，git am / git apply 会莫名其妙报 "patch failed"。
 *.patch -text
 *.diff  -text
+# BASE 里的 sha 会被脚本直接读走做比对，末尾多一个 \r 就会失配
+patches/BASE -text
