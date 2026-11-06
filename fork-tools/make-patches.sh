@@ -19,7 +19,25 @@ set -euo pipefail
 REPO_ROOT=$(git rev-parse --show-toplevel)
 cd "$REPO_ROOT"
 
-BASE=${1:-$(git merge-base origin/master HEAD)}
+# 上游分支自动识别：
+#   fork 仓库里 upstream = cwuom/NeriPlayer，origin = 自己
+#   老的工作副本里 origin 直接就是上游
+if [ -z "${1:-}" ]; then
+  UPSTREAM_REF=""
+  for cand in upstream/master origin/master; do
+    if git rev-parse --verify --quiet "$cand" >/dev/null 2>&1; then
+      UPSTREAM_REF=$cand
+      break
+    fi
+  done
+  if [ -z "$UPSTREAM_REF" ]; then
+    echo "找不到上游分支。先执行：" >&2
+    echo "  git remote add upstream https://github.com/cwuom/NeriPlayer.git" >&2
+    echo "  git fetch upstream master" >&2
+    exit 1
+  fi
+fi
+BASE=${1:-$(git merge-base "$UPSTREAM_REF" HEAD)}
 BASE_FULL=$(git rev-parse "$BASE")
 BASE_SHA=$(git rev-parse --short "$BASE")
 BASE_SUBJECT=$(git log -1 --format=%s "$BASE")

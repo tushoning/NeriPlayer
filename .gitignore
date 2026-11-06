@@ -51,3 +51,9 @@ AGENTS.md
 /app/src/androidTest/assets/metadata/synthetic-fixture-provenance.txt
 /app/src/androidTest/assets/metadata/synthetic-free-first-8-provenance.json
 /hidden-api/build/
+
+# 签名材料绝不入库（CI 用 secret 现写，本地用 -P 传入）
+*.jks
+*.keystore
+*.b64
+/local/
