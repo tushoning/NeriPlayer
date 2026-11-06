@@ -5,7 +5,7 @@
 > 上游：[cwuom/NeriPlayer](https://github.com/cwuom/NeriPlayer)
 >
 > 本仓库在官方代码基础上做了**电视（Android TV / 遥控器）适配**：侧栏导航、遥控焦点体系、
-> 精简动效与模糊、电视版布局。修改日期 **2026-11-06**，全部改动见
+> 精简动效与模糊、电视版布局。全部改动见
 > [`patches/tv-fork.diff`](patches/tv-fork.diff)，维护说明见 [`FORK.md`](FORK.md)。
 >
 > 只发布电视包（`armeabi-v7a`，包名 `moe.ouom.neriplayer.tv`），**不提供手机版**。
