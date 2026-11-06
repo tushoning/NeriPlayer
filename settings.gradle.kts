@@ -1,9 +1,17 @@
 pluginManagement {
     repositories {
-        // 本地构建加速：阿里云镜像优先，原仓库兜底
-        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
-        maven { url = uri("https://maven.aliyun.com/repository/public") }
+        // 本地构建加速：阿里云镜像优先，原仓库兜底。
+        //
+        // 但 GitHub Actions 的 runner 在美国，访问 maven.aliyun.com 会返回 502
+        // （实测 com.google.devtools.ksp.gradle.plugin-2.3.10.jar → 502 Bad Gateway）。
+        // Gradle 遇到 5xx 会把这个仓库标记为失效（"Repository maven is disabled"），
+        // **不会**回退到 google()/mavenCentral()，整个配置阶段直接失败。
+        // 所以 CI 上必须跳过镜像，走官方仓库。
+        if (System.getenv("GITHUB_ACTIONS").isNullOrEmpty()) {
+            maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
+            maven { url = uri("https://maven.aliyun.com/repository/google") }
+            maven { url = uri("https://maven.aliyun.com/repository/public") }
+        }
         google {
             content {
                 includeGroupByRegex("com\\.android.*")
@@ -19,8 +27,11 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
-        maven { url = uri("https://maven.aliyun.com/repository/public") }
+        // 同上：CI 上跳过阿里云镜像
+        if (System.getenv("GITHUB_ACTIONS").isNullOrEmpty()) {
+            maven { url = uri("https://maven.aliyun.com/repository/google") }
+            maven { url = uri("https://maven.aliyun.com/repository/public") }
+        }
         google()
         mavenCentral()
         maven { url = uri("https://jitpack.io") }
