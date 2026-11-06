@@ -1,0 +1,186 @@
+name: Fork sync upstream & release
+
+# 用途：上游有新提交时，自动把 patches/series/ 叠到新上游上，
+#       编译正式签名的 Release APK，打 tag 发 Release。
+# 合规要点：tag 打在「实际编译的那个 commit」上，GitHub 会自动为该 tag
+#          附上源码包，满足 GPLv3 §6「对应源码可得」。
+
+on:
+  schedule:
+    - cron: '0 18 * * *' # UTC 18:00 = 北京时间 02:00
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: fork-sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: https://github.com/cwuom/NeriPlayer.git
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 需要完整历史：git am -3 要用到补丁原始 blob
+          submodules: recursive
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream and detect new commits
+        id: up
+        run: |
+          set -euo pipefail
+          git remote add upstream "$UPSTREAM_REPO" 2>/dev/null || git remote set-url upstream "$UPSTREAM_REPO"
+          git fetch --quiet upstream master
+          NEW=$(git rev-parse upstream/master)
+          BASE=$(sed -n 's/^base_full_sha=//p' patches/BASE)
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          if git merge-base --is-ancestor "$NEW" "$BASE"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "上游没有新提交（$(git rev-parse --short "$NEW") 已在基线内），跳过。"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "上游有新提交：$(git rev-parse --short "$BASE") -> $(git rev-parse --short "$NEW")"
+          fi
+
+      - name: Apply our patch series onto new upstream
+        id: apply
+        if: steps.up.outputs.changed == 'true'
+        run: |
+          set -uo pipefail
+          # patches/ 是我方分支上的文件，切到上游分支后会被删掉，先挪到临时目录
+          cp -r patches /tmp/patches
+          git switch -c "sync/${GITHUB_RUN_ID}" upstream/master
+          if git am -3 /tmp/patches/series/*.patch; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            git submodule update --init --recursive
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "上游 \`${{ steps.up.outputs.new }}\` 的改动和我方补丁冲突。"
+              echo ""
+              echo "冲突文件："
+              git diff --name-only --diff-filter=U | sed 's/^/- `/;s/$/`/'
+              echo ""
+              echo "本地处理："
+              echo '```bash'
+              echo 'bash tools/sync-upstream.sh        # 按提示解决冲突'
+              echo 'bash tools/make-patches.sh         # 重新生成补丁快照'
+              echo '```'
+            } > conflict-report.md
+            git am --abort || true
+            exit 1
+          fi
+
+      - name: Set up JDK 21
+        if: steps.apply.outputs.ok == 'true'
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Gradle cache
+        if: steps.apply.outputs.ok == 'true'
+        uses: gradle/actions/setup-gradle@v5
+
+      # 组织级 secret：配一次，组织内所有仓库都能引用
+      - name: Decode keystore
+        if: steps.apply.outputs.ok == 'true'
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_B64" || { echo "缺少 KEYSTORE_B64 secret" >&2; exit 1; }
+          printf '%s' "$KEYSTORE_B64" | base64 -d > app/neri.jks
+
+      - name: Build signed release
+        if: steps.apply.outputs.ok == 'true'
+        env:
+          ORG_GRADLE_PROJECT_KEYSTORE_FILE: neri.jks
+          ORG_GRADLE_PROJECT_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          ORG_GRADLE_PROJECT_KEY_ALIAS: key0
+          ORG_GRADLE_PROJECT_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ./gradlew :app:assembleRelease -PbuildAllReleaseAbis=true \
+            --warning-mode all --stacktrace
+
+      - name: Remove temporary keystore
+        if: always()
+        run: rm -f app/neri.jks
+
+      - name: Write release notes
+        id: meta
+        if: steps.apply.outputs.ok == 'true'
+        env:
+          UPSTREAM_SHA: ${{ steps.up.outputs.new }}
+        run: |
+          set -euo pipefail
+          echo "sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          echo "upstream_short=$(git rev-parse --short=7 "$UPSTREAM_SHA")" >> "$GITHUB_OUTPUT"
+          cat > release-notes.md <<EOF
+          ## 本版本
+
+          基于上游 cwuom/NeriPlayer \`${UPSTREAM_SHA}\` 构建。
+
+          ## 与上游的差异
+
+          本构建是**电视适配 fork**，修改日期 $(date -u +%Y-%m-%d)。
+          完整改动见仓库内 \`patches/tv-fork.diff\`。主要改动：
+
+          - TV 侧栏导航与遥控器焦点体系
+          - 关闭部分动效 / 模糊 / 着色器，降低电视端负载
+          - 歌词页、正在播放页的电视布局
+          - 数据库启动时的 WAL 热日志恢复
+
+          ## 源码
+
+          与本次 APK 完全对应的源码：**本仓库 tag \`$(git rev-parse --short=7 HEAD)\`**
+          （GitHub 已自动提供 Source code 压缩包）。
+          上游项目：https://github.com/cwuom/NeriPlayer
+
+          ## 许可
+
+          本程序为自由软件，按 **GNU General Public License v3.0 或更高版本**发布，
+          不提供任何担保。许可证全文见仓库根目录 LICENSE。
+          EOF
+
+      - name: Tag and publish release
+        if: steps.apply.outputs.ok == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="tv-${{ steps.meta.outputs.date }}-${{ steps.meta.outputs.upstream_short }}"
+          git tag -a "$TAG" -m "基于上游 ${{ steps.up.outputs.new }} 的电视适配构建"
+          git push origin "$TAG"
+          gh release create "$TAG" \
+            app/build/outputs/apk/release/*.apk \
+            --title "TV fork $TAG" \
+            --notes-file release-notes.md
+
+      - name: Push synced branch
+        if: steps.apply.outputs.ok == 'true'
+        run: git push --force-with-lease origin "HEAD:our-changes"
+
+      - name: Open issue on conflict
+        if: failure() && steps.up.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          [ -f conflict-report.md ] || exit 0
+          gh issue create \
+            --title "上游 ${{ steps.up.outputs.new }} 与 TV 补丁冲突，需要手工处理" \
+            --body-file conflict-report.md

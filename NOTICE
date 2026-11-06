@@ -1,0 +1,35 @@
+NeriPlayer — modified version / 修改版声明
+==========================================
+
+This is a MODIFIED version of NeriPlayer.
+本程序是 NeriPlayer 的修改版。
+
+Upstream project / 上游项目:
+    https://github.com/cwuom/NeriPlayer
+    Copyright (C) 2025-2025 NeriPlayer developers
+
+Modifications / 修改内容:
+    Television adaptation fork / 电视端适配分支
+      - TV navigation sidebar and D-pad focus management
+      - Reduced animation, blur and shader work for low-power TV hardware
+      - TV-oriented layouts for the now-playing and lyrics screens
+      - Recovery for unrolled SQLite WAL journals at startup
+    Full machine-readable diff / 完整差异:
+      patches/tv-fork.diff
+
+Modified on / 修改日期:
+    2026-11-06
+
+License / 许可证:
+    GNU General Public License, version 3 or (at your option) any later
+    version. See LICENSE for the full text.
+    本程序按 GNU 通用公共许可证第 3 版或更高版本发布，全文见 LICENSE。
+
+    This program is distributed in the hope that it will be useful, but
+    WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+    本程序不提供任何担保。
+
+    This is not an official release of the upstream project and is not
+    endorsed by its authors.
+    本构建不是上游项目的官方发布，也不代表上游作者的观点。

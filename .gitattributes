@@ -1,0 +1,4 @@
+# 补丁文件必须按字节保存：Windows 上 core.autocrlf=true 会把 LF 改成 CRLF，
+# 补丁的上下文行随之失配，git am / git apply 会莫名其妙报 "patch failed"。
+*.patch -text
+*.diff  -text
