@@ -205,10 +205,14 @@ jobs:
 
           **电视适配版** NeriPlayer（本 fork 的唯一用途），基于上游 \`${UPSTREAM_SHA}\` 构建。
 
-          - 包名 \`moe.ouom.neriplayer.debug\`（沿用调试包名，可直接覆盖安装，设置和登录态不丢）
+          - 包名 \`moe.ouom.neriplayer.tv\`（独立包名，可与手机版 / 调试版共存）
           - 签名：aerial
           - 只含 armeabi-v7a（这台电视是 32 位）
           - versionName \`${VERSION}\`
+          - 构建变体 \`tvrelease\`（R8 混淆、不可调试，不是 debug 包）
+
+          > 从旧的 \`moe.ouom.neriplayer.debug\` 升级：包名不同，两者会并存。
+          > 先 \`adb uninstall moe.ouom.neriplayer.debug\` 再装，数据不会迁移。
 
           ## 与上游的差异
 
