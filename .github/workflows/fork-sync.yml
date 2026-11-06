@@ -123,6 +123,32 @@ jobs:
             exit 1
           fi
 
+      - name: 给子模块打补丁
+        if: steps.apply.outputs.ok == 'true'
+        run: |
+          set -euo pipefail
+          # np-submodule/accompanist-lyrics-ui 里的 KaraokeLyricsView.kt 被我方改过
+          # （加 linesInteractive 参数、亚像素滚动容差）。submodule 是别人的仓库，
+          # 我们的改动推不上去，本地一直是「工作区裸文件」状态，CI 按 .gitmodules
+          # 拉到的上游原版没有这些改动，app 模块调用 linesInteractive 就编译失败。
+          # 这里用主仓库随带的整份文件覆盖回去。
+          DEST=np-submodule/accompanist-lyrics-ui
+          # 走 rebase 时工作区已经切到 upstream/master，本仓库的 patches/ 被删掉了，
+          # apply 步骤开头曾把整份 patches 备份到 /tmp/patches。先把它搬回来（后面的
+          # 「刷新补丁快照」要保留其中的 README.md 和 submodule/ 目录）。
+          if [ ! -d patches ] && [ -d /tmp/patches ]; then
+            cp -r /tmp/patches patches
+            echo "已从 /tmp/patches 恢复 patches/ 目录"
+          fi
+          SRC=patches/submodule/accompanist-lyrics-ui
+          test -d "$DEST" || { echo "::error::找不到子模块 $DEST，检查 checkout 的 submodules: recursive"; exit 1; }
+          test -d "$SRC"  || { echo "::error::找不到 $SRC"; exit 1; }
+          cp -r "$SRC"/. "$DEST"/
+          TARGET="$DEST/src/src/commonMain/kotlin/com/mocharealm/accompanist/lyrics/ui/composable/lyrics/KaraokeLyricsView.kt"
+          grep -q "linesInteractive" "$TARGET" \
+            || { echo "::error::覆盖后 $TARGET 里仍然没有 linesInteractive"; exit 1; }
+          echo "子模块已覆盖：$(basename "$TARGET")"
+
       - name: 刷新补丁快照（基线指向新上游）
         if: steps.apply.outputs.ok == 'true' && steps.apply.outputs.rebased == 'true'
         run: |

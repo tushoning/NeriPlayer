@@ -64,13 +64,11 @@ CODE_TIP_SUBJECT=$(git log -1 --format=%s "${COMMITS[${#COMMITS[@]}-1]}")
 echo "基线: $BASE_SHA  $BASE_SUBJECT"
 echo "tip : $CODE_TIP  $CODE_TIP_SUBJECT（共 ${#COMMITS[@]} 个提交）"
 
-# patches/ 会整个重建，但里面的说明文档要保留
-KEEP_README=""
-[ -f patches/README.md ] && KEEP_README=$(cat patches/README.md)
-
-rm -rf patches
+# 只重建生成物，保留 patches/ 下的手写内容：
+#   README.md                         说明文档
+#   submodule/                        子模块里我方改动的整份文件（CI 构建前覆盖用）
 mkdir -p patches/series
-[ -n "$KEEP_README" ] && printf '%s\n' "$KEEP_README" > patches/README.md
+rm -f patches/series/*.patch patches/tv-fork.diff patches/BASE
 
 # ---- 1. 单个合并补丁 ------------------------------------------------------
 {
