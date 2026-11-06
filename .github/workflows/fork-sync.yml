@@ -32,6 +32,10 @@ env:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    # 显式声明 token 权限，不依赖仓库的默认设置（否则推分支/开 issue 会 403）
+    permissions:
+      contents: write # 推 main、打 tag、建 Release
+      issues: write # 冲突时开 issue 提醒
     steps:
       - name: 拉取本仓库
         uses: actions/checkout@v4
@@ -95,6 +99,8 @@ jobs:
               echo "处理原则：import 冲突取并集；上游只是改名就取我方再批量改名；"
               echo "上游真重构了就取上游，再把 TV 逻辑补回去。"
             } > conflict-report.md
+            # 同时贴到本次运行的摘要页，即使 Issue 开不出来也能直接在网页上看到
+            cat conflict-report.md >> "$GITHUB_STEP_SUMMARY"
             git am --abort || true
             exit 1
           fi
@@ -254,10 +260,13 @@ jobs:
 
       - name: 冲突时开 issue 提醒
         if: failure() && steps.up.outputs.changed == 'true'
+        continue-on-error: true # 这个通知本身失败，不该再给这次运行添一个红叉
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           [ -f conflict-report.md ] || exit 0
-          gh issue create \
-            --title "上游 ${{ steps.up.outputs.new }} 与 TV 补丁冲突，需要手工处理" \
-            --body-file conflict-report.md
+          if ! gh issue create \
+              --title "上游 ${{ steps.up.outputs.new }} 与 TV 补丁冲突，需要手工处理" \
+              --body-file conflict-report.md; then
+            echo "::warning::Issue 没开出来（多半是 token 没有 issues 写权限）。冲突详情见本页摘要。"
+          fi

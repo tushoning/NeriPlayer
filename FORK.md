@@ -71,8 +71,12 @@ cat aerial.b64
 网页路径：**Settings** → 左侧 **Actions** → **General** → 拉到最下面
 **Workflow permissions** → 选 **Read and write permissions** → **Save**。
 
-> 不开这一步，最后创建 Release 会报 403（没权限）。
+> 工作流文件里已经写了 `permissions: contents: write / issues: write`，正常情况下不开也能跑。
+> 但这里开一下更保险——万一 GitHub 那边策略优先级不同，不开会卡在推分支 / 建 Release（403）。
+>
+> 这一项只影响我写的那个工作流能不能动仓库，不会让上游那些 CI 跑起来（它们只认 `master`）。
 
+### 0.6 手动跑一次
 ### 0.6 手动跑一次
 
 网页路径：仓库顶部 **Actions** → 左侧 **「同步上游并发布 TV 版」** →
@@ -312,6 +316,14 @@ A：建议改。fork 出来的 About 默认抄的上游描述，别人搜到会�
 上游更新交给两样东西就够了：
 - 平时：CI 每 6 小时自动做（`fork-sync.yml`）
 - 本地手动：`bash fork-tools/sync-upstream.sh`
+
+**Q：Actions 里那个「冲突时开 issue 提醒」是干什么的？我的 Issues 页是空的**
+A：`fork-sync.yml` 最后一步。**它只在自动合并失败时才尝试执行**，成功了根本不会触发，
+所以平时 Issues 一直是空的，这是正常的。
+上游改到我们动过的代码 → `git am` 冲突 → 它把冲突文件清单写成一条 Issue 方便你看见，
+同时也会贴到那次运行的 **Summary** 页（`Run` 页面最上方）。
+Issue 开不出来（token 没写权限、Issues 功能关了）也不影响同步本身，
+只是少一个通知渠道——GitHub 另外还会给仓库 owner 发一封「workflow 运行失败」的邮件。
 
 **Q：Release 里的包和电视上装的对不上 / 装不上**
 A：CI 有两道校验——密钥库指纹（编译前）和 APK 签名指纹（发布前），
