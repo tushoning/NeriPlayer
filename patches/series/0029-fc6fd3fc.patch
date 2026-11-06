@@ -1,0 +1,240 @@
+From fc6fd3fc610facf399292d27af147ae688f93790 Mon Sep 17 00:00:00 2001
+From: neri-fork <local@neriplayer.fork>
+Date: Sat, 7 Nov 2026 02:05:07 +0800
+Subject: [PATCH] =?UTF-8?q?ci:=20=E6=89=8B=E5=8A=A8=E8=A7=A6=E5=8F=91?=
+ =?UTF-8?q?=E6=80=BB=E6=98=AF=E5=87=BA=E5=8C=85=EF=BC=9B=E7=A7=BB=E9=99=A4?=
+ =?UTF-8?q?=E8=87=AA=E5=8A=A8=E5=BC=80=20issue?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 新增 up.build 输出：手动触发(workflow_dispatch)无论上游有无更新都编译出包，
+  定时触发维持「没更新就跳过」
+- 手动且上游未变时直接在当前分支构建，不 rebase、不推送 main，历史不变
+- tag 改成 tv-<yyyymmdd-HHMM>-<上游短哈希>，手动重复触发不会互相覆盖
+- 删除「冲突时开 issue 提醒」步骤和 issues: write 权限；
+  失败通知只靠 GitHub 原生（邮件 / 手机 App Inbox），冲突详情写进 Run 的 Summary
+- 修正发版说明里的源码 tag 引用（原来错写成 commit 短哈希）
+- FORK.md 同步更新
+---
+ .github/workflows/fork-sync.yml | 67 ++++++++++++++++++---------------
+ FORK.md                         | 32 +++++++++-------
+ 2 files changed, 54 insertions(+), 45 deletions(-)
+
+diff --git a/.github/workflows/fork-sync.yml b/.github/workflows/fork-sync.yml
+index b8d9e075..ca00eb83 100644
+--- a/.github/workflows/fork-sync.yml
++++ b/.github/workflows/fork-sync.yml
+@@ -1,9 +1,11 @@
+ name: 同步上游并发布 TV 版
+ 
+ # 干什么：
+-#   定时去上游 cwuom/NeriPlayer 看 master 有没有新提交。
++#   定时（每小时）去上游 cwuom/NeriPlayer 看 master 有没有新提交。
+ #   有 → 把我方补丁叠上去 → 编译电视包（aerial 签名）→ 发 Release → 把结果推回 main。
+-#   没有 → 直接退出，不编译。
++#   没有 → 定时触发时直接退出，不编译。
++#
++#   手动触发（Run workflow）**总是出包**：不管上游有没有更新，都在当前代码上编一遍并发 Release。
+ #
+ # 合规：Release 的 tag 打在「实际编译的那个 commit」上，GitHub 自动给 tag 附源码包，
+ #       满足 GPLv3 §6「分发二进制必须能拿到对应源码」。
+@@ -32,10 +34,9 @@ env:
+ jobs:
+   sync:
+     runs-on: ubuntu-latest
+-    # 显式声明 token 权限，不依赖仓库的默认设置（否则推分支/开 issue 会 403）
++    # 显式声明 token 权限，不依赖仓库的默认设置（否则推分支/建 Release 会 403）
+     permissions:
+       contents: write # 推 main、打 tag、建 Release
+-      issues: write # 冲突时开 issue 提醒
+     steps:
+       - name: 拉取本仓库
+         uses: actions/checkout@v4
+@@ -64,17 +65,33 @@ jobs:
+           fi
+           if git merge-base --is-ancestor "$NEW" "$BASE"; then
+             echo "changed=false" >> "$GITHUB_OUTPUT"
+-            echo "上游没有新提交（当前基线 $(git rev-parse --short "$BASE")），跳过。"
++            echo "上游没有新提交（当前基线 $(git rev-parse --short "$BASE")）。"
++            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
++              echo "build=true" >> "$GITHUB_OUTPUT"
++              echo "→ 手动触发，仍然用当前代码编译出包。"
++            else
++              echo "build=false" >> "$GITHUB_OUTPUT"
++              echo "→ 定时触发，跳过（不编译）。"
++            fi
+           else
+             echo "changed=true" >> "$GITHUB_OUTPUT"
++            echo "build=true" >> "$GITHUB_OUTPUT"
+             echo "上游有新提交：$(git rev-parse --short "$BASE") → $(git rev-parse --short "$NEW")"
+           fi
+ 
+-      - name: 把补丁叠到新上游
++      - name: 准备要编译的代码
+         id: apply
+-        if: steps.up.outputs.changed == 'true'
++        if: steps.up.outputs.build == 'true'
+         run: |
+           set -uo pipefail
++          if [ "${{ steps.up.outputs.changed }}" = "false" ]; then
++            # 上游没变，当前分支就是最新代码，直接编
++            echo "ok=true" >> "$GITHUB_OUTPUT"
++            echo "rebased=false" >> "$GITHUB_OUTPUT"
++            echo "不需要叠补丁：当前分支已包含全部改动。"
++            exit 0
++          fi
++          echo "rebased=true" >> "$GITHUB_OUTPUT"
+           # patches/ 是我方分支上的文件，切到上游分支后会被删掉，先挪到临时目录
+           cp -r patches /tmp/patches
+           git switch -c "sync/${GITHUB_RUN_ID}" upstream/master
+@@ -99,14 +116,14 @@ jobs:
+               echo "处理原则：import 冲突取并集；上游只是改名就取我方再批量改名；"
+               echo "上游真重构了就取上游，再把 TV 逻辑补回去。"
+             } > conflict-report.md
+-            # 同时贴到本次运行的摘要页，即使 Issue 开不出来也能直接在网页上看到
++            # 贴到本次运行的摘要页（Run 页面最上方），失败原因一眼可见
+             cat conflict-report.md >> "$GITHUB_STEP_SUMMARY"
+             git am --abort || true
+             exit 1
+           fi
+ 
+       - name: 刷新补丁快照（基线指向新上游）
+-        if: steps.apply.outputs.ok == 'true'
++        if: steps.apply.outputs.ok == 'true' && steps.apply.outputs.rebased == 'true'
+         run: |
+           set -euo pipefail
+           bash fork-tools/make-patches.sh
+@@ -177,9 +194,11 @@ jobs:
+           test -n "$APK" || { echo "::error::没找到 tvrelease 的 APK"; exit 1; }
+           cp "$APK" "$APK_OUT"
+           VERSION=$(basename "$APK" | sed 's/^NeriPlayer-//; s/-armeabi-v7a.*//; s/\.apk$//')
++          # tag 带月日时分，手动重复触发也不会撞车（同一个 tag 只能对应一次构建）
++          TAG="tv-$(date -u +%Y%m%d-%H%M)-$(git rev-parse --short=7 "$UPSTREAM_SHA")"
+           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
++          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+           echo "sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+-          echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+           echo "upstream_short=$(git rev-parse --short=7 "$UPSTREAM_SHA")" >> "$GITHUB_OUTPUT"
+           cat > release-notes.md <<EOF
+           ## 这是什么
+@@ -202,8 +221,8 @@ jobs:
+ 
+           ## 源码
+ 
+-          与本次 APK 完全对应的源码：**本仓库 tag \`$(git rev-parse --short=7 HEAD)\`**
+-          （GitHub 已自动为该 tag 提供 Source code 压缩包）。
++          与本次 APK 完全对应的源码：**本仓库 tag \`${TAG}\`**，对应提交
++          \`$(git rev-parse HEAD)\`（GitHub 已自动为该 tag 提供 Source code 压缩包）。
+ 
+           GitHub 的源码包**不包含子模块**。构建还需要下列子模块（仓库内 \`.gitmodules\` 有地址）：
+ 
+@@ -240,13 +259,12 @@ jobs:
+         if: steps.apply.outputs.ok == 'true'
+         env:
+           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
++          TAG: ${{ steps.meta.outputs.tag }}
+         run: |
+           set -euo pipefail
+-          TAG="tv-${{ steps.meta.outputs.date }}-${{ steps.meta.outputs.upstream_short }}"
+-          # 重跑保护：同一天同一个上游 commit 只会有一个 tag
+-          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
+-            echo "tag $TAG 已存在，跳过发布"
+-            exit 0
++          # 极端情况下（同一分钟重复触发）兜底加运行号，保证 tag 唯一
++          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "refs/tags/$TAG$"; then
++            TAG="${TAG}-r${GITHUB_RUN_NUMBER}"
+           fi
+           git tag -a "$TAG" -m "基于上游 ${{ steps.up.outputs.new }} 的电视适配构建"
+           git push origin "$TAG"
+@@ -255,18 +273,5 @@ jobs:
+             --notes-file release-notes.md
+ 
+       - name: 把同步结果推回 main
+-        if: steps.apply.outputs.ok == 'true'
++        if: steps.apply.outputs.ok == 'true' && steps.apply.outputs.rebased == 'true'
+         run: git push --force-with-lease origin "HEAD:main"
+-
+-      - name: 冲突时开 issue 提醒
+-        if: failure() && steps.up.outputs.changed == 'true'
+-        continue-on-error: true # 这个通知本身失败，不该再给这次运行添一个红叉
+-        env:
+-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+-        run: |
+-          [ -f conflict-report.md ] || exit 0
+-          if ! gh issue create \
+-              --title "上游 ${{ steps.up.outputs.new }} 与 TV 补丁冲突，需要手工处理" \
+-              --body-file conflict-report.md; then
+-            echo "::warning::Issue 没开出来（多半是 token 没有 issues 写权限）。冲突详情见本页摘要。"
+-          fi
+diff --git a/FORK.md b/FORK.md
+index 785d6e8d..e0bfce9e 100644
+--- a/FORK.md
++++ b/FORK.md
+@@ -71,19 +71,22 @@ cat aerial.b64
+ 网页路径：**Settings** → 左侧 **Actions** → **General** → 拉到最下面
+ **Workflow permissions** → 选 **Read and write permissions** → **Save**。
+ 
+-> 工作流文件里已经写了 `permissions: contents: write / issues: write`，正常情况下不开也能跑。
++> 工作流文件里已经写了 `permissions: contents: write`，正常情况下不开也能跑。
+ > 但这里开一下更保险——万一 GitHub 那边策略优先级不同，不开会卡在推分支 / 建 Release（403）。
+ >
+ > 这一项只影响我写的那个工作流能不能动仓库，不会让上游那些 CI 跑起来（它们只认 `master`）。
+ 
+-### 0.6 手动跑一次
+ ### 0.6 手动跑一次
+ 
+ 网页路径：仓库顶部 **Actions** → 左侧 **「同步上游并发布 TV 版」** →
+ 右边 **Run workflow** → 绿色 **Run workflow** 按钮。
+ 
++**手动触发总是出包**：不管上游有没有更新，都会用当前 `main` 的代码编一遍并发 Release。
++定时触发才是「上游没更新就跳过」。
++
+ 等 15～25 分钟（第一次要下依赖、编 native），跑完去 **Releases** 看，应该有一个
+-`NeriPlayer-TV.apk`。
++`NeriPlayer-TV.apk`。tag 形如 `tv-20261107-0205-1ce32a4`（日期-时分-上游短哈希），
++同一个 tag 只对应一次构建，想重编就再点一次，会生成新 tag。
+ 
+ ### 0.7 电视上装
+ 
+@@ -140,11 +143,12 @@ git push origin main
+ 
+ ## 3. 上游更新了怎么办
+ 
+-**正常情况下什么都不用做** —— CI 每 6 小时看一次上游，有新提交就自动叠补丁、
++**正常情况下什么都不用做** —— CI 每小时看一次上游，有新提交就自动叠补丁、
+ 编译、发 Release、把结果推回 `main`。你只要去 Releases 下载。
+ 
+-**CI 红了（打不开 / 报错）** 说明上游动到了我们改过的地方，会在 Issues 里开一条记录，
+-列出冲突文件。本地这样处理：
++**CI 红了（打不开 / 报错）** 说明上游动到了我们改过的地方。GitHub 会给仓库 owner
++发一封「workflow 运行失败」的通知（手机 App 的 Inbox 也能收到），点进去那次运行，
++**最上方的 Summary 区**会列出冲突文件。本地这样处理：
+ 
+ ```bash
+ bash fork-tools/sync-upstream.sh --build
+@@ -314,16 +318,16 @@ A：建议改。fork 出来的 About 默认抄的上游描述，别人搜到会
+ 不改也不影响任何功能，纯粹是别让人误会。
+ 
+ 上游更新交给两样东西就够了：
+-- 平时：CI 每 6 小时自动做（`fork-sync.yml`）
++- 平时：CI 每小时自动做（`fork-sync.yml`）
+ - 本地手动：`bash fork-tools/sync-upstream.sh`
+ 
+-**Q：Actions 里那个「冲突时开 issue 提醒」是干什么的？我的 Issues 页是空的**
+-A：`fork-sync.yml` 最后一步。**它只在自动合并失败时才尝试执行**，成功了根本不会触发，
+-所以平时 Issues 一直是空的，这是正常的。
+-上游改到我们动过的代码 → `git am` 冲突 → 它把冲突文件清单写成一条 Issue 方便你看见，
+-同时也会贴到那次运行的 **Summary** 页（`Run` 页面最上方）。
+-Issue 开不出来（token 没写权限、Issues 功能关了）也不影响同步本身，
+-只是少一个通知渠道——GitHub 另外还会给仓库 owner 发一封「workflow 运行失败」的邮件。
++**Q：为什么手动跑的时候上游没更新就不出包？**
++A：已经改了。现在**手动触发（Run workflow）总是出包**，不管上游有没有新提交，
++都会用当前 `main` 的代码编一遍并发 Release；只有定时触发才遵守「没更新就跳过」。
++
++**Q：CI 失败怎么通知我？会往 Issues 里发东西吗？**
++A：**不会开 Issue**，仓库里一个 Issue 都不会有。失败通知只走 GitHub 自己的渠道
++（邮件 + 手机 App 的 Inbox），点进那次运行，最上方 **Summary** 区就是冲突详情。
+ 
+ **Q：Release 里的包和电视上装的对不上 / 装不上**
+ A：CI 有两道校验——密钥库指纹（编译前）和 APK 签名指纹（发布前），
