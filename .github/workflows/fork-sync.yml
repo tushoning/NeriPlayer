@@ -1,9 +1,11 @@
 name: 同步上游并发布 TV 版
 
 # 干什么：
-#   定时去上游 cwuom/NeriPlayer 看 master 有没有新提交。
+#   定时（每小时）去上游 cwuom/NeriPlayer 看 master 有没有新提交。
 #   有 → 把我方补丁叠上去 → 编译电视包（aerial 签名）→ 发 Release → 把结果推回 main。
-#   没有 → 直接退出，不编译。
+#   没有 → 定时触发时直接退出，不编译。
+#
+#   手动触发（Run workflow）**总是出包**：不管上游有没有更新，都在当前代码上编一遍并发 Release。
 #
 # 合规：Release 的 tag 打在「实际编译的那个 commit」上，GitHub 自动给 tag 附源码包，
 #       满足 GPLv3 §6「分发二进制必须能拿到对应源码」。
@@ -32,10 +34,9 @@ env:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    # 显式声明 token 权限，不依赖仓库的默认设置（否则推分支/开 issue 会 403）
+    # 显式声明 token 权限，不依赖仓库的默认设置（否则推分支/建 Release 会 403）
     permissions:
       contents: write # 推 main、打 tag、建 Release
-      issues: write # 冲突时开 issue 提醒
     steps:
       - name: 拉取本仓库
         uses: actions/checkout@v4
@@ -64,17 +65,33 @@ jobs:
           fi
           if git merge-base --is-ancestor "$NEW" "$BASE"; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "上游没有新提交（当前基线 $(git rev-parse --short "$BASE")），跳过。"
+            echo "上游没有新提交（当前基线 $(git rev-parse --short "$BASE")）。"
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              echo "build=true" >> "$GITHUB_OUTPUT"
+              echo "→ 手动触发，仍然用当前代码编译出包。"
+            else
+              echo "build=false" >> "$GITHUB_OUTPUT"
+              echo "→ 定时触发，跳过（不编译）。"
+            fi
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "build=true" >> "$GITHUB_OUTPUT"
             echo "上游有新提交：$(git rev-parse --short "$BASE") → $(git rev-parse --short "$NEW")"
           fi
 
-      - name: 把补丁叠到新上游
+      - name: 准备要编译的代码
         id: apply
-        if: steps.up.outputs.changed == 'true'
+        if: steps.up.outputs.build == 'true'
         run: |
           set -uo pipefail
+          if [ "${{ steps.up.outputs.changed }}" = "false" ]; then
+            # 上游没变，当前分支就是最新代码，直接编
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+            echo "rebased=false" >> "$GITHUB_OUTPUT"
+            echo "不需要叠补丁：当前分支已包含全部改动。"
+            exit 0
+          fi
+          echo "rebased=true" >> "$GITHUB_OUTPUT"
           # patches/ 是我方分支上的文件，切到上游分支后会被删掉，先挪到临时目录
           cp -r patches /tmp/patches
           git switch -c "sync/${GITHUB_RUN_ID}" upstream/master
@@ -99,14 +116,14 @@ jobs:
               echo "处理原则：import 冲突取并集；上游只是改名就取我方再批量改名；"
               echo "上游真重构了就取上游，再把 TV 逻辑补回去。"
             } > conflict-report.md
-            # 同时贴到本次运行的摘要页，即使 Issue 开不出来也能直接在网页上看到
+            # 贴到本次运行的摘要页（Run 页面最上方），失败原因一眼可见
             cat conflict-report.md >> "$GITHUB_STEP_SUMMARY"
             git am --abort || true
             exit 1
           fi
 
       - name: 刷新补丁快照（基线指向新上游）
-        if: steps.apply.outputs.ok == 'true'
+        if: steps.apply.outputs.ok == 'true' && steps.apply.outputs.rebased == 'true'
         run: |
           set -euo pipefail
           bash fork-tools/make-patches.sh
@@ -177,9 +194,11 @@ jobs:
           test -n "$APK" || { echo "::error::没找到 tvrelease 的 APK"; exit 1; }
           cp "$APK" "$APK_OUT"
           VERSION=$(basename "$APK" | sed 's/^NeriPlayer-//; s/-armeabi-v7a.*//; s/\.apk$//')
+          # tag 带月日时分，手动重复触发也不会撞车（同一个 tag 只能对应一次构建）
+          TAG="tv-$(date -u +%Y%m%d-%H%M)-$(git rev-parse --short=7 "$UPSTREAM_SHA")"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
-          echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
           echo "upstream_short=$(git rev-parse --short=7 "$UPSTREAM_SHA")" >> "$GITHUB_OUTPUT"
           cat > release-notes.md <<EOF
           ## 这是什么
@@ -202,8 +221,8 @@ jobs:
 
           ## 源码
 
-          与本次 APK 完全对应的源码：**本仓库 tag \`$(git rev-parse --short=7 HEAD)\`**
-          （GitHub 已自动为该 tag 提供 Source code 压缩包）。
+          与本次 APK 完全对应的源码：**本仓库 tag \`${TAG}\`**，对应提交
+          \`$(git rev-parse HEAD)\`（GitHub 已自动为该 tag 提供 Source code 压缩包）。
 
           GitHub 的源码包**不包含子模块**。构建还需要下列子模块（仓库内 \`.gitmodules\` 有地址）：
 
@@ -240,13 +259,12 @@ jobs:
         if: steps.apply.outputs.ok == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.meta.outputs.tag }}
         run: |
           set -euo pipefail
-          TAG="tv-${{ steps.meta.outputs.date }}-${{ steps.meta.outputs.upstream_short }}"
-          # 重跑保护：同一天同一个上游 commit 只会有一个 tag
-          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
-            echo "tag $TAG 已存在，跳过发布"
-            exit 0
+          # 极端情况下（同一分钟重复触发）兜底加运行号，保证 tag 唯一
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "refs/tags/$TAG$"; then
+            TAG="${TAG}-r${GITHUB_RUN_NUMBER}"
           fi
           git tag -a "$TAG" -m "基于上游 ${{ steps.up.outputs.new }} 的电视适配构建"
           git push origin "$TAG"
@@ -255,18 +273,5 @@ jobs:
             --notes-file release-notes.md
 
       - name: 把同步结果推回 main
-        if: steps.apply.outputs.ok == 'true'
+        if: steps.apply.outputs.ok == 'true' && steps.apply.outputs.rebased == 'true'
         run: git push --force-with-lease origin "HEAD:main"
-
-      - name: 冲突时开 issue 提醒
-        if: failure() && steps.up.outputs.changed == 'true'
-        continue-on-error: true # 这个通知本身失败，不该再给这次运行添一个红叉
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          [ -f conflict-report.md ] || exit 0
-          if ! gh issue create \
-              --title "上游 ${{ steps.up.outputs.new }} 与 TV 补丁冲突，需要手工处理" \
-              --body-file conflict-report.md; then
-            echo "::warning::Issue 没开出来（多半是 token 没有 issues 写权限）。冲突详情见本页摘要。"
-          fi
