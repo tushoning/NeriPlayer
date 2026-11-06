@@ -2,9 +2,9 @@
 # ---------------------------------------------------------------------------
 # 上游更新后，把我方改动重新落到新上游上
 #
-#   bash tools/sync-upstream.sh            # 用补丁链（git am -3），保留提交信息
-#   bash tools/sync-upstream.sh --squash   # 用单个合并补丁（冲突一次解决）
-#   bash tools/sync-upstream.sh --build    # 同步完顺便编译 TV release
+#   bash fork-tools/sync-upstream.sh       # 用补丁链（git am -3 --keep-cr），保留提交信息
+#   bash fork-tools/sync-upstream.sh --squash   # 用单个合并补丁（冲突一次解决）
+#   bash fork-tools/sync-upstream.sh --build    # 同步完顺便编译 TV release
 #
 # 成功 → 当前分支变成「新上游 + 我方补丁」，直接 push 即可。
 # 冲突 → 停下来，工作区保留冲突标记，按提示手工解决后 git am --continue。
@@ -59,7 +59,7 @@ if [ "$MODE" = squash ]; then
   git apply -3 patches/tv-fork.diff
   RC=$?
 else
-  git am -3 patches/series/*.patch
+  git am -3 --keep-cr patches/series/*.patch
   RC=$?
 fi
 set -e

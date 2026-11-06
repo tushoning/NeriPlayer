@@ -97,7 +97,7 @@ trap cleanup EXIT
   cd "$WT"
   git reset -q --hard "$BASE_FULL"
   git clean -qfdx
-  git am -3 "$REPO_ROOT"/patches/series/*.patch >/dev/null
+  git am -3 --keep-cr "$REPO_ROOT"/patches/series/*.patch >/dev/null
   git rev-parse HEAD^{tree} > "$TMPROOT/series.tree"
 )
 

@@ -62,7 +62,7 @@ jobs:
           # patches/ 是我方分支上的文件，切到上游分支后会被删掉，先挪到临时目录
           cp -r patches /tmp/patches
           git switch -c "sync/${GITHUB_RUN_ID}" upstream/master
-          if git am -3 /tmp/patches/series/*.patch; then
+          if git am -3 --keep-cr /tmp/patches/series/*.patch; then
             echo "ok=true" >> "$GITHUB_OUTPUT"
             git submodule update --init --recursive
           else

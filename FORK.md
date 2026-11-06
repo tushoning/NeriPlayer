@@ -45,7 +45,7 @@ bash fork-tools/sync-upstream.sh --build
 ```
 
 脚本做的事：`git fetch origin master` → 在新上游上开 `sync/<日期>` 分支 →
-`git am -3 patches/series/*.patch` → 编译。
+`git am -3 --keep-cr patches/series/*.patch` → 编译。
 
 - **没冲突**：分支直接变成「新上游 + 我方补丁」，`git diff` 复核后
   `git checkout our-changes && git reset --hard sync/<日期>` 接受，
@@ -237,13 +237,22 @@ key 泄露 = 所有 app 都能被人伪造升级；一把 key 用在 Google Play
 每天定时 / 手动触发
   → fetch 上游
   → 新提交？没有就退出
-  → git am -3 patches/series/*.patch
+  → git am -3 --keep-cr patches/series/*.patch
       失败 → 开 issue 列出冲突文件，停止（等人处理）
-      成功 → 编译 :app:assembleTvrelease（用组织 secret 签名）
-           → 打 tag tv-<上游sha前7位>
-           → 建 Release，附 APK + §4 的改动声明
+      成功 → 编译 :app:assembleRelease -PbuildAllReleaseAbis=true（组织 secret 签名）
+           → 打 tag tv-<日期>-<上游sha前7位>
+           → 建 Release，附 APK + Release notes（含 §4 的改动声明与源码指引）
            → push our-changes
 ```
+
+> 为什么是 `assembleRelease` 而不是 `assembleTvrelease`：后者是给本地迭代用的
+> ——`.debug` 包名后缀 + 调试签名，方便覆盖安装不丢数据。对外发布的包必须用
+> 正式包名 + 正式签名，否则别人装不上，你自己的升级链也断在这里。
+>
+> 为什么必须 `--keep-cr`：上游有两个文件（`SongEncyclopediaContent.kt`、
+> `SongEncyclopediaArtistSection.kt`）的内容本身就是 CRLF。`git am` 默认会把补丁行
+> 末尾的 `\r` 剥掉，导致这两段 hunk 对不上，报 "patch does not apply"。
+> 这不是补丁坏了，是 `git am` 的默认行为，加 `--keep-cr` 即可。
 
 注意：Release 的 tag 一定要由 CI 打在**刚编译成功的那个 commit** 上，
 GitHub 会自动给这个 tag 附源码包，这就是 §6 的合规闭环。
