@@ -3,6 +3,7 @@ package moe.ouom.neriplayer.ui.screen.tab.home
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import moe.ouom.neriplayer.ui.i18n.asString
+import moe.ouom.neriplayer.ui.tv.rememberTvDeferredImage
 import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
 import android.app.Application
 import android.content.Intent
@@ -681,6 +682,8 @@ private fun BiliMusicRankDetailRow(
             offlineMode = offlineMode
         )
     }
+    // 电视：遥控器连续操作期间先不发起新加载（和首页卡片、歌曲行同一套）
+    val deferredCover = rememberTvDeferredImage(key = thumbnailUrl) { coverRequest }
     // 不可播放的视频没有 SongItem，这里造一份只用于展示的占位
     val rowSong = songItem ?: SongItem(
         id = 0L,
@@ -727,9 +730,10 @@ private fun BiliMusicRankDetailRow(
         coverCornerRadius = 8.dp,
         coverContent = {
             AsyncImage(
-                model = coverRequest,
+                model = deferredCover.model,
                 contentDescription = title,
                 contentScale = ContentScale.Crop,
+                onSuccess = { deferredCover.markLoaded() },
                 modifier = Modifier
                     .width(100.dp)
                     .height(60.dp)
@@ -776,6 +780,8 @@ private fun BiliMusicHotDetailRow(
             offlineMode = offlineMode
         )
     }
+    // 电视：遥控器连续操作期间先不发起新加载（和首页卡片、歌曲行同一套）
+    val deferredCover = rememberTvDeferredImage(key = thumbnailUrl) { coverRequest }
     // 不可播放的视频没有 SongItem，这里造一份只用于展示的占位
     val rowSong = songItem ?: SongItem(
         id = 0L,
@@ -822,9 +828,10 @@ private fun BiliMusicHotDetailRow(
         coverCornerRadius = 8.dp,
         coverContent = {
             AsyncImage(
-                model = coverRequest,
+                model = deferredCover.model,
                 contentDescription = video.title,
                 contentScale = ContentScale.Crop,
+                onSuccess = { deferredCover.markLoaded() },
                 modifier = Modifier
                     .width(100.dp)
                     .height(60.dp)

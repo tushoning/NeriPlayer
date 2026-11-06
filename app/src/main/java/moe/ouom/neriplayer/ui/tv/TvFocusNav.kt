@@ -24,6 +24,7 @@ package moe.ouom.neriplayer.ui.tv
  */
 
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,6 +32,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.focus.focusTarget
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
@@ -359,7 +361,16 @@ fun Modifier.tvScrollToTopOnUp(listState: LazyListState): Modifier {
  * 所以初始焦点、方向搜索、按到端头之后的走向都不会被带偏，也不存在「落到落点上再按就乱跳」。
  */
 @Composable
-fun Modifier.tvEdgeScroll(scrollState: ScrollState): Modifier {
+fun Modifier.tvEdgeScroll(
+    scrollState: ScrollState,
+    /**
+     * 端头夹边：滚到底再按下键时光标停在最后一项不动。
+     *
+     * 默认关闭 —— YouTube 播放源那个对话框要靠「下键放行」交给系统兜底，
+     * 才能从列表走到下面的「关闭」按钮。
+     */
+    clampDownAtEnd: Boolean = false
+): Modifier {
     if (!LocalIsTelevision.current) return this
     val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
@@ -375,10 +386,10 @@ fun Modifier.tvEdgeScroll(scrollState: ScrollState): Modifier {
         if (focusManager.moveFocus(direction)) return@onKeyEvent true
         val canScroll = if (forward) scrollState.canScrollForward else scrollState.canScrollBackward
         if (!canScroll) {
-            // 已经在端头：下键直接吃掉 —— 放回系统的话，方向搜索回绕会把光标甩到页面顶部的
-            // 返回键上，看起来就是「滚到底了再按下，人却跑到顶上去了」。
-            // 上键照常放行，好让光标正常去表头。
-            return@onKeyEvent !forward
+            // 已经在端头（moveFocus 上面已经试过并失败，说明这个方向确实没有可聚焦项了）。
+            // clampDownAtEnd 时才把下键吃掉：光标停在最后一项不动；
+            // 其余用法保持原语义，放行给系统兜底。
+            return@onKeyEvent if (clampDownAtEnd) forward else !forward
         }
         val delta = if (forward) stepPx else -stepPx
         scope.launch { runCatching { scrollState.animateScrollBy(delta) } }
@@ -416,8 +427,9 @@ fun Modifier.tvScrollPane(scrollState: ScrollState): Modifier {
             }
             false
         }
-        // 用 focusTarget + canFocus=false，而不是 focusGroup：
-        // 只有真正进焦点树的节点才会收到 onExit 回调，focusGroup 只是个分组标记。
+        // 必须同时是焦点组：容器成为组边界后，组内搜不到候选时才会走 onExit；
+        // 只挂 focusTarget 的话，二维搜索会直接跨组命中页面顶部的返回键，onExit 根本不触发。
+        .focusGroup()
         .focusProperties {
             canFocus = false
             onExit = {
@@ -425,28 +437,61 @@ fun Modifier.tvScrollPane(scrollState: ScrollState): Modifier {
             }
         }
         .focusTarget()
-        .tvEdgeScroll(scrollState)
+        // 文字面板都要「到底就停」：不夹边的话系统兜底搜索会回绕到页面顶部的返回键。
+        .tvEdgeScroll(scrollState, clampDownAtEnd = true)
 }
 
 /**
- * 电视：列表停在「第一项内部、但已经往下滚了一点」时，按上先把列表拉回最顶端。
+ * 电视方向键「最近一次按的是哪边」。
  *
- * 设置页这类页面顶部常有一段纯说明文字（不可聚焦）。光标走到第一个可聚焦项之后按上，
- * 方向搜索直接跳到表头，列表却停在原地 —— 上面那段文字就再也看不到了。
- * 这里只在「确实滚过顶部、并且还停在第一项内（上方已经没有别的可聚焦项）」时接管上键。
+ * 只用来区分两种「焦点落到顶部返回键」：用户自己按上键走过去，和焦点被方向搜索意外跳上去。
+ * 前者应该把正文滚回顶部，后者不能 —— 否则看起来就是「按到底又回到了开头」。
+ */
+internal object TvInputTrace {
+    @Volatile
+    private var lastDownAt: Long = 0L
+
+    @Volatile
+    private var lastUpAt: Long = 0L
+
+    fun onKeyDown(key: Key) {
+        val now = android.os.SystemClock.uptimeMillis()
+        when (key) {
+            Key.DirectionDown -> lastDownAt = now
+            Key.DirectionUp -> lastUpAt = now
+            else -> Unit
+        }
+    }
+
+    fun movedUpRecently(windowMs: Long = 400L): Boolean {
+        val now = android.os.SystemClock.uptimeMillis()
+        return lastUpAt > lastDownAt && now - lastUpAt <= windowMs
+    }
+}
+
+/**
+ * 电视：网格停在「第一屏内、但已经把顶部表头滚掉一截」时，按上先把网格拉回最顶端。
+ *
+ * 首页第 0 项是纯文字的「继续播放」表头（不可聚焦），首个可聚焦项是第 1 项卡片行。
+ * 电视的最小滚动策略（`TvMinimalBringIntoViewSpec`，只滚到「刚好露出 + 12dp」）把卡片
+ * 滚到视口顶之后，表头只剩几像素 —— 而上面再没有可聚焦节点能把这几像素拉出来，
+ * 于是那段标题就永远看不见了。只有这里接管上键才能回去。
  */
 @Composable
-fun Modifier.tvBringListToTopOnUp(listState: LazyListState): Modifier {
+fun Modifier.tvBringGridToTopOnUp(gridState: LazyGridState): Modifier {
     if (!LocalIsTelevision.current) return this
     val scope = rememberCoroutineScope()
     return this.onPreviewKeyEvent { event ->
         if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionUp) {
             return@onPreviewKeyEvent false
         }
-        if (!listState.canScrollBackward) return@onPreviewKeyEvent false
-        if (listState.firstVisibleItemIndex > 0) return@onPreviewKeyEvent false
-        if (listState.firstVisibleItemScrollOffset <= 0) return@onPreviewKeyEvent false
-        scope.launch { runCatching { listState.animateScrollToItem(0) } }
+        if (!gridState.canScrollBackward) return@onPreviewKeyEvent false
+        // 首页第一屏的 item 布局：0 = 「继续播放」表头（不可聚焦）、1 = 继续播放卡片行。
+        // 电视的最小滚动余量 12dp 叠加卡片内边距后，表头会被整块推出视口 —— 此时
+        // firstVisibleItemIndex 已经是 1、scrollOffset 是 0，旧的两个 gate
+        // （index > 0 / offset <= 0）会同时命中，函数退化成空操作。所以判到 1 为止。
+        if (gridState.firstVisibleItemIndex > 1) return@onPreviewKeyEvent false
+        scope.launch { runCatching { gridState.animateScrollToItem(0) } }
         true
     }
 }
@@ -499,6 +544,8 @@ fun rememberTvMenuFirstItemFocus(expanded: Boolean, enabled: Boolean = true): Fo
 @Composable
 fun Modifier.tvBringIntoViewOnFocus(): Modifier {
     if (!LocalIsTelevision.current) return this
+    // 可用 adb 关掉做 A/B：settings put global neri_tv_biv 0（见 TvTuning）
+    if (!TvTuning.bringIntoViewOnFocus) return this
     val requester = remember { BringIntoViewRequester() }
     val scope = rememberCoroutineScope()
     return this

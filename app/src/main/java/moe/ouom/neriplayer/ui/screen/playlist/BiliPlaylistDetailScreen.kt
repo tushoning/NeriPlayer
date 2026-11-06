@@ -24,6 +24,8 @@ package moe.ouom.neriplayer.ui.screen.playlist
  */
 
 import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
+import moe.ouom.neriplayer.ui.tv.rememberTvInitialFocus
+import moe.ouom.neriplayer.ui.tv.tvInitialFocus
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.LocalIndication
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
@@ -34,6 +36,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -156,6 +160,9 @@ fun BiliPlaylistDetailScreen(
 ) {
     val context = LocalContext.current
     val composeResources = LocalResources.current
+    // 电视：从播放页跳到这一页时没人抢焦点（遥控器直接失灵）。
+    // 挂在最外层容器上，请求会往下落到第一个可聚焦项 —— 顶栏返回键。
+    val tvInitialFocus = rememberTvInitialFocus()
     val snackbarHostState = remember { SnackbarHostState() }
     val vm: BiliPlaylistDetailViewModel = viewModel(
         factory = viewModelFactory {
@@ -460,19 +467,22 @@ fun BiliPlaylistDetailScreen(
     )
     AnimatedVisibility(
         visibleState = detailVisibilityState,
-        enter = if (suppressVisibilityTransition) {
-            EnterTransition.None
-        } else {
-            fadeIn() + slideInVertically { it / 6 }
+        enter = when {
+            suppressVisibilityTransition -> EnterTransition.None
+            // 电视不要上滑动画，直接出现；手机保留过渡
+            LocalIsTelevision.current -> EnterTransition.None
+            else -> fadeIn(tween(150)) +
+                slideInVertically(tween(240, easing = FastOutSlowInEasing)) { it / 6 }
         },
-        exit = if (suppressVisibilityTransition) {
-            ExitTransition.None
-        } else {
-            fadeOut() + slideOutVertically { it / 6 }
+        exit = when {
+            suppressVisibilityTransition -> ExitTransition.None
+            LocalIsTelevision.current -> ExitTransition.None
+            else -> fadeOut(tween(200)) +
+                slideOutVertically(tween(200, easing = FastOutSlowInEasing)) { it / 6 }
         }
     ) {
         Surface(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().tvInitialFocus(tvInitialFocus),
             color = Color.Transparent
         ) {
             val miniPlayerHeight = LocalMiniPlayerHeight.current

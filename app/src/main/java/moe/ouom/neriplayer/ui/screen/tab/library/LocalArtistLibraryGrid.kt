@@ -1,5 +1,7 @@
 package moe.ouom.neriplayer.ui.screen.tab.library
 
+import moe.ouom.neriplayer.ui.tv.tvReturnFocus
+import moe.ouom.neriplayer.ui.tv.tvRowStart
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -152,7 +154,9 @@ private fun LocalArtistEmptyCard(
 internal fun LocalArtistGridCard(
     artist: LocalArtistSummary,
     onClick: () -> Unit,
-    offlineMode: Boolean
+    offlineMode: Boolean,
+    /** 是否本行第 0 列：按左直接交回侧栏，不往左上跑 */
+    atRowStart: Boolean = false
 ) {
     val context = LocalContext.current
     val coverUrl = rememberLocalArtistDisplayCoverUrl(artist)
@@ -162,6 +166,9 @@ internal fun LocalArtistGridCard(
     Column(
         modifier = Modifier
             .tvBringIntoViewOnFocus()
+            .tvRowStart(atRowStart)
+            // 电视「返回来源」：进这位歌手，退出时光标回到这张卡
+            .tvReturnFocus("localArtist:${artist.name}")
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = tvRingIndication,

@@ -24,6 +24,8 @@ package moe.ouom.neriplayer.ui.screen.playlist
  */
 
 import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
+import moe.ouom.neriplayer.ui.tv.rememberTvInitialFocus
+import moe.ouom.neriplayer.ui.tv.tvInitialFocus
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.LocalIndication
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
@@ -173,6 +175,9 @@ fun YouTubeMusicPlaylistDetailScreen(
 ) {
     val context = LocalContext.current
     val composeResources = LocalResources.current
+    // 电视：从播放页跳到这一页时没人抢焦点（遥控器直接失灵）。
+    // 挂在最外层容器上，请求会往下落到第一个可聚焦项 —— 顶栏返回键。
+    val tvInitialFocus = rememberTvInitialFocus()
     val viewModel: YouTubeMusicPlaylistDetailViewModel = viewModel(
         factory = viewModelFactory {
             initializer {
@@ -482,6 +487,7 @@ fun YouTubeMusicPlaylistDetailScreen(
     }
 
     Scaffold(
+        modifier = Modifier.tvInitialFocus(tvInitialFocus),
         containerColor = Color.Transparent,
         snackbarHost = {
             NeriSnackbarHost(

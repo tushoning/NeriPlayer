@@ -33,6 +33,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import moe.ouom.neriplayer.ui.tv.rememberTvInitialFocus
+import moe.ouom.neriplayer.ui.tv.tvInitialFocus
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
@@ -107,7 +109,9 @@ fun ServerArtistDetailScreen(
             keyboard?.show()
         }
     }
-    Surface(modifier.fillMaxSize(), color = Color.Transparent) {
+    // 电视：进这一页时没人抢焦点，光标会被系统兜给左侧导航栏、再被补偿钉到标签上
+    val tvInitialFocus = rememberTvInitialFocus(enabled = !showSearch)
+    Surface(modifier.fillMaxSize().tvInitialFocus(tvInitialFocus), color = Color.Transparent) {
         Scaffold(containerColor = Color.Transparent, topBar = {
             TopAppBar(
                 title = { Text(artist.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },

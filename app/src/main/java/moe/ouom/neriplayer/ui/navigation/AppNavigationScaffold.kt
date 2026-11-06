@@ -77,9 +77,9 @@ import moe.ouom.neriplayer.data.local.media.displayArtist
 import moe.ouom.neriplayer.data.local.media.displayName
 import moe.ouom.neriplayer.navigation.Destinations
 import moe.ouom.neriplayer.ui.component.navigation.NeriBottomBar
-import moe.ouom.neriplayer.ui.component.navigation.NeriTvTopBar
+import moe.ouom.neriplayer.ui.component.navigation.TvNavigationSidebar
+import moe.ouom.neriplayer.ui.component.navigation.TvSidebarWidth
 import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
-import moe.ouom.neriplayer.ui.tv.tvDirectionKeyGate
 import moe.ouom.neriplayer.ui.component.navigation.resolveBottomBarSelectionAlpha
 import moe.ouom.neriplayer.ui.component.playback.NeriMiniPlayer
 import moe.ouom.neriplayer.ui.component.playback.NeriMiniPlayerDefaults
@@ -173,25 +173,18 @@ internal fun AppNavigationScaffold(
         // 反复拽回页面第一个按钮（很多时候就是「正在播放」），按一下方向键就跳走。
         // 现在只让页面自己决定落点：路由切换由 NeriApp 校准一次，控件消失由打开
         // 该控件的页面自己把光标还回去。
-        BoxWithConstraints(Modifier.fillMaxSize().tvDirectionKeyGate()) {
-            val useNavigationRail =
-                !isTelevision && shouldUseAppNavigationRail(configuration.smallestScreenWidthDp, maxWidth)
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            // 电视也走侧栏宓主：顶部横栏已经改到左侧了
+            val useNavigationRail = if (isTelevision) {
+                true
+            } else {
+                shouldUseAppNavigationRail(configuration.smallestScreenWidthDp, maxWidth)
+            }
             Scaffold(
                 containerColor = Color.Transparent,
                 contentColor = MaterialTheme.colorScheme.onSurface,
-                topBar = {
-                    if (isTelevision) {
-                        NeriTvTopBar(
-                            items = bottomBar.items,
-                            currentDestination = bottomBar.currentDestination,
-                            hasCurrentSong = hasCurrentSong,
-                            isPlaying = isPlaying,
-                            onItemSelected = { onMainTabSelected(it.route) },
-                            onOpenNowPlaying = onOpenNowPlaying,
-                            onTabConfirm = onTabConfirm
-                        )
-                    }
-                },
+                // 电视的导航在左侧，顶部不再留条
+                topBar = {},
                 snackbarHost = {
                     NeriSnackbarHost(
                         hostState = snackbarHostState,
@@ -231,13 +224,28 @@ internal fun AppNavigationScaffold(
                 ) {
                     AppAdaptiveNavigationContent(
                         useNavigationRail = useNavigationRail,
+                        railWidth = if (isTelevision) TvSidebarWidth else AppNavigationRailWidth,
+                        applySafeDrawingInsets = !isTelevision,
+                        // 电视：右侧补上和侧栏同宽的留白，内容左右边距才对称
+                        contentEndPadding = if (isTelevision) TvContentEdgeInset else 0.dp,
                         showNowPlaying = bottomBar.showNowPlaying,
                         offlineMode = bottomBar.offlineMode,
-                        railContent = { AppNavigationRail(bottomBar, onMainTabSelected) },
-                        // 电视上标签栏占了顶部一条，页面内容整体下移，避免被它盖住
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(top = if (isTelevision) innerPadding.calculateTopPadding() else 0.dp)
+                        railContent = {
+                            if (isTelevision) {
+                                TvNavigationSidebar(
+                                    items = bottomBar.items,
+                                    currentDestination = bottomBar.currentDestination,
+                                    hasCurrentSong = hasCurrentSong,
+                                    isPlaying = isPlaying,
+                                    onItemSelected = { onMainTabSelected(it.route) },
+                                    onOpenNowPlaying = onOpenNowPlaying,
+                                    onTabConfirm = onTabConfirm
+                                )
+                            } else {
+                                AppNavigationRail(bottomBar, onMainTabSelected)
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize()
                     ) {
                         AppManagedProcessingLayer(
                             layoutInsets = layoutInsets,

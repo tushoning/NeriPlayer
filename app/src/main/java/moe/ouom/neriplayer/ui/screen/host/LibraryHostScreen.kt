@@ -37,6 +37,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Surface
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -80,6 +81,7 @@ import moe.ouom.neriplayer.ui.viewmodel.tab.BiliPlaylist
 import moe.ouom.neriplayer.ui.viewmodel.tab.YouTubeMusicPlaylist
 import moe.ouom.neriplayer.ui.viewmodel.playlist.BiliVideoItem
 import moe.ouom.neriplayer.data.model.SongItem
+import moe.ouom.neriplayer.navigation.Destinations
 import moe.ouom.neriplayer.data.model.stats.PlaybackStatsPeriod
 import moe.ouom.neriplayer.data.model.bilibili.video.VideoBasicInfo
 import moe.ouom.neriplayer.core.di.AppContainer
@@ -111,6 +113,11 @@ import moe.ouom.neriplayer.platform.subsonic.repository.ServerArtist as MusicSer
 import moe.ouom.neriplayer.ui.screen.server.album.ServerAlbumDetailScreen
 import moe.ouom.neriplayer.ui.screen.server.artist.ServerArtistDetailScreen
 import moe.ouom.neriplayer.ui.screen.server.artist.serverArtistDetailKey
+import moe.ouom.neriplayer.ui.tv.LocalTvReturnDepth
+import moe.ouom.neriplayer.ui.tv.LocalTvReturnScope
+import moe.ouom.neriplayer.ui.tv.TvReturnFocusPageBridge
+import moe.ouom.neriplayer.ui.tv.TvTabConfirmBus
+import moe.ouom.neriplayer.ui.tv.TvTabRootBus
 
 @Parcelize
 sealed class LibrarySelectedItem : Parcelable {
@@ -479,6 +486,18 @@ fun LibraryHostScreen(
         regularSource
     }
 
+    /** 当前标签页对应的根列表（MY_MUSIC 由服务端列表自己管，没有独立 LazyListState） */
+    fun currentTabListState(): LazyListState? = when (selectedTab) {
+        LibraryTab.LOCAL -> localListState
+        LibraryTab.FAVORITE -> favoriteListState
+        LibraryTab.NETEASE -> neteaseListState
+        LibraryTab.NETEASEALBUM -> neteaseAlbumState
+        LibraryTab.YTMUSIC -> youtubeMusicListState
+        LibraryTab.BILI -> biliListState
+        LibraryTab.QQMUSIC -> qqMusicListState
+        LibraryTab.MY_MUSIC -> null
+    }
+
     val navigationTransition = rememberHostPredictiveBackTransition(
         targetState = libraryNavigationScene(selected, creatorParents),
         backEnabled = selected != null,
@@ -512,6 +531,34 @@ fun LibraryHostScreen(
         pendingListRestoreOffset = 0
         pendingTopAppBarHeightOffset = Float.NaN
         pendingTopAppBarContentOffset = Float.NaN
+    }
+    // 电视「返回来源」：进详情前记住是哪张卡，退出时把光标送回去。
+    // 放在上面「恢复滚动位置」之后，先滚回视口再请求焦点。
+    // 媒体库有「歌手 → 创作者 → 专辑」这种多层后退，深度取场景自带的 navigationDepth。
+    val libraryReturnDepth = libraryNavigationScene(selected, creatorParents).navigationDepth
+    TvReturnFocusPageBridge("library", depth = libraryReturnDepth)
+    // 电视：侧栏再按一次「归集」= 回到归集根。
+    // 详情态下 LibraryScreen 不在组合里，刷新总线没人收，所以先在这里把「回根」
+    // 翻译成「退出详情 + 清掉残留的滚动恢复标记 + 回顶」；根态才走原来的刷新逻辑。
+    LaunchedEffect(Unit) {
+        TvTabRootBus.requests.collect { route ->
+            if (route != Destinations.Library.route) return@collect
+            if (selected != null) {
+                cancelPendingNeteaseCoverWarmup()
+                skipDetailCloseAnimation = false
+                // 先清恢复标记：否则退出详情后会被 pending 的位置又拉回去
+                pendingScrollSource = null
+                pendingListRestoreIndex = null
+                pendingListRestoreOffset = 0
+                pendingTopAppBarHeightOffset = Float.NaN
+                pendingTopAppBarContentOffset = Float.NaN
+                creatorParents = emptyList()
+                selected = null
+                currentTabListState()?.requestScrollToItem(0)
+            } else {
+                TvTabConfirmBus.request(Destinations.Library.route)
+            }
+        }
     }
     val suppressRestoredSceneEntry = rememberMainTabSceneRestoredEntry()
     val detailCloseRootRevealFraction =
@@ -565,7 +612,8 @@ fun LibraryHostScreen(
                 initialDepth = navigationTransition.currentState.navigationDepth,
                 targetDepth = navigationTransition.targetState.navigationDepth
             )
-            val sceneMotion = if (suppressRestoredSceneMotion) {
+            // 电视上场景动效一个像素都不画，但每帧仍会产出新的 SceneMotion 让整棵子树重组
+            val sceneMotion = if (suppressRestoredSceneMotion || tvSkipSceneMotion) {
                 AdvancedGlassSceneMotion.None
             } else {
                 navigationTransition.animateAdvancedGlassSceneMotion(
@@ -581,6 +629,12 @@ fun LibraryHostScreen(
                 sceneMotion.contentScale,
                 scene.navigationDepth
             ) {
+                // 电视「返回来源」：卡片只传稳定 key，宿主 + 层级由这里下发。
+                CompositionLocalProvider(
+                    LocalTvReturnScope provides
+                        if (moe.ouom.neriplayer.ui.tv.LocalIsTelevision.current) "library" else null,
+                    LocalTvReturnDepth provides scene.navigationDepth
+                ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     if (current == null) {
                         Box(
@@ -987,6 +1041,7 @@ fun LibraryHostScreen(
                         }
                         }
                     }
+                }
                 }
             }
         }

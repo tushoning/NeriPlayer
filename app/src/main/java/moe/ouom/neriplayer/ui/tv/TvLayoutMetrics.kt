@@ -4,7 +4,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.Dp
 import kotlin.math.roundToInt
 import androidx.compose.ui.unit.sp
@@ -13,15 +12,14 @@ import androidx.compose.ui.unit.dp
 /**
  * 电视端页面左右安全边距。
  *
- * 手机上页面普遍是 8~18dp 的内边距，电视上这个量级等于「内容顶到屏幕边缘」；
- * 而且用户在设置里调过界面缩放后，窗口的 dp 宽度会变，写死的 dp 边距看着更不对。
- * 所以按窗口宽度取比例（4.5%，夹在 20~72dp），缩放怎么调都能留出一条像样的白边。
+ * 移到左侧竖栏后，边距不再由页面自己给：左边是 [moe.ouom.neriplayer.ui.component.navigation.TvSidebarWidth]
+ * 的导航栏，右边由 AppNavigationRail 补同样宽度的留白，内容左右边距自然对称。
+ * 页面再自己加一层就是「双重边距」，所以这里恒为 0。
+ *
+ * 手机/平板不走这个函数（各页面自己传 base），不受影响。
  */
 @Composable
-fun tvPageSidePadding(): Dp {
-    val widthDp = LocalConfiguration.current.screenWidthDp.dp
-    return (widthDp * 0.045f).coerceIn(20.dp, 72.dp)
-}
+fun tvPageSidePadding(): Dp = 0.dp
 
 /** 电视端列表的左右内容内边距；非电视返回 0，手机平板保持原样。 */
 @Composable
@@ -29,12 +27,14 @@ fun tvPageSidePaddingOrZero(): Dp =
     if (LocalIsTelevision.current) tvPageSidePadding() else 0.dp
 
 /**
- * 所有页面统一使用的左右边距，基准 = 首页「雷达歌单」卡片左边缘：
- * 首页外层容器留 [tvPageSidePadding]，里面的横条自己还有 8dp contentPadding。
- * 其它页面没有这 8dp，所以直接补上，保证每个页面的内容左边缘在同一条竖线上。
+ * 所有页面统一使用的左右边距。
+ *
+ * 顶栏时代这里等于「屏宽 4.5% + 8dp」（960dp 屏上是 51.2dp）。改用左侧竖栏后，
+ * 这 51dp 已经由导航栏本身 + 内容区右侧留白占住，页面再加一遍就会把内容推到 102dp 开外，
+ * 所以现在恒等于 [tvPageSidePadding]（= 0）。
  */
 @Composable
-fun tvContentSidePadding(): Dp = tvPageSidePadding() + 8.dp
+fun tvContentSidePadding(): Dp = tvPageSidePadding()
 
 /**
  * 电视上把「原来那一档页面内边距」换成统一的页面边距；手机平板照旧用 [base]。

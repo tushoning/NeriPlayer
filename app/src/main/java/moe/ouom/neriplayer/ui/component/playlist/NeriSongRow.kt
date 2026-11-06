@@ -95,6 +95,7 @@ import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
 import moe.ouom.neriplayer.ui.tv.rememberTvMenuFirstItemFocus
 import moe.ouom.neriplayer.ui.tv.rememberTvRowMenuKeyState
 import moe.ouom.neriplayer.ui.tv.tvBringIntoViewOnFocus
+import moe.ouom.neriplayer.ui.tv.tvReturnFocus
 import moe.ouom.neriplayer.ui.tv.tvRowMenuKeyPress
 import moe.ouom.neriplayer.ui.util.copyMessageRes
 import moe.ouom.neriplayer.ui.util.copyPlainTextSafely
@@ -179,6 +180,9 @@ internal fun NeriSongRow(
                 state = tvRowMenuState,
                 enabled = isTelevision && !selectionMode && hasMenu
             )
+            // 电视「返回来源」：从这首歌进播放页，退出时光标回到这一行。
+            // key 用「渠道 + id」：同一个 scope 里歌单可能同时出现网易云和本地的同号 id。
+            .tvReturnFocus("song:${song.channelId.orEmpty()}:${song.id}")
             .clip(neriRoundedShape(12.dp))
             .background(rowContainerColor)
             .combinedClickable(

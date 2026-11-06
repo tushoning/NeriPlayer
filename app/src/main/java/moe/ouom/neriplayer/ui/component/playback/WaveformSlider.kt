@@ -103,9 +103,12 @@ private val WaveActiveStroke = androidx.compose.ui.graphics.drawscope.Stroke(
     cap = StrokeCap.Round
 )
 
+/** 遥控器「确定」：方向键中键（大多数电视盒）或回车（部分键盘/投屏遥控） */
+private fun Key.isConfirmKey(): Boolean =
+    this == Key.DirectionCenter || this == Key.Enter || this == Key.NumPadEnter
+
 @Composable
-fun WaveformSlider(
-    value: Float,
+fun WaveformSlider(    value: Float,
     onValueChange: (Float) -> Unit,
     onValueChangeFinished: () -> Unit,
     isPlaying: Boolean,
@@ -119,7 +122,14 @@ fun WaveformSlider(
     activeTint: Color = MaterialTheme.colorScheme.primary,
     durationMs: Long = 0L,
     playbackSpeed: Float = 1f,
-    playbackSessionKey: String? = null
+    playbackSessionKey: String? = null,
+    /**
+     * 电视：焦点落在小圆点上时按「确定」要做什么。
+     *
+     * 默认不处理（消费不到就交给上层），播放页传「播放/暂停」过来 ——
+     * 滑块自己按确定只会 seek 到当前进度，等于没反应，不如让它当个播放键。
+     */
+    onConfirm: (() -> Unit)? = null
 ) {
     val clampedValue = normalizeWaveProgress(value)
     val activeColor = activeTint.copy(alpha = if (enabled) 1f else 0.55f)
@@ -230,6 +240,12 @@ fun WaveformSlider(
             .onFocusChanged { tvFocused = it.isFocused }
             .onKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                // 确定键：小圆点上按下去就是播放/暂停
+                val confirm = onConfirm
+                if (confirm != null && event.key.isConfirmKey()) {
+                    confirm()
+                    return@onKeyEvent true
+                }
                 val direction = when (event.key) {
                     Key.DirectionLeft -> -1f
                     Key.DirectionRight -> 1f

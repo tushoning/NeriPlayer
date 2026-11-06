@@ -1,7 +1,9 @@
 package moe.ouom.neriplayer.ui.screen.server.album
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -36,6 +38,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import moe.ouom.neriplayer.core.di.AppContainer
+import moe.ouom.neriplayer.ui.tv.rememberTvInitialFocus
+import moe.ouom.neriplayer.ui.tv.tvInitialFocus
 import moe.ouom.neriplayer.core.download.GlobalDownloadManager
 import moe.ouom.neriplayer.core.player.PlayerManager
 import moe.ouom.neriplayer.data.identity.sameIdentityAs
@@ -182,6 +186,9 @@ fun ServerAlbumDetailScreen(
     val duration = if (allSongs.any { it.durationMs <= 0 }) stringResource(CoreCommonR.string.local_playlist_duration_loading)
         else formatTotalDuration(context, allSongs.sumOf { it.durationMs })
     val albumSummary = stringResource(CoreCommonR.string.local_artist_total_duration, duration, allSongs.size)
+    // 电视：进这一页时没人抢焦点，光标会被系统兜给左侧导航栏、再被补偿钉到标签上
+    val tvInitialFocus = rememberTvInitialFocus()
+    Box(modifier = Modifier.fillMaxSize().tvInitialFocus(tvInitialFocus)) {
     PlaylistModernDetailFrame(
         header = PlaylistModernDetailHeader(
             key = location, headerKey = "server-album-header:$location", title = album.name,
@@ -267,6 +274,7 @@ fun ServerAlbumDetailScreen(
             }
         }
     )
+    }
 }
 
 internal fun serverAlbumDetailKey(album: ServerAlbum): String =

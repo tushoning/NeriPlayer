@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import moe.ouom.neriplayer.ui.tv.tvScrollPane
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.Download
@@ -149,6 +150,9 @@ internal fun MoreOptionsMainContent(
         Modifier
             .bottomSheetScrollGuard { scrollState.value == 0 }
             .verticalScroll(scrollState)
+            // 电视：与百科二级页一致 —— 到底后方向键不把焦点推出去，
+            // 并且把被面板高度截掉的剩余内容滚出来
+            .tvScrollPane(scrollState)
             .padding(bottom = 32.dp)
     ) {
         MoreOptionsGroup {

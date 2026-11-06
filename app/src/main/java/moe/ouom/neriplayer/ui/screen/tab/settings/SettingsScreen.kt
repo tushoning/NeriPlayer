@@ -157,7 +157,7 @@ import moe.ouom.neriplayer.ui.screen.tab.settings.navigation.canNavigateBackFrom
 import moe.ouom.neriplayer.ui.screen.tab.settings.page.SettingsEntryFocus
 import moe.ouom.neriplayer.ui.component.navigation.TvTopBarFocus
 import moe.ouom.neriplayer.navigation.Destinations
-import moe.ouom.neriplayer.ui.tv.TvTabConfirmBus
+import moe.ouom.neriplayer.ui.tv.TvTabRootBus
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -304,8 +304,14 @@ internal fun SettingsScreen(
     // 电视：设置内部的二级页面不是独立路由，切换时路由不会变，Compose 无法自己把
     // 光标还回去。返回设置首页时把光标送还给「刚才点进去的那个入口」（比如「通用」）。
     if (LocalIsTelevision.current) {
+        // 只有「从二级页回到设置首页」才归还光标。
+        // 原来这个 effect 在**首次进入设置页**时也会跑：等两帧后如果拿不到入口焦点就
+        // requestTab —— 用户这时按上键刚把光标移进内容区，就会被硬拽回侧栏的「设置」标签。
+        var previousSettingsPage by remember { mutableStateOf(activeSettingsPage) }
         LaunchedEffect(activeSettingsPage) {
-            if (activeSettingsPage != null) return@LaunchedEffect
+            val previous = previousSettingsPage
+            previousSettingsPage = activeSettingsPage
+            if (previous == null || activeSettingsPage != null) return@LaunchedEffect
             withFrameNanos { }
             withFrameNanos { }
             if (!SettingsEntryFocus.request(SettingsEntryFocus.lastFocusedPage)) {
@@ -317,14 +323,26 @@ internal fun SettingsScreen(
     val homeTopAppBarState = navigation.homeTopAppBarState
     val detailTopAppBarStates = navigation.detailTopAppBarStates
     val detailListStates = navigation.detailListStates
-    // 电视：停在「设置」标签上再按一次确定键 = 回到顶部
-    //（一级页回到设置首页列表顶部，二级页回到当前二级页列表顶部）。
-    // 设置里没有可刷新的远端数据，所以这里只做滚动。
-    LaunchedEffect(listState, detailListStates, activeSettingsPage) {
-        TvTabConfirmBus.events.collect { route ->
+    // 电视：停在「设置」标签上再按一次确定键 = 一级回顶、二级回根。
+    // 设置页没有宿主的「详情态分层」（activeSettingsPage 在本层就能拿到），
+    // 所以直接消费侧栏的请求流。
+    //
+    // key 必须固定：带上 activeSettingsPage 的话，每次进出二级页都会退订再重订，
+    // SharedFlow 没有 replay，中间那一拍的事件会丢；而且 collect 里改 activePage
+    // 会让 effect 重启，后续挂起的 scrollToItem 会被取消。
+    LaunchedEffect(Unit) {
+        TvTabRootBus.requests.collect { route ->
             if (route != Destinations.Settings.route) return@collect
-            val target = activeSettingsPage?.let { detailListStates[it] } ?: listState
-            runCatching { target.scrollToItem(0) }
+            val page = navigation.activePage
+            if (page == null) {
+                listState.requestScrollToItem(0)
+            } else {
+                // 否则「回到入口那一行」的焦点归还会把列表又拽回底部，和回顶打架
+                SettingsEntryFocus.clearLastFocused()
+                navigation.navigateToRoot()
+                detailListStates[page]?.requestScrollToItem(0)
+                listState.requestScrollToItem(0)
+            }
         }
     }
     val settingsHighlightTargetId by navigation.highlightTargetState

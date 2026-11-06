@@ -47,7 +47,11 @@ import moe.ouom.neriplayer.data.local.media.displayArtist
 import moe.ouom.neriplayer.data.local.media.displayName
 import moe.ouom.neriplayer.ui.component.playback.NowPlayingSongTitle
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
 
 internal data class NowPlayingTrackDisplay(
     val name: String?,
@@ -69,6 +73,16 @@ internal enum class NowPlayingTrackIdentityLayout {
     Compact,
     LargeCover
 }
+
+/** 歌手名焦点环：单行文字做成胶囊，和顶部标签栏一致（半径 = 节点高 / 2） */
+private val ArtistFocusRingRadius = 16.dp
+/**
+ * 环画在节点内侧，靠内边距给文字留气口。
+ * 左右对称、各 10dp —— 不再像之前那样左右各塞 12dp 把框拉成窄扁长条。
+ */
+private val ArtistFocusHorizontalPadding = 10.dp
+/** 上下内边距。导出给播放页的「歌名/歌手名固定高度槽位」算高度用 */
+internal val NowPlayingArtistFocusVerticalPadding = 4.dp
 
 internal fun resolveNowPlayingTrackIdentityPresentation(
     layout: NowPlayingTrackIdentityLayout,
@@ -231,6 +245,27 @@ private fun NowPlayingTrackArtist(
     artistStyle: TextStyle
 ) {
     // 歌手名的焦点要保留（点了能进歌手页），歌名才是纯展示
+    //
+    // 电视：焦点环原来传 4dp 圆角 + 左右各 12dp 的横向 padding，画出来是个窄扁方框，
+    // 和简洁风格（顶部标签栏那种胶囊）完全不搭。现在节点改成紧凑的胶囊：
+    // 半径 16dp、上下 4dp / 左右 10dp，节点高约 32dp，宽度就是文字宽 + 20dp。
+    val artistRing = rememberTvFocusRingIndication(
+        radius = ArtistFocusRingRadius,
+        cleanRadiusBoost = 0.dp
+    )
+    val artistClickable = if (artistRing != null) {
+        Modifier.combinedClickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = artistRing,
+            onClick = onArtistClick,
+            onLongClick = owner.openArtistMenuAction
+        )
+    } else {
+        Modifier.combinedClickable(
+            onClick = onArtistClick,
+            onLongClick = owner.openArtistMenuAction
+        )
+    }
     Box {
         Text(
             text = displayArtist.orEmpty(),
@@ -240,8 +275,12 @@ private fun NowPlayingTrackArtist(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier
                 .nowPlayingArtistSharedModifier(sharedTransitionScope, animatedVisibilityScope)
-                .clip(RoundedCornerShape(8.dp))
-                .combinedClickable(onClick = onArtistClick, onLongClick = owner.openArtistMenuAction)
+                .clip(RoundedCornerShape(ArtistFocusRingRadius))
+                .then(artistClickable)
+                .padding(
+                    horizontal = ArtistFocusHorizontalPadding,
+                    vertical = NowPlayingArtistFocusVerticalPadding
+                )
         )
         NowPlayingArtistCopyMenu(displayArtist, owner)
     }

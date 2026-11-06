@@ -43,6 +43,10 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -55,9 +59,11 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.safeDrawing
@@ -92,6 +98,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
+import moe.ouom.neriplayer.ui.navigation.TvContentEdgeInset
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
@@ -188,6 +195,7 @@ import moe.ouom.neriplayer.ui.screen.nowplaying.cover.NowPlayingCoverToolbarStat
 import moe.ouom.neriplayer.ui.screen.nowplaying.cover.NowPlayingCoverTopBar
 import moe.ouom.neriplayer.ui.screen.nowplaying.cover.NowPlayingCoverBackButton
 import moe.ouom.neriplayer.ui.screen.nowplaying.cover.NowPlayingCoverTopActions
+import moe.ouom.neriplayer.ui.screen.nowplaying.cover.NowPlayingCoverMoreButton
 import moe.ouom.neriplayer.ui.screen.nowplaying.cover.resolveNowPlayingPhoneTopActionButtonSize
 import moe.ouom.neriplayer.ui.screen.nowplaying.cover.resolveNowPlayingLyricsToolbarAction
 import moe.ouom.neriplayer.ui.screen.nowplaying.cover.NowPlayingEmbeddedLyricStyle
@@ -215,7 +223,6 @@ import moe.ouom.neriplayer.ui.screen.playback.resolveListenTogetherProgressSeekE
 import moe.ouom.neriplayer.util.media.saveCoverToPictures
 import kotlin.time.Duration.Companion.milliseconds
 import moe.ouom.neriplayer.ui.screen.host.rememberHostPredictiveBackTransition
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -306,11 +313,15 @@ internal fun resolvePlaybackActionToolbarLayout(
     availableWidth: Dp,
     preferredHorizontalPadding: Dp,
     defaultIconSize: Dp,
-    preferredMinimumTouchTarget: Dp = PlaybackActionToolbarMinimumTouchTarget
+    preferredMinimumTouchTarget: Dp = PlaybackActionToolbarMinimumTouchTarget,
+    // 电视版把收藏/评论并进这一排、又拿掉歌词，槽位数量随之变化，
+    // 写死 5 会把每格宽度算大一圈，最后挤成溢出
+    itemCount: Int = PlaybackActionToolbarItemCount
 ): PlaybackActionToolbarLayout {
+    val slots = itemCount.coerceAtLeast(1)
     val minimumTouchTarget = preferredMinimumTouchTarget.coerceAtLeast(0.dp)
     val preferredSlotWidth = (
-            (availableWidth - preferredHorizontalPadding * 2) / PlaybackActionToolbarItemCount
+            (availableWidth - preferredHorizontalPadding * 2) / slots
             ).coerceAtLeast(0.dp)
     if (preferredSlotWidth >= minimumTouchTarget) {
         return PlaybackActionToolbarLayout(
@@ -321,7 +332,7 @@ internal fun resolvePlaybackActionToolbarLayout(
         )
     }
 
-    val compactSlotWidth = (availableWidth / PlaybackActionToolbarItemCount).coerceAtLeast(0.dp)
+    val compactSlotWidth = (availableWidth / slots).coerceAtLeast(0.dp)
     return PlaybackActionToolbarLayout(
         horizontalPadding = 0.dp,
         minimumInteractiveComponentSize = minOf(
@@ -1102,7 +1113,8 @@ fun NowPlayingScreen(
         phoneLandscape = phoneLandscape,
         wideLandscape = useWideLandscapeLayout,
         compactWideLayout = windowWidthDp < 720.dp,
-        compactPortrait = useCompactPortraitLayout
+        compactPortrait = useCompactPortraitLayout,
+        isTelevision = tvDeviceForFocus
     )
     // 电视：无条件走低功耗歌词渲染（见 LyricsScreen 同名开关）
     val tvLyricsLowPower = LocalIsTelevision.current
@@ -1190,13 +1202,37 @@ fun NowPlayingScreen(
             val rememberedCoverFlight = rememberNowPlayingLyricsCoverFlight(
                 lyricsTransition, predictiveBackPreviewActive = lyricsPredictiveBackPreviewActive
             )
+            // 电视以前为了压掉「进出歌词页时封面乱飞」把这里设成了 null，
+            // 副作用是连进播放页那一下的封面收缩动画也一起没了。歌词页已经不会再出现，
+            // 这里恢复正常的飞行。
             val coverFlight = if (standaloneLyricsOnlyInPortrait) null else rememberedCoverFlight
             SharedTransitionLayout {
+                // 电视：整段共享元素都不参与。
+                //   · 封面飞行（coverFlight）——手机上是「封面从播放页飞进歌词页顶部」，
+                //     在 16:9 横屏电视上起点和终点位置完全对不上，看起来就是「乱飞」；
+                //   · sharedElement / sharedBounds —— 由 LyricsScreen 内部注册，同样会飞。
+                // 传 null 之后 LyricsScreen 里所有共享元素分支都不会生效（它本身已判空）。
                 Box(modifier = Modifier.fillMaxSize()) {
                     lyricsTransition.AnimatedContent(
                         transitionSpec = {
-                            // 电视：封面飞行 + 整页尺寸变换是最贵的一段动画，直接瞬切
-                            if (TvPerf.reduceMotion) {
+                            if (tvDeviceForFocus) {
+                                // 电视：一次方向明确的「滑 + 淡」，不再瞬移、也不乱飞。
+                                // 进歌词页＝歌词从下方淡入、播放页向上淡出；返回时整体反向。
+                                // 位移只取屏高的 1/14 —— 能看出「上来了」，但不会整页平移。
+                                val forward = targetState
+                                val offset = { full: Int -> full / 14 }
+                                if (forward) {
+                                    (fadeIn(tween(220, easing = FastOutSlowInEasing)) +
+                                        slideInVertically(tween(220, easing = FastOutSlowInEasing)) { offset(it) }) togetherWith
+                                        (fadeOut(tween(180, easing = FastOutSlowInEasing)) +
+                                            slideOutVertically(tween(180, easing = FastOutSlowInEasing)) { -offset(it) })
+                                } else {
+                                    (fadeIn(tween(220, easing = FastOutSlowInEasing)) +
+                                        slideInVertically(tween(220, easing = FastOutSlowInEasing)) { -offset(it) }) togetherWith
+                                        (fadeOut(tween(180, easing = FastOutSlowInEasing)) +
+                                            slideOutVertically(tween(180, easing = FastOutSlowInEasing)) { offset(it) })
+                                }
+                            } else if (TvPerf.reduceMotion) {
                                 EnterTransition.None togetherWith ExitTransition.None
                             } else {
                                 (fadeIn(
@@ -1213,7 +1249,11 @@ fun NowPlayingScreen(
                             }
                         }
                     ) { isLyricsMode ->
-                        if (shouldUseStandaloneNowPlayingLyricsPage(isLyricsMode, standaloneLyricsOnlyInPortrait)) {
+                        // 电视：歌词常驻右栏，不再有「翻到歌词页」这件事 ——
+                        // 即使 showLyricsScreen 被别处推成 true，也留在播放页。
+                        if (!tvDeviceForFocus &&
+                            shouldUseStandaloneNowPlayingLyricsPage(isLyricsMode, standaloneLyricsOnlyInPortrait)
+                        ) {
                             // 歌词全屏页面
                             LyricsScreen(
                                 lyrics = lyrics,
@@ -1245,8 +1285,11 @@ fun NowPlayingScreen(
                                 lyricOffsetMs = totalOffset,
                                 showLyricTranslation = showLyricTranslation,
                                 lyricTranslationUsePhonetic = lyricTranslationUsePhonetic,
-                                sharedTransitionScope = this@SharedTransitionLayout,
-                                animatedContentScope = this@AnimatedContent,
+                                // 电视：歌词页不参与共享元素转场（封面飞行 + 尺寸变换在
+                                // 16:9 横屏上和播放页的位置完全对不上，看着就是「乱飞」）。
+                                // 传 null 后 LyricsScreen 内部所有 sharedElement 分支都不生效。
+                                sharedTransitionScope = if (tvDeviceForFocus) null else this@SharedTransitionLayout,
+                                animatedContentScope = if (tvDeviceForFocus) null else this@AnimatedContent,
                                 coverFlight = coverFlight,
                                 offlineMode = offlineMode,
                                 lyricsAdjustBehavior = lyricsAdjustBehavior,
@@ -1294,11 +1337,25 @@ fun NowPlayingScreen(
                                 isLyricsMode -> { { onShowLyricsScreenChange(false) } }
                                 else -> onNavigateUp
                             }
-                            val horizontalPadding = pageSidePaddingOr(if (isLandscape) 16.dp else 20.dp)
+                            // 电视：播放页是整屏浮层，绕过了 AppAdaptiveNavigationContent 的
+                            // 左右留白（左侧栏 + 右留白），这里自己补一条同宽的边距，
+                            // 内容才和其它页面落在同一条竖线上。背景层不动，仍是满屏铺底。
+                            val horizontalPadding = if (LocalIsTelevision.current) {
+                                TvContentEdgeInset
+                            } else {
+                                pageSidePaddingOr(if (isLandscape) 16.dp else 20.dp)
+                            }
                             val verticalPadding = if (isLandscape) 8.dp else 12.dp
+                            // 电视不吃横向 safeDrawing：overscan 机型会把它叠到上面的 55dp 上，
+                            // 变成双倍左边距（AppNavigationScaffold 对电视的策略也是关掉的）
+                            val safeDrawingInsets = if (LocalIsTelevision.current) {
+                                WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical)
+                            } else {
+                                WindowInsets.safeDrawing
+                            }
                             var contentModifier = Modifier
                                 .fillMaxSize()
-                                .windowInsetsPadding(WindowInsets.safeDrawing)
+                                .windowInsetsPadding(safeDrawingInsets)
                                 .padding(horizontal = horizontalPadding, vertical = verticalPadding)
                                 .pointerInput(Unit) {
                                     detectVerticalDragGestures { _, dragAmount -> if (dragAmount > 60) onNavigateUp() }
@@ -1533,14 +1590,16 @@ fun NowPlayingScreen(
                                         .zIndex(1f),
                                     modifier = Modifier
                                         .fillMaxWidth(),
-                                    // 电视：进度条上按「上」，光标落到右上角的红心（收藏），
-                                    // 而不是跳到左栏的封面上。
-                                    seekModifier = if (LocalIsTelevision.current) {
-                                        Modifier.focusProperties {
-                                            up = TvNowPlayingFocus.favorite
-                                        }
+                                    // 电视版把播控挪到进度条下方、封面挪到上方，原来那条
+                                    // 「进度条按上落到右上角红心」的显式连线已经不成立
+                                    // （红心现在在底部工具栏最左）。这里交回几何搜索：
+                                    // 进度条正上方是封面，按上会自然落过去，也不会误触返回。
+                                    seekModifier = Modifier,
+                                    // 电视：小圆点上按确定＝播放/暂停
+                                    seekConfirmAction = if (LocalIsTelevision.current) {
+                                        { PlayerManager.togglePlayPause() }
                                     } else {
-                                        Modifier
+                                        null
                                     }
                                 )
                             }
@@ -1603,6 +1662,13 @@ fun NowPlayingScreen(
                                     onSwitchPage = { onShowLyricsScreenChange(!showLyricsScreen) }
                                 ),
                                 onAddToPlaylist = { showAddSheet = true },
+                                // 电视：右上角的红心和评论挪进这一排（红心最左、评论最右）
+                                onFavorite = if (tvDeviceForActions) onFavoriteCover else null,
+                                onComment = if (tvDeviceForActions && coverCommentAvailable) {
+                                    onCoverComment
+                                } else {
+                                    null
+                                },
                                 lyricsRequester = if (tvDeviceForActions) {
                                     TvNowPlayingFocus.lyrics
                                 } else {
@@ -1615,6 +1681,16 @@ fun NowPlayingScreen(
                                 },
                                 addToPlaylistRequester = if (tvDeviceForActions) {
                                     TvNowPlayingFocus.addToPlaylist
+                                } else {
+                                    null
+                                },
+                                favoriteRequester = if (tvDeviceForActions) {
+                                    TvNowPlayingFocus.favorite
+                                } else {
+                                    null
+                                },
+                                commentRequester = if (tvDeviceForActions) {
+                                    TvNowPlayingFocus.comment
                                 } else {
                                     null
                                 }
@@ -1694,8 +1770,40 @@ fun NowPlayingScreen(
                                     )
                                 }
                             }
-                            val coverPanel: @Composable (Modifier, Dp?) -> Unit = { modifier, preferredSize ->
-                                NowPlayingCoverPanel(
+                            // 电视专用返回栏。
+                            // 不走 coverBackBar 是因为它拼的是 onPhoneLandscapeBack ?: onNavigateUp，
+                            // 电视本来就该直接退出播放页，中间那层回调只会让「返回」看起来没反应。
+                            val coverTvBackBar: @Composable () -> Unit = {
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().height(nowPlayingTopBarHeight),
+                                    contentAlignment = Alignment.CenterStart
+                                ) {
+                                    NowPlayingCoverBackButton(
+                                        buttonSize = nowPlayingTopActionButtonSize,
+                                        iconSize = nowPlayingTopActionIconSize,
+                                        sharedTransitionScope = this@SharedTransitionLayout,
+                                        animatedVisibilityScope = this@AnimatedContent,
+                                        onNavigateUp = onNavigateUp,
+                                        phoneLandscape = true
+                                    )
+                                }
+                            }
+                            // 电视版右上角只剩「更多」：收藏和评论都挪到下面那排工具按钮里了
+                            val coverTvTopAction: @Composable () -> Unit = {
+                                NowPlayingCoverMoreButton(
+                                    buttonSize = nowPlayingTopActionButtonSize,
+                                    iconSize = nowPlayingTopActionIconSize,
+                                    sharedTransitionScope = this@SharedTransitionLayout,
+                                    animatedVisibilityScope = this@AnimatedContent,
+                                    onMoreOptions = onCoverMoreOptions,
+                                    requester = if (tvDeviceForActions) {
+                                        TvNowPlayingFocus.moreOptions
+                                    } else {
+                                        null
+                                    }
+                                )
+                            }
+                            val coverPanel: @Composable (Modifier, Dp?) -> Unit = { modifier, preferredSize ->                                NowPlayingCoverPanel(
                                     owner = coverOwner,
                                     source = coverSource,
                                     song = currentSong,
@@ -1750,13 +1858,20 @@ fun NowPlayingScreen(
                                         minimumTouchTarget = nowPlayingToolbarMinimumTouchTarget,
                                         compactHeight = compactHeight,
                                         lyricsAdjustBehavior = coverPagePresentation.lyricsAdjustBehavior &&
-                                            !tvDeviceForActions
+                                            !tvDeviceForActions,
+                                        // 电视版歌词常驻右栏、没有独立歌词页了，按钮点了没有去处
+                                        showLyricsButton = !tvDeviceForActions,
+                                        // 电视：6 颗按钮按固定间距居中排，间距和上方 5 颗播控一致
+                                        rowSpacing = if (tvDeviceForActions) NowPlayingTvControlSpacing else null
                                     ),
                                     status = NowPlayingCoverToolbarStatus(
                                         sleepTimerActive = sleepTimerState.isActive,
                                         lyricsAvailable = coverLyricsAvailable,
                                         lyricsShowing = isLyricsMode,
-                                        activeColor = nowPlayingActiveIconColor
+                                        activeColor = nowPlayingActiveIconColor,
+                                        isFavorite = isFavorite,
+                                        favoriteEnabled = localPlaylistsReady,
+                                        commentAvailable = coverCommentAvailable
                                     ),
                                     actions = coverToolbarActions,
                                     sharedTransitionScope = this@SharedTransitionLayout,
@@ -1878,7 +1993,11 @@ fun NowPlayingScreen(
                                     NowPlayingWideLayout(
                                         controlsAtBottom = nowPlayingControlsAtBottom,
                                         progressAtBottom = nowPlayingProgressAtBottom,
-                                        topBar = if (phoneLandscape) coverBackBar else coverTopBar,
+                                        topBar = when {
+                                            tvDeviceForFocus -> coverTvBackBar
+                                            phoneLandscape -> coverBackBar
+                                            else -> coverTopBar
+                                        },
                                         cover = { modifier -> coverPanel(modifier, 420.dp) },
                                         identity = trackIdentity,
                                         progress = nowPlayingProgressSection,
@@ -1887,7 +2006,11 @@ fun NowPlayingScreen(
                                         lyrics = wideLyricsContent,
                                         modifier = Modifier.fillMaxSize(),
                                         phoneLandscape = phoneLandscape,
-                                        phoneTopActions = coverTopActions
+                                        phoneTopActions = coverTopActions,
+                                        // 电视左栏的进度条/播控/工具栏间隙由这个间距推导，
+                                        // 所以它会跟着设置里的播放控件大小一起缩放
+                                        controlSpacing = controlButtonSpacing,
+                                        tvTopAction = coverTvTopAction
                                     )
                                 }
                             } else if (tabletPortrait) {

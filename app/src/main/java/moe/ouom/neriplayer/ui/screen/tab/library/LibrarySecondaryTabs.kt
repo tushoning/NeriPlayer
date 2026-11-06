@@ -23,8 +23,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import moe.ouom.neriplayer.ui.haptic.performHapticFeedback
 import moe.ouom.neriplayer.ui.tv.tvClampRowEnds
+import moe.ouom.neriplayer.ui.tv.tvRowStart
 import moe.ouom.neriplayer.ui.tv.tvFocusRing
-import moe.ouom.neriplayer.ui.tv.tvFocusGate
 import androidx.compose.ui.unit.dp
 import moe.ouom.neriplayer.ui.component.common.CleanSegmentedTabs
 import moe.ouom.neriplayer.ui.effect.glass.AdvancedGlassRole
@@ -60,7 +60,6 @@ internal fun LibrarySecondaryTabs(
             .fillMaxWidth()
             // 横向边距由外面的列表 contentPadding 提供（媒体库各页是 pageSidePaddingOr(8dp)），
             // 这里再加一层会变成两层叠加 —— 标签行就比下面的内容短一截
-            .tvFocusGate()
             .padding(vertical = 6.dp)
             .clip(LibrarySecondaryTabShape),
         shape = LibrarySecondaryTabShape,
@@ -79,6 +78,7 @@ internal fun LibrarySecondaryTabs(
                     // 电视：走到这一行两端就停住（否则按左会跳到上面的主标签栏/内容里）；
                     // 焦点框以前是默认指示器（看不清），这里补一个胶囊环
                     modifier = Modifier
+                        .tvRowStart(index == 0)
                         .tvClampRowEnds(index, labels.lastIndex)
                         .tvFocusRing(color = MaterialTheme.colorScheme.primary),
                     onClick = { onSelected(index) },

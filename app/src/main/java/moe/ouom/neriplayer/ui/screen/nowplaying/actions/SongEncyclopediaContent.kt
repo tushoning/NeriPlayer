@@ -67,6 +67,7 @@ import moe.ouom.neriplayer.data.model.comments.CommentSource
 import moe.ouom.neriplayer.data.model.comments.CommentPlatform
 import moe.ouom.neriplayer.platform.comments.resolveCommentSource
 import moe.ouom.neriplayer.ui.component.sheet.HalfExpandableSheetPanel
+import moe.ouom.neriplayer.ui.tv.TvInputTrace
 import moe.ouom.neriplayer.ui.tv.tvScrollPane
 import moe.ouom.neriplayer.ui.theme.NeriDesign
 import moe.ouom.neriplayer.ui.viewmodel.tab.PlaylistSummary
@@ -228,7 +229,13 @@ private fun SongEncyclopediaHeader(
         IconButton(
             onClick = onDismiss,
             modifier = Modifier.onFocusChanged { focus ->
-                if (focus.isFocused && contentScrollState.value > 0) {
+                // 只有用户自己按上键走过来时才回顶。
+                // 焦点若是因为方向搜索的兜底被"跳"到这一格，页面跟着瞬移回顶部，
+                // 看起来就是「按到底又回到了开头」。
+                if (focus.isFocused &&
+                    contentScrollState.value > 0 &&
+                    TvInputTrace.movedUpRecently()
+                ) {
                     // 瞬时到位：用动画的话，光标紧接着按下会被焦点项的 bringIntoView
                     // 抢一次滚动，看起来就是页面先升上去、又降下来抖一下。
                     headerScope.launch {

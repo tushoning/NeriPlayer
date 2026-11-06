@@ -95,13 +95,29 @@ fun rememberIsTelevision(): Boolean {
  * 非电视环境返回 null，什么都不做，手机逻辑完全不受影响。
  */
 @Composable
-fun rememberTvInitialFocus(delayFrames: Int = 0): FocusRequester? {
+fun rememberTvInitialFocus(
+    delayFrames: Int = 0,
+    /**
+     * 页面自己已经有别的抢焦点入口时传 false。
+     *
+     * 典型场景：详情页的搜索框（`showSearch` 是持久化的），重新进入时搜索框会自己 requestFocus。
+     * 这时如果初始焦点也在跑 60 帧重试，两边会互相把光标拽来拽去。
+     */
+    enabled: Boolean = true
+): FocusRequester? {
     if (!LocalIsTelevision.current) return null
     val requester = remember { FocusRequester() }
+    val currentEnabled by rememberUpdatedState(enabled)
     LaunchedEffect(requester) {
+        if (!currentEnabled) return@LaunchedEffect
         repeat(delayFrames) { withFrameNanos { } }
-        // 窗口/布局要过几帧才真正挂上节点，失败就下一帧再试，最多试 20 帧
-        repeat(20) {
+        // 窗口/布局要过几帧才真正挂上节点，失败就下一帧再试。
+        //
+        // 原来只试 20 帧（约 330ms）。歌单 / 歌手页首帧可能整个还是加载态，一帧可聚焦节点
+        // 都没有，20 帧一过这里就放弃了 —— 而焦点已经在那之前被系统塞给了树里第一个
+        // 可聚焦元素（左侧导航栏的「播放」），表现就是「偶尔一进歌单光标就跑到侧栏上」。
+        // 拉到 60 帧（约 1 秒）把这个窗口盖住；每帧只有一次 requestFocus，开销可以忽略。
+        repeat(60) {
             if (runCatching { requester.requestFocus() }.getOrDefault(false)) {
                 return@LaunchedEffect
             }

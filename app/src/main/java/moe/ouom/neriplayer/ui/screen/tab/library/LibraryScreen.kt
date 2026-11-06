@@ -66,6 +66,7 @@ import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -443,7 +444,10 @@ fun LibraryScreen(
         }
 
         Card(
-            shape = neriRoundedShape(16.dp),
+            // 电视上不裁圆角：这张卡是全透明的（containerColor alpha 0）、elevation 0，
+            // 圆角只影响裁剪。而标签行紧贴卡的上沿、左端又在 x=0，16dp 圆角会把
+            // 「最近播放」焦点框的左上角切掉一块。
+            shape = if (isTelevision) RectangleShape else neriRoundedShape(16.dp),
             colors = CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0f)
             ),

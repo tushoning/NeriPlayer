@@ -62,7 +62,17 @@ internal data class NowPlayingCoverToolbarLayoutSpec(
     val iconSize: Dp,
     val minimumTouchTarget: Dp,
     val compactHeight: Boolean = false,
-    val lyricsAdjustBehavior: Boolean = wideLandscape
+    val lyricsAdjustBehavior: Boolean = wideLandscape,
+    /**
+     * 电视版播放页歌词常驻右栏、没有独立歌词页了，歌词按钮点了没有去处，
+     * 所以整颗隐藏掉；手机/平板保持原样。
+     */
+    val showLyricsButton: Boolean = true,
+    /**
+     * 指定后按钮按固定间距居中排列，而不是 SpaceEvenly 摊满整行。
+     * 电视版用它把这排 6 颗按钮的间距对齐到上方 5 颗播控的间距。
+     */
+    val rowSpacing: Dp? = null
 )
 
 internal fun resolveNowPlayingCoverToolbarLayoutSpec(
@@ -72,7 +82,9 @@ internal fun resolveNowPlayingCoverToolbarLayoutSpec(
     iconSize: Dp,
     minimumTouchTarget: Dp,
     compactHeight: Boolean,
-    lyricsAdjustBehavior: Boolean = wideLandscape
+    lyricsAdjustBehavior: Boolean = wideLandscape,
+    showLyricsButton: Boolean = true,
+    rowSpacing: Dp? = null
 ): NowPlayingCoverToolbarLayoutSpec = NowPlayingCoverToolbarLayoutSpec(
     wideLandscape = wideLandscape,
     compactPortrait = compactPortrait,
@@ -81,14 +93,21 @@ internal fun resolveNowPlayingCoverToolbarLayoutSpec(
     iconSize = iconSize,
     minimumTouchTarget = minimumTouchTarget,
     compactHeight = compactHeight,
-    lyricsAdjustBehavior = lyricsAdjustBehavior
+    lyricsAdjustBehavior = lyricsAdjustBehavior,
+    showLyricsButton = showLyricsButton,
+    rowSpacing = rowSpacing
 )
 
 internal data class NowPlayingCoverToolbarStatus(
     val sleepTimerActive: Boolean,
     val lyricsAvailable: Boolean,
     val lyricsShowing: Boolean,
-    val activeColor: Color
+    val activeColor: Color,
+    /** 电视：收藏被挪进工具栏最左侧，状态由这里带进来 */
+    val isFavorite: Boolean = false,
+    val favoriteEnabled: Boolean = true,
+    /** 电视：评论被挪进工具栏最右侧，没有评论源时整颗按钮不出现 */
+    val commentAvailable: Boolean = false
 )
 
 internal data class NowPlayingCoverToolbarActions(
@@ -97,12 +116,20 @@ internal data class NowPlayingCoverToolbarActions(
     val onSpeedPitch: () -> Unit,
     val onLyrics: () -> Unit,
     val onAddToPlaylist: () -> Unit,
+    /** 非 null 时在工具栏最左侧插入收藏（电视版把右上角的红心挪下来） */
+    val onFavorite: (() -> Unit)? = null,
+    /** 非 null 时在工具栏最右侧插入评论 */
+    val onComment: (() -> Unit)? = null,
     /** 电视：歌词页/歌词相关面板关掉后，光标要还回这个按钮 */
     val lyricsRequester: FocusRequester? = null,
     /** 电视：播放队列面板关掉后，光标要还回这个按钮 */
     val queueRequester: FocusRequester? = null,
     /** 电视：添加到歌单面板关掉后，光标要还回这个按钮 */
-    val addToPlaylistRequester: FocusRequester? = null
+    val addToPlaylistRequester: FocusRequester? = null,
+    /** 电视：收藏面板(收藏成功提示)关掉后光标还回这里 */
+    val favoriteRequester: FocusRequester? = null,
+    /** 电视：评论面板关掉后，光标要还回这个按钮 */
+    val commentRequester: FocusRequester? = null
 )
 
 internal fun resolveNowPlayingLyricsToolbarAction(
@@ -154,8 +181,16 @@ internal fun toolbarRowVerticalPadding(spec: NowPlayingCoverToolbarLayoutSpec): 
 internal fun toolbarRowArrangement(
     layout: PlaybackActionToolbarLayout,
     spec: NowPlayingCoverToolbarLayoutSpec
-): Arrangement.Horizontal = if (layout.useEqualWidthSlots) Arrangement.Start
-else toolbarSpacedArrangement(spec)
+): Arrangement.Horizontal {
+    if (layout.useEqualWidthSlots) return Arrangement.Start
+    // 指定了行内间距就居中按固定间距排，别摊满（电视要和上方播控对齐）
+    val spacing = spec.rowSpacing
+    return if (spacing != null) {
+        Arrangement.spacedBy(spacing, Alignment.CenterHorizontally)
+    } else {
+        toolbarSpacedArrangement(spec)
+    }
+}
 
 private fun toolbarSpacedArrangement(spec: NowPlayingCoverToolbarLayoutSpec): Arrangement.Horizontal =
     if (spec.wideLandscape || spec.docked) Arrangement.SpaceEvenly else Arrangement.SpaceBetween
@@ -233,6 +268,26 @@ private fun NowPlayingCoverToolbarDock(
     }
 }
 
+/**
+ * 这一排眼下到底有几颗按钮。
+ *
+ * 默认的 5 颗是「队列 / 定时 / 倍速 / 歌词 / 加歌单」；电视版拿掉歌词、
+ * 两头各加收藏和评论，所以槽位宽度必须按实际数量算，否则会算大。
+ */
+internal fun resolveNowPlayingCoverToolbarItemCount(
+    spec: NowPlayingCoverToolbarLayoutSpec,
+    status: NowPlayingCoverToolbarStatus,
+    actions: NowPlayingCoverToolbarActions
+): Int {
+    var count = NowPlayingCoverToolbarDefaultItemCount
+    if (!spec.showLyricsButton) count -= 1
+    if (actions.onFavorite != null) count += 1
+    if (actions.onComment != null && status.commentAvailable) count += 1
+    return count.coerceAtLeast(1)
+}
+
+internal const val NowPlayingCoverToolbarDefaultItemCount = 5
+
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 private fun NowPlayingCoverToolbarContent(
@@ -248,7 +303,8 @@ private fun NowPlayingCoverToolbarContent(
                 availableWidth = maxWidth,
                 preferredHorizontalPadding = toolbarPreferredPadding(spec),
                 defaultIconSize = spec.iconSize,
-                preferredMinimumTouchTarget = spec.minimumTouchTarget
+                preferredMinimumTouchTarget = spec.minimumTouchTarget,
+                itemCount = resolveNowPlayingCoverToolbarItemCount(spec, status, actions)
             )
         CompositionLocalProvider(
             LocalMinimumInteractiveComponentSize provides layout.minimumInteractiveComponentSize
@@ -277,6 +333,19 @@ private fun NowPlayingCoverToolbarRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         val buttonModifier = Modifier.toolbarActionModifier(layout.useEqualWidthSlots, this)
+        // 电视版把右上角的红心挪到这一排的最左侧
+        actions.onFavorite?.let { onFavorite ->
+            NowPlayingFavoriteButton(
+                isFavorite = status.isFavorite,
+                enabled = status.favoriteEnabled,
+                buttonSize = layout.minimumInteractiveComponentSize,
+                iconSize = layout.iconSize,
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
+                onClick = onFavorite,
+                requester = actions.favoriteRequester
+            )
+        }
         NowPlayingCoverToolbarButton(
             "btn_queue", Icons.AutoMirrored.Outlined.QueueMusic, stringResource(CoreCommonR.string.playlist_queue),
             layout.iconSize,
@@ -302,31 +371,48 @@ private fun NowPlayingCoverToolbarRow(
             layout.iconSize, buttonModifier, sharedTransitionScope, animatedVisibilityScope,
             actions.onSpeedPitch, LocalContentColor.current
         )
-        NowPlayingCoverLyricsButton(
-            status, layout.iconSize,
-            if (actions.lyricsRequester != null) {
-                buttonModifier.focusRequester(actions.lyricsRequester)
-            } else {
-                buttonModifier
-            },
-            sharedTransitionScope,
-            animatedVisibilityScope, actions.onLyrics, spec.lyricsAdjustBehavior
-        )
+        if (spec.showLyricsButton) {
+            NowPlayingCoverLyricsButton(
+                status, layout.iconSize,
+                if (actions.lyricsRequester != null) {
+                    buttonModifier.focusRequester(actions.lyricsRequester)
+                } else {
+                    buttonModifier
+                },
+                sharedTransitionScope,
+                animatedVisibilityScope, actions.onLyrics, spec.lyricsAdjustBehavior
+            )
+        }
         NowPlayingCoverToolbarButton(
             "btn_add", Icons.AutoMirrored.Outlined.PlaylistAdd, stringResource(CoreCommonR.string.playlist_add_to),
             layout.iconSize,
             if (actions.addToPlaylistRequester != null) {
                 buttonModifier
                     .focusRequester(actions.addToPlaylistRequester)
-                    // 电视：按右键直接落到右边那排最左的「随机播放」。
+                    // 电视旧版：左排最右的「添加到歌单」按右键直接落到右栏最左的「随机播放」。
                     // 不显式连的话，方向搜索会挑中横跨整个右栏的进度条。
-                    .focusProperties { right = TvNowPlayingFocus.shuffle }
+                    // 新版把播控挪到了同一列的上方，这条横线不再成立，交给几何搜索。
+                    .focusProperties {
+                        if (actions.onComment == null) right = TvNowPlayingFocus.shuffle
+                    }
             } else {
                 buttonModifier
             },
             sharedTransitionScope, animatedVisibilityScope,
             actions.onAddToPlaylist, LocalContentColor.current
         )
+        // 电视版把右上角的评论挪到这一排的最右侧
+        actions.onComment?.let { onComment ->
+            NowPlayingCommentButton(
+                available = status.commentAvailable,
+                buttonSize = layout.minimumInteractiveComponentSize,
+                iconSize = layout.iconSize,
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
+                onClick = onComment,
+                requester = actions.commentRequester
+            )
+        }
     }
 }
 

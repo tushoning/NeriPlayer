@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
+import moe.ouom.neriplayer.ui.tv.rememberTvDeferredImage
 import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -86,50 +87,45 @@ internal fun LazyGridScope.addBiliMusicRankSection(
     val hasContent = state.songs.isNotEmpty()
     if (!hasContent && !state.loading && state.error == null) return
 
+    // 标题行和卡片横条放在**同一个 item** 里。
+    //
+    // 分成两个 item 时，焦点站在 chip 上按「下」，下面那个 item 如果还没进组合
+    // （懒加载网格只组合视口附近的 item），方向搜索就找不到任何候选 → 焦点原地不动 →
+    // 页面也不再滚（滚动是由焦点 bring-into-view 触发的）→ 长按一直卡在 chip 上；
+    // 反过来从卡片往上也一样。合成一个 item 之后 chip 和卡片永远同时存在。
     item(
-        key = registerKey("home:biliMusic:rank:header"),
+        key = registerKey("home:biliMusic:rank:section"),
         span = { GridItemSpan(maxLineSpan) }
     ) {
-        BiliMusicSectionHeader(
-            icon = Icons.Outlined.MusicNote,
-            title = stringResource(CoreCommonR.string.home_bili_music_rank),
-            onMoreClick = onMoreClick,
-            typeSelector = {
-                BiliMusicRankTypeSelector(
-                    selected = state.type,
-                    onTypeSelected = onTypeSelected
+        Column {
+            BiliMusicSectionHeader(
+                icon = Icons.Outlined.MusicNote,
+                title = stringResource(CoreCommonR.string.home_bili_music_rank),
+                onMoreClick = onMoreClick,
+                typeSelector = {
+                    BiliMusicRankTypeSelector(
+                        selected = state.type,
+                        onTypeSelected = onTypeSelected
+                    )
+                }
+            )
+
+            when {
+                hasContent -> BiliMusicRankStrip(
+                    state = state,
+                    onPlay = onPlay,
+                    offlineMode = offlineMode
+                )
+
+                state.loading -> BiliMusicSectionLoading(
+                    text = stringResource(CoreCommonR.string.home_loading)
+                )
+
+                else -> BiliMusicSectionError(
+                    detail = state.error?.asString().orEmpty(),
+                    onRetry = onRetry
                 )
             }
-        )
-    }
-
-    when {
-        hasContent -> item(
-            key = registerKey("home:biliMusic:rank:content"),
-            span = { GridItemSpan(maxLineSpan) }
-        ) {
-            BiliMusicRankStrip(
-                state = state,
-                onPlay = onPlay,
-                offlineMode = offlineMode
-            )
-        }
-
-        state.loading -> item(
-            key = registerKey("home:biliMusic:rank:loading"),
-            span = { GridItemSpan(maxLineSpan) }
-        ) {
-            BiliMusicSectionLoading(text = stringResource(CoreCommonR.string.home_loading))
-        }
-
-        else -> item(
-            key = registerKey("home:biliMusic:rank:error"),
-            span = { GridItemSpan(maxLineSpan) }
-        ) {
-            BiliMusicSectionError(
-                detail = state.error?.asString().orEmpty(),
-                onRetry = onRetry
-            )
         }
     }
 }
@@ -151,44 +147,34 @@ internal fun LazyGridScope.addBiliMusicHotSection(
     val hasContent = state.items.isNotEmpty()
     if (!hasContent && !state.loading && state.error == null) return
 
+    // 同榜单区：标题行和横条合成一个 item，避免跨 item 时焦点搜不到候选而卡住。
     item(
-        key = registerKey("home:biliMusic:hot:header"),
+        key = registerKey("home:biliMusic:hot:section"),
         span = { GridItemSpan(maxLineSpan) }
     ) {
-        BiliMusicSectionHeader(
-            icon = Icons.Outlined.LibraryMusic,
-            title = stringResource(CoreCommonR.string.home_bili_music_hot),
-            onMoreClick = onMoreClick
-        )
-    }
-
-    when {
-        hasContent -> item(
-            key = registerKey("home:biliMusic:hot:content"),
-            span = { GridItemSpan(maxLineSpan) }
-        ) {
-            BiliMusicHotStrip(
-                videos = state.items,
-                onPlay = onPlay,
-                offlineMode = offlineMode
+        Column {
+            BiliMusicSectionHeader(
+                icon = Icons.Outlined.LibraryMusic,
+                title = stringResource(CoreCommonR.string.home_bili_music_hot),
+                onMoreClick = onMoreClick
             )
-        }
 
-        state.loading -> item(
-            key = registerKey("home:biliMusic:hot:loading"),
-            span = { GridItemSpan(maxLineSpan) }
-        ) {
-            BiliMusicSectionLoading(text = stringResource(CoreCommonR.string.home_loading))
-        }
+            when {
+                hasContent -> BiliMusicHotStrip(
+                    videos = state.items,
+                    onPlay = onPlay,
+                    offlineMode = offlineMode
+                )
 
-        else -> item(
-            key = registerKey("home:biliMusic:hot:error"),
-            span = { GridItemSpan(maxLineSpan) }
-        ) {
-            BiliMusicSectionError(
-                detail = state.error?.asString().orEmpty(),
-                onRetry = onRetry
-            )
+                state.loading -> BiliMusicSectionLoading(
+                    text = stringResource(CoreCommonR.string.home_loading)
+                )
+
+                else -> BiliMusicSectionError(
+                    detail = state.error?.asString().orEmpty(),
+                    onRetry = onRetry
+                )
+            }
         }
     }
 }
@@ -308,7 +294,9 @@ private fun BiliMusicRankStrip(
     val stripState = rememberLazyListState()
     LazyRow(
         state = stripState,
-        contentPadding = PaddingValues(horizontal = 8.dp),
+        modifier = Modifier.fillMaxWidth(),
+        // vertical 4dp 给外扩的焦点环留空间（和其它分区的横条一致），否则环会被裁掉
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         itemsIndexed(
@@ -365,6 +353,8 @@ private fun BiliMusicRankSongCard(
             offlineMode = offlineMode
         )
     }
+    // 电视：遥控器连续操作期间先不发起新加载（见 rememberTvDeferredImage）
+    val deferredCover = rememberTvDeferredImage(key = thumbnailUrl) { coverRequest }
     // 环半径跟卡片圆角绑定，并且保持「环比卡片圆 4dp」这层关系：
     // 卡片 neriRoundedShape(8.dp) → Material 8dp / 简洁 12dp，环就是 12 / 16。
     // 以前写死 8dp，简洁下靠全局 +8 刚好成了 16，切回 Material 却掉回 8，
@@ -383,7 +373,10 @@ private fun BiliMusicRankSongCard(
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = tvRingIndication,
-                enabled = song.isPlayable,
+                // 不可播放的曲目也保持可聚焦：clickable(enabled = false) 会把这个节点
+                // 从焦点树里摘掉，横条里就出现「焦点洞」，遥控器扫到那儿焦点会卡住不动。
+                // 能不能播由 onClick 里判断（找不到可播条目就直接返回）。
+                enabled = true,
                 onClick = onClick
             )
             .padding(4.dp)
@@ -397,9 +390,10 @@ private fun BiliMusicRankSongCard(
         ) {
             if (thumbnailUrl.isNotBlank()) {
                 AsyncImage(
-                    model = coverRequest,
+                    model = deferredCover.model,
                     contentDescription = song.title,
                     contentScale = ContentScale.Crop,
+                    onSuccess = { deferredCover.markLoaded() },
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -480,7 +474,9 @@ private fun BiliMusicHotStrip(
     val stripState = rememberLazyListState()
     LazyRow(
         state = stripState,
-        contentPadding = PaddingValues(horizontal = 8.dp),
+        modifier = Modifier.fillMaxWidth(),
+        // 同榜单横条：留出焦点环的高度
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         itemsIndexed(
@@ -535,6 +531,8 @@ private fun BiliMusicHotVideoCard(
             offlineMode = offlineMode
         )
     }
+    // 电视：遥控器连续操作期间先不发起新加载（见 rememberTvDeferredImage）
+    val deferredCover = rememberTvDeferredImage(key = thumbnailUrl) { coverRequest }
     // 环半径跟卡片圆角绑定，并且保持「环比卡片圆 4dp」这层关系：
     // 卡片 neriRoundedShape(8.dp) → Material 8dp / 简洁 12dp，环就是 12 / 16。
     // 以前写死 8dp，简洁下靠全局 +8 刚好成了 16，切回 Material 却掉回 8，
@@ -551,7 +549,8 @@ private fun BiliMusicHotVideoCard(
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = tvRingIndication,
-                enabled = video.isPlayable,
+                // 同榜单卡片：保持可聚焦，避免横条里出现焦点洞
+                enabled = true,
                 onClick = onClick
             )
             .padding(4.dp)
@@ -565,9 +564,10 @@ private fun BiliMusicHotVideoCard(
         ) {
             if (thumbnailUrl.isNotBlank()) {
                 AsyncImage(
-                    model = coverRequest,
+                    model = deferredCover.model,
                     contentDescription = video.title,
                     contentScale = ContentScale.Crop,
+                    onSuccess = { deferredCover.markLoaded() },
                     modifier = Modifier.fillMaxSize()
                 )
             }

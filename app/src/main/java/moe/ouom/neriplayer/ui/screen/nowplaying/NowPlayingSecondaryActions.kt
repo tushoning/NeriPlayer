@@ -15,6 +15,7 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -118,7 +119,9 @@ import moe.ouom.neriplayer.ui.screen.host.rememberHostPredictiveBackTransition
 import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 import moe.ouom.neriplayer.ui.tv.tvEdgeScroll
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusTarget
 
 private val NowPlayingFeedbackExtraBottomPadding = 24.dp
 private val EditSongInfoFeedbackControlClearance = 72.dp
@@ -793,11 +796,28 @@ private fun TvMoreOptionsSurface(
         modifier = Modifier
             .fillMaxSize()
             .zIndex(100f)
+            // 电视：把焦点关在这块遮罩里。
+            //
+            // 这一层和下面的播放控件是**同一个窗口、同一个组合**（zIndex 只管绘制顺序），
+            // 没有焦点边界的话，Compose 的方向搜索是全局几何搜索，会把光标直接送进
+            // 被遮住的播放键/进度条上。外层浮层的 onExit 只拦「离开整个浮层」，
+            // 拦不住浮层内部兄弟子树之间的移动。
+            .focusGroup()
+            .focusProperties {
+                // 这一层只当边界用，本身不是可聚焦目标
+                canFocus = false
+                // 想跑出去就原地取消 —— 方向键到面板边缘就停住
+                onExit = { cancelFocusChange() }
+            }
+            .focusTarget()   // 必须：只有真正进焦点树的节点才会收到 onExit 回调
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.52f))
+                // clickable 自带 focusable，不摘掉的话这块全屏遮罩会变成一个
+                // 「有焦点环、什么都没有」的落点。必须写在 clickable 之前。
+                .focusProperties { canFocus = false }
                 .clickable(interactionSource = scrimInteraction, indication = null) {
                     owner.onDismissRequest()
                 }

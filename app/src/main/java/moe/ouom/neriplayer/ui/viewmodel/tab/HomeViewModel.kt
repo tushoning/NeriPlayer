@@ -42,11 +42,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import moe.ouom.neriplayer.common.R as CoreCommonR
 import moe.ouom.neriplayer.platform.netease.api.client.mergeNeteaseSessionCookies
 import moe.ouom.neriplayer.data.model.bilibili.music.BiliMusicHotVideo
@@ -71,6 +73,10 @@ private const val HOME_PRIVATE_FM_MAX_BATCHES = 10
 private const val HOME_MAX_FAILURE_BEFORE_WARNING = 3
 private const val HOME_YT_MUSIC_PLAYLIST_LIMIT = 24
 private const val HOME_INITIAL_LOAD_DEFER_MS = 250L
+/** 首屏两路最多等这么久就继续往下加载，避免某一路挂住把整页拖死 */
+private const val HOME_STAGED_FIRST_SCREEN_TIMEOUT_MS = 6_000L
+/** 分段之间留一点间隔，让屏幕靠上的请求先占住网络槽位 */
+private const val HOME_STAGED_STAGE_GAP_MS = 200L
 private const val HOME_SECTION_LOAD_PARALLELISM = 6
 private const val HOME_SECTION_LOAD_PARALLELISM_PER_GROUP = 2
 
@@ -241,6 +247,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private var playlistJob: Job? = null
     private var hotSongsJob: Job? = null
     private var radarSongsJob: Job? = null
+    private var homeStagedLoadJob: Job? = null
     private val homeSectionLoadCoordinator = HomeSectionLoadCoordinator()
     private var radarPlaylistsJob: Job? = null
     private var ytMusicHomeJob: Job? = null
@@ -492,10 +499,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
             delay(HOME_INITIAL_LOAD_DEFER_MS.milliseconds)
             if (!homeRecommendationsBootstrapped) {
                 homeRecommendationsBootstrapped = true
-                refreshNeteaseHome()
+                startHomeLoadInStages()
+            } else {
+                // 账号变化那条路径已经扇出过一次全量，这里只补 B 站音乐模块
+                loadBiliMusicHome(force = false)
             }
-            // 非国际化首页按保存的开关独立加载 B 站音乐模块
-            loadBiliMusicHome(force = false)
         }
     }
 
@@ -526,6 +534,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         hotSongsJob?.cancel()
         radarSongsJob?.cancel()
         radarPlaylistsJob?.cancel()
+        homeStagedLoadJob?.cancel()
+        homeStagedLoadJob = null
         cancelYouTubeHomeJobs()
         cancelBiliMusicJobs()
     }
@@ -706,6 +716,48 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             )
+        }
+    }
+
+    /**
+     * 首屏优先的首页加载。
+     *
+     * 以前 `refreshNeteaseHome()` 是五路一起扇出（我的推荐 5 组 + 热歌 4 源 + 雷达歌曲 3 源
+     * + 雷达歌单 + B站 2 组），十几个请求同时排进 [HomeSectionLoadCoordinator]。
+     * 结果第一屏真正看得见的那两块（私人雷达、雷达歌单）反而在队列里跟
+     * “滚下去才看得到”的内容抢带宽，首屏迟迟不齐。
+     *
+     * 现在按屏幕顺序分三段，上一段落地才发下一段：
+     *   段 1 = 私人雷达 / 日推 / 私人FM + 雷达歌单（第一屏）
+     *   段 2 = B站音乐榜 + B站热门
+     *   段 3 = 热歌四榜 → 我的推荐
+     *
+     * 注意：这是“首次进入”的策略。用户主动刷新、切账号仍走 [refreshNeteaseHome] 的全量扇出，
+     * 因为那是“我要最新数据”的明确意图，不该被降级。
+     */
+    private fun startHomeLoadInStages() {
+        if (offlineMode) return
+        homeStagedLoadJob?.cancel()
+        homeStagedLoadJob = viewModelScope.launch {
+            // ── 段 1：第一屏 ──
+            refreshRadarSongs()
+            refreshRadarPlaylists()
+            // 等它们都落地；最多等 6 秒 —— 弱网或某一路挂住时，不能让下面永远不加载
+            withTimeoutOrNull(HOME_STAGED_FIRST_SCREEN_TIMEOUT_MS) {
+                listOfNotNull(radarSongsJob, radarPlaylistsJob).joinAll()
+            }
+            if (offlineMode) return@launch
+
+            // ── 段 2：B站音乐榜 / 热门 ──
+            loadBiliMusicHome(force = false)
+            delay(HOME_STAGED_STAGE_GAP_MS)
+
+            // ── 段 3：热歌 → 我的推荐 ──
+            if (offlineMode) return@launch
+            refreshHotSongs()
+            delay(HOME_STAGED_STAGE_GAP_MS)
+            if (offlineMode) return@launch
+            refreshRecommend()
         }
     }
 

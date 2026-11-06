@@ -1,6 +1,7 @@
 package moe.ouom.neriplayer.ui.navigation
 
 import androidx.compose.material3.LocalTextStyle
+import moe.ouom.neriplayer.ui.component.navigation.TvSidebarWidth
 import moe.ouom.neriplayer.ui.component.navigation.cleanSelectedTabIcon
 import moe.ouom.neriplayer.ui.theme.LocalHasCustomBackground
 import moe.ouom.neriplayer.ui.theme.NeriDesign
@@ -58,6 +59,14 @@ import moe.ouom.neriplayer.util.platform.PHONE_SMALLEST_SCREEN_WIDTH_DP
 internal val AppNavigationRailWidth = 96.dp
 private val AppNavigationRailMinWindowWidth = 840.dp
 
+/**
+ * 电视：内容区右侧留白。
+ *
+ * 导航从顶栏改成左侧竖栏后，左边被导航占掉 [TvSidebarWidth]，右边却一点不留，
+ * 内容看着是偏左的。这里把同一宽度补到右边，内容左右边距就对称了。
+ */
+internal val TvContentEdgeInset: Dp = TvSidebarWidth
+
 internal fun shouldUseAppNavigationRail(
     smallestScreenWidthDp: Int,
     availableWidth: Dp
@@ -83,9 +92,17 @@ internal fun AppAdaptiveNavigationContent(
     offlineMode: Boolean,
     railContent: @Composable () -> Unit,
     modifier: Modifier = Modifier,
+    railWidth: Dp = AppNavigationRailWidth,
+    /**
+     * 电视不套 safeDrawing：多数机型该值为 0，个别有 overscan 的会把整块内容往里挤，
+     * 右侧又叠一层留白，不如显式关掉。
+     */
+    applySafeDrawingInsets: Boolean = true,
+    /** 内容区右侧额外留白；电视传 [TvContentEdgeInset]，其它平台传 0 */
+    contentEndPadding: Dp = 0.dp,
     content: @Composable () -> Unit
 ) {
-    val safeModifier = if (useNavigationRail) {
+    val safeModifier = if (useNavigationRail && applySafeDrawingInsets) {
         modifier.windowInsetsPadding(
             WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom)
         )
@@ -95,7 +112,7 @@ internal fun AppAdaptiveNavigationContent(
             // 侧栏由播放覆盖层自然盖住，避免覆盖层入场前突然消失或退出时突然出现
             Box(
                 Modifier
-                    .width(AppNavigationRailWidth)
+                    .width(railWidth)
                     .fillMaxHeight()
                     .focusProperties { canFocus = !showNowPlaying }
                     .pointerInput(showNowPlaying) {
@@ -113,7 +130,12 @@ internal fun AppAdaptiveNavigationContent(
             }
         }
         Column(
-            Modifier.weight(1f).fillMaxHeight().testTag("appNavigationContent")
+            Modifier.weight(1f).fillMaxHeight()
+                .then(
+                    if (contentEndPadding > 0.dp) Modifier.padding(end = contentEndPadding)
+                    else Modifier
+                )
+                .testTag("appNavigationContent")
         ) {
             Box(Modifier.fillMaxWidth().weight(1f)) { content() }
             if (useNavigationRail) {

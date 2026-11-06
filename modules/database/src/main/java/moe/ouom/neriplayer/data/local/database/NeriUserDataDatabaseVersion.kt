@@ -3,6 +3,7 @@ package moe.ouom.neriplayer.data.local.database
 import android.content.Context
 import android.database.DatabaseErrorHandler
 import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteReadOnlyDatabaseException
 import java.io.File
 
 /** 打开 Room 之前对用户数据库文件版本的检查结果 */
@@ -52,10 +53,25 @@ internal fun databaseVersionState(
 // 默认的损坏处理会删除数据库文件，这里只读检查必须保留原文件
 private val keepFileOnCorruption = DatabaseErrorHandler { }
 
-// 通过 SQLite 读取才能看到仍留在 WAL 里、尚未写回主文件的新版本号
-private fun readUserVersionReadOnly(file: File): Int = SQLiteDatabase.openDatabase(
+/**
+ * 通过 SQLite 读取才能看到仍留在 WAL 里、尚未写回主文件的新版本号。
+ *
+ * 只读打开碰上「还有没回滚的热日志」会直接抛 `SQLITE_READONLY_ROLLBACK`：
+ * 进程被强杀（安装覆盖、`am force-stop`）或电视直接断电都会留下这种热日志，
+ * 于是启动前的版本检查永远失败、应用从此打不开。
+ *
+ * 这时改用可写打开 —— SQLite 在 open 阶段把热日志回滚掉，之后照旧只读版本号。
+ * 这一步只为恢复，不建表、不迁移、不写业务数据。
+ */
+private fun readUserVersionReadOnly(file: File): Int = try {
+    openAndReadUserVersion(file, SQLiteDatabase.OPEN_READONLY)
+} catch (needsRollback: SQLiteReadOnlyDatabaseException) {
+    openAndReadUserVersion(file, SQLiteDatabase.OPEN_READWRITE)
+}
+
+private fun openAndReadUserVersion(file: File, openFlags: Int): Int = SQLiteDatabase.openDatabase(
     file.path,
     null,
-    SQLiteDatabase.OPEN_READONLY or SQLiteDatabase.NO_LOCALIZED_COLLATORS,
+    openFlags or SQLiteDatabase.NO_LOCALIZED_COLLATORS,
     keepFileOnCorruption
 ).use { it.version }

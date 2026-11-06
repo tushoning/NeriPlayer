@@ -36,6 +36,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Surface
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -59,6 +60,7 @@ import moe.ouom.neriplayer.data.model.youtube.music.YouTubeMusicCreatorSummary
 import moe.ouom.neriplayer.core.di.AppContainer
 import moe.ouom.neriplayer.data.model.NeteaseArtistSummary
 import moe.ouom.neriplayer.data.model.SongItem
+import moe.ouom.neriplayer.navigation.Destinations
 import moe.ouom.neriplayer.platform.youtube.api.transport.stableYouTubeMusicId
 import moe.ouom.neriplayer.ui.component.navigation.TvTopBarFocus
 import moe.ouom.neriplayer.ui.navigation.animateMainTabDetailCloseRootRevealFraction
@@ -81,6 +83,11 @@ import moe.ouom.neriplayer.ui.viewmodel.tab.AlbumSummary
 import moe.ouom.neriplayer.ui.viewmodel.tab.BiliPlaylist
 import moe.ouom.neriplayer.ui.viewmodel.tab.PlaylistSummary
 import moe.ouom.neriplayer.ui.viewmodel.tab.YouTubeMusicPlaylist
+import moe.ouom.neriplayer.ui.tv.LocalTvReturnDepth
+import moe.ouom.neriplayer.ui.tv.LocalTvReturnScope
+import moe.ouom.neriplayer.ui.tv.TvReturnFocusPageBridge
+import moe.ouom.neriplayer.ui.tv.TvTabConfirmBus
+import moe.ouom.neriplayer.ui.tv.TvTabRootBus
 import moe.ouom.neriplayer.util.media.CoverArtColorCache
 
 // 探索页选中项
@@ -278,6 +285,31 @@ fun ExploreHostScreen(
         pendingTopAppBarHeightOffset = Float.NaN
         pendingTopAppBarContentOffset = Float.NaN
     }
+    // 电视「返回来源」：进详情前记住是哪张卡，退出时把光标送回去。
+    // 放在上面「恢复滚动位置」之后，先滚回视口再请求焦点。
+    // 探索有「创作者 → 其下内容」的层级，深度取场景自带的 navigationDepth。
+    TvReturnFocusPageBridge("explore", depth = selected.navigationDepth)
+    // 电视：侧栏再按一次「探索」= 回到探索根。
+    // 详情态下 ExploreScreen 不在组合里，刷新总线没人收，所以先在这里把「回根」
+    // 翻译成「退出详情 + 清掉残留的滚动恢复标记 + 回顶」；根态才走原来的刷新逻辑。
+    LaunchedEffect(Unit) {
+        TvTabRootBus.requests.collect { route ->
+            if (route != Destinations.Explore.route) return@collect
+            if (selected != null) {
+                cancelPendingNeteaseCoverWarmup()
+                // 先清恢复标记：否则退出详情后会被 pending 的位置又拉回去
+                pendingGridRestoreIndex = null
+                pendingGridRestoreOffset = 0
+                pendingTopAppBarHeightOffset = Float.NaN
+                pendingTopAppBarContentOffset = Float.NaN
+                selected = null
+                gridState.requestScrollToItem(0)
+                searchListState.requestScrollToItem(0)
+            } else {
+                TvTabConfirmBus.request(Destinations.Explore.route)
+            }
+        }
+    }
     val suppressRestoredSceneEntry = rememberMainTabSceneRestoredEntry()
     val detailCloseRootRevealFraction =
         navigationTransition.animateMainTabDetailCloseRootRevealFraction(
@@ -325,7 +357,8 @@ fun ExploreHostScreen(
                 initialDepth = navigationTransition.currentState.navigationDepth,
                 targetDepth = navigationTransition.targetState.navigationDepth
             )
-            val sceneMotion = if (suppressRestoredSceneMotion) {
+            // 电视上场景动效一个像素都不画，但每帧仍会产出新的 SceneMotion 让整棵子树重组
+            val sceneMotion = if (suppressRestoredSceneMotion || tvSkipSceneMotion) {
                 AdvancedGlassSceneMotion.None
             } else {
                 navigationTransition.animateAdvancedGlassSceneMotion(
@@ -341,6 +374,12 @@ fun ExploreHostScreen(
                 sceneMotion.contentScale,
                 current.navigationDepth
             ) {
+                // 电视「返回来源」：卡片只传稳定 key，宿主 + 层级由这里下发。
+                CompositionLocalProvider(
+                    LocalTvReturnScope provides
+                        if (moe.ouom.neriplayer.ui.tv.LocalIsTelevision.current) "explore" else null,
+                    LocalTvReturnDepth provides current.navigationDepth
+                ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     if (current == null) {
                         Box(
@@ -545,6 +584,7 @@ fun ExploreHostScreen(
                             }
                         }
                     }
+                }
                 }
             }
         }

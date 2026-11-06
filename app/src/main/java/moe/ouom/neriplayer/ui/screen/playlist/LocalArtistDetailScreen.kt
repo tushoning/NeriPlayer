@@ -67,6 +67,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
+import moe.ouom.neriplayer.ui.tv.rememberTvInitialFocus
+import moe.ouom.neriplayer.ui.tv.tvInitialFocus
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.layout.ContentScale
@@ -149,9 +151,10 @@ private data class LocalArtistDetailSnapshot(
 @Composable
 private fun LocalArtistDetailLoadingScreen(
     artistName: String,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    Surface(Modifier.fillMaxSize(), color = androidx.compose.ui.graphics.Color.Transparent) {
+    Surface(modifier, color = androidx.compose.ui.graphics.Color.Transparent) {
         Scaffold(
             containerColor = androidx.compose.ui.graphics.Color.Transparent,
             topBar = {
@@ -226,8 +229,15 @@ fun LocalArtistDetailScreen(
         }
     }
     val resolvedArtistSnapshot = artistSnapshot
+    // 电视：进这一页时没人抢焦点，光标会被系统兜给左侧导航栏、再被补偿钉到标签上。
+    // loading 分支也要挂 —— 首帧就是加载态，只挂主分支的话那1 秒内焦点还是会被抢走。
+    val tvInitialFocus = rememberTvInitialFocus()
     if (!localPlaylistsReady || resolvedArtistSnapshot == null) {
-        LocalArtistDetailLoadingScreen(artistName = artistName, onBack = onBack)
+        LocalArtistDetailLoadingScreen(
+            artistName = artistName,
+            onBack = onBack,
+            modifier = Modifier.fillMaxSize().tvInitialFocus(tvInitialFocus)
+        )
         return
     }
 
@@ -337,7 +347,10 @@ fun LocalArtistDetailScreen(
         }
     }
 
-    Surface(Modifier.fillMaxSize(), color = androidx.compose.ui.graphics.Color.Transparent) {
+    Surface(
+        Modifier.fillMaxSize().tvInitialFocus(tvInitialFocus),
+        color = androidx.compose.ui.graphics.Color.Transparent
+    ) {
         Scaffold(
             containerColor = androidx.compose.ui.graphics.Color.Transparent,
             snackbarHost = {

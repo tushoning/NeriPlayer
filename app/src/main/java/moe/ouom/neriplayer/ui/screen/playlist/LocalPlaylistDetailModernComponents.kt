@@ -4,9 +4,12 @@ import moe.ouom.neriplayer.ui.haptic.HapticFeedbackEffect
 import moe.ouom.neriplayer.ui.haptic.performHapticFeedback
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
 import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.TvTuning
 import moe.ouom.neriplayer.ui.tv.tvFocusRing
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
@@ -739,6 +742,14 @@ private fun rememberResolvedPlaylistHeroVisualColors(
         cachedSample = cachedColorSample,
         loadedSample = colorSampleState
     )
+    // 电视上可以用 adb 关掉这里的渐变（`neri_tv_hero_fade 0`）做 A/B：
+    // 渐变期间每一帧都会重建 visualColors 并提供给整棵子树，页头/操作条/超滚动背景
+    // 会逐帧重组约 22 帧，而这段时间正好是页面刚进入、本来就在组合整页的时候。
+    val heroColorSpec: AnimationSpec<Color> = if (TvTuning.heroColorFade) {
+        tween(360, easing = FastOutSlowInEasing)
+    } else {
+        snap()
+    }
     val backgroundColor by animateColorAsState(
         targetValue = Color(
             resolvePlaylistHeroBackgroundArgb(
@@ -747,7 +758,7 @@ private fun rememberResolvedPlaylistHeroVisualColors(
                 isDarkTheme = isDarkTheme
             )
         ),
-        animationSpec = tween(360, easing = FastOutSlowInEasing),
+        animationSpec = heroColorSpec,
         label = "playlist-hero-background"
     )
     val accentColor by animateColorAsState(
@@ -758,12 +769,12 @@ private fun rememberResolvedPlaylistHeroVisualColors(
                 isDarkTheme = isDarkTheme
             )
         ),
-        animationSpec = tween(360, easing = FastOutSlowInEasing),
+        animationSpec = heroColorSpec,
         label = "playlist-hero-accent"
     )
     val readableAccentColor by animateColorAsState(
         targetValue = resolveReadablePlaylistAccentColor(accentColor, isDarkTheme),
-        animationSpec = tween(220, easing = FastOutSlowInEasing),
+        animationSpec = heroColorSpec,
         label = "playlist-readable-accent"
     )
     return PlaylistHeroVisualColors(

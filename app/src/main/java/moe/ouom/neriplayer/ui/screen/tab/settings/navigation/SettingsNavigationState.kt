@@ -144,6 +144,18 @@ internal class SettingsNavigationState(
         activePage = backTarget
     }
 
+    /**
+     * 电视侧栏「再按一次设置标签」：一步回到设置首页。
+     *
+     * 设置页的状态是单值 [activePage] 而不是返回栈，直接置空就从任意深度回根；
+     * 搜索待跳转和高亮必须一起清，否则回首页后会被 pending 又拉进子页。
+     */
+    fun navigateToRoot() {
+        pendingNavigationState.value = null
+        clearHighlight()
+        activePage = null
+    }
+
     fun clearHighlight() {
         highlightTargetState.value = null
     }
