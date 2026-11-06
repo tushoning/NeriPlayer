@@ -1,0 +1,105 @@
+From bf04da18579e6f07d1608bb7e9d7c0d43f6a036f Mon Sep 17 00:00:00 2001
+From: neri-fork <local@neriplayer.fork>
+Date: Sat, 7 Nov 2026 02:21:07 +0800
+Subject: [PATCH] =?UTF-8?q?feat(tv):=20=E5=8C=85=E5=90=8D=E5=90=8E?=
+ =?UTF-8?q?=E7=BC=80=20.debug=20=E2=86=92=20.tv=EF=BC=88moe.ouom.neriplaye?=
+ =?UTF-8?q?r.tv=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 构建变体一直是 tvrelease（R8、不可调试），.debug 只是当初为「覆盖安装旧调试包
+  不丢数据」保留的 applicationIdSuffix；换 aerial 签名后已无意义
+- 一起听邀请 scheme 保持 neriplayer-debug（解析器白名单只认这两个，改要同步改）
+- README / FORK.md / 发版说明同步更新包名
+---
+ .github/workflows/fork-sync.yml |  6 +++++-
+ FORK.md                         | 14 ++++++++------
+ README.md                       |  2 +-
+ app/build.gradle.kts            |  7 ++++++-
+ 4 files changed, 20 insertions(+), 9 deletions(-)
+
+diff --git a/.github/workflows/fork-sync.yml b/.github/workflows/fork-sync.yml
+index ca00eb83..5edb44be 100644
+--- a/.github/workflows/fork-sync.yml
++++ b/.github/workflows/fork-sync.yml
+@@ -205,10 +205,14 @@ jobs:
+ 
+           **电视适配版** NeriPlayer（本 fork 的唯一用途），基于上游 \`${UPSTREAM_SHA}\` 构建。
+ 
+-          - 包名 \`moe.ouom.neriplayer.debug\`（沿用调试包名，可直接覆盖安装，设置和登录态不丢）
++          - 包名 \`moe.ouom.neriplayer.tv\`（独立包名，可与手机版 / 调试版共存）
+           - 签名：aerial
+           - 只含 armeabi-v7a（这台电视是 32 位）
+           - versionName \`${VERSION}\`
++          - 构建变体 \`tvrelease\`（R8 混淆、不可调试，不是 debug 包）
++
++          > 从旧的 \`moe.ouom.neriplayer.debug\` 升级：包名不同，两者会并存。
++          > 先 \`adb uninstall moe.ouom.neriplayer.debug\` 再装，数据不会迁移。
+ 
+           ## 与上游的差异
+ 
+diff --git a/FORK.md b/FORK.md
+index e0bfce9e..3a859344 100644
+--- a/FORK.md
++++ b/FORK.md
+@@ -90,16 +90,18 @@ cat aerial.b64
+ 
+ ### 0.7 电视上装
+ 
+-**第一次必须卸载重装**：以前电视上那个包是 debug 签名，现在换成 aerial 签名，
+-签名不一样不能覆盖安装。
++包名是 **`moe.ouom.neriplayer.tv`**，和电视上原来那个 `moe.ouom.neriplayer.debug`
++是两个不同的应用，可以直接共存安装（不会覆盖、也不会继承旧包的数据）。
++
++建议把旧的卸掉，免得桌面出现两个图标：
+ 
+ ```bash
+-adb uninstall moe.ouom.neriplayer.debug
+-adb install -r NeriPlayer-TV.apk
++adb uninstall moe.ouom.neriplayer.debug   # 卸掉旧的调试包
++adb install -r NeriPlayer-TV.apk          # 装新的 .tv 包
+ ```
+ 
+-卸载会清掉应用数据（歌单缓存、登录态要重来）。之后就都是 aerial 签名了，
+-以后可以直接覆盖安装。
++旧包的数据（歌单缓存、登录态）不会迁移过来，需要重新设置。之后就都是 aerial 签名 +
++`.tv` 包名了，以后可以直接覆盖安装。
+ 
+ ---
+ 
+diff --git a/README.md b/README.md
+index 26b163f8..cc89a737 100644
+--- a/README.md
++++ b/README.md
+@@ -8,7 +8,7 @@
+ > 精简动效与模糊、电视版布局。修改日期 **2026-11-06**，全部改动见
+ > [`patches/tv-fork.diff`](patches/tv-fork.diff)，维护说明见 [`FORK.md`](FORK.md)。
+ >
+-> 只发布电视包（`armeabi-v7a`，包名 `moe.ouom.neriplayer.debug`），**不提供手机版**。
++> 只发布电视包（`armeabi-v7a`，包名 `moe.ouom.neriplayer.tv`），**不提供手机版**。
+ > 手机版请去[上游仓库](https://github.com/cwuom/NeriPlayer/releases)。
+ >
+ > 许可证仍是 **GPL-3.0-or-later**（见 [LICENSE](LICENSE)），修改声明见 [NOTICE](NOTICE)。
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index 3c6580e0..b04db0ca 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -155,11 +155,16 @@ android {
+         // 每次随机生成）和本地包签名不同，电视上根本覆盖安装不了。
+         create("tvrelease") {
+             initWith(getByName("release"))
+-            applicationIdSuffix = ".debug"
++            // 独立包名 moe.ouom.neriplayer.tv：与手机版（moe.ouom.neriplayer）、
++            // 调试版（.debug）都能共存，互不覆盖。
++            // 注意：改后缀 = 换应用，旧包的数据不会迁移过来，装新包前要把旧包卸掉。
++            applicationIdSuffix = ".tv"
+             isDebuggable = false
+             signingConfig =
+                 if (releaseSigningReady) releaseSigningConfig else signingConfigs.getByName("debug")
+             matchingFallbacks += listOf("release", "debug")
++            // 一起听邀请 scheme 沿用 neriplayer-debug：解析器只认 neriplayer / neriplayer-debug
++            // 两种，改这里要同步改 ListenTogetherInviteParser 的白名单，否则邀请链接进不来。
+             val inviteScheme = "neriplayer-debug"
+             manifestPlaceholders["listenTogetherInviteScheme"] = inviteScheme
+             buildConfigField("String", "LISTEN_TOGETHER_INVITE_SCHEME", "\"$inviteScheme\"")
