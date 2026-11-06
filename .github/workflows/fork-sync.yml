@@ -10,7 +10,9 @@ name: 同步上游并发布 TV 版
 
 on:
   schedule:
-    - cron: '23 */6 * * *' # 每 6 小时检查一次（UTC 分钟 23，避开整点高峰）
+    # 每小时检查一次。没新上游提交时几秒就 exit，不编译，几乎零成本；
+    # 跑得勤是为了对冲 GitHub schedule 的「best effort」——高峰期会延迟甚至整班跳过。
+    - cron: '23 * * * *'
   workflow_dispatch:
 
 permissions:
