@@ -75,8 +75,8 @@ jobs:
               echo ""
               echo "本地处理："
               echo '```bash'
-              echo 'bash tools/sync-upstream.sh        # 按提示解决冲突'
-              echo 'bash tools/make-patches.sh         # 重新生成补丁快照'
+              echo 'bash fork-tools/sync-upstream.sh        # 按提示解决冲突'
+              echo 'bash fork-tools/make-patches.sh         # 重新生成补丁快照'
               echo '```'
             } > conflict-report.md
             git am --abort || true
