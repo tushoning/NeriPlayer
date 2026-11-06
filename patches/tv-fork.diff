@@ -1,6 +1,6 @@
 # NeriPlayer TV fork — 相对上游的完整改动（单个合并补丁）
 # 基线 upstream commit : 1ce32a4b  (fix(settings): 修复设置默认启动页后启动应用时需要从首页跳转到启动页 (#641))
-# 我方 tip             : 4f355c32  (ci: 定时检查从每 6 小时改成每小时（没新提交就秒退，用来对冲 schedule 延迟/跳过）)
+# 我方 tip             : c73506a5  (ci: 显式声明 token 权限（contents/issues write），冲突报告同步进 Summary 页)
 # 生成命令             : bash fork-tools/make-patches.sh 1ce32a4b
 # 应用                 : git apply -3 patches/tv-fork.diff
 
@@ -18,10 +18,10 @@ index 00000000..94431c7a
 +patches/BASE -text
 diff --git a/.github/workflows/fork-sync.yml b/.github/workflows/fork-sync.yml
 new file mode 100644
-index 00000000..7063e156
+index 00000000..b8d9e075
 --- /dev/null
 +++ b/.github/workflows/fork-sync.yml
-@@ -0,0 +1,263 @@
+@@ -0,0 +1,272 @@
 +name: 同步上游并发布 TV 版
 +
 +# 干什么：
@@ -56,6 +56,10 @@ index 00000000..7063e156
 +jobs:
 +  sync:
 +    runs-on: ubuntu-latest
++    # 显式声明 token 权限，不依赖仓库的默认设置（否则推分支/开 issue 会 403）
++    permissions:
++      contents: write # 推 main、打 tag、建 Release
++      issues: write # 冲突时开 issue 提醒
 +    steps:
 +      - name: 拉取本仓库
 +        uses: actions/checkout@v4
@@ -119,6 +123,8 @@ index 00000000..7063e156
 +              echo "处理原则：import 冲突取并集；上游只是改名就取我方再批量改名；"
 +              echo "上游真重构了就取上游，再把 TV 逻辑补回去。"
 +            } > conflict-report.md
++            # 同时贴到本次运行的摘要页，即使 Issue 开不出来也能直接在网页上看到
++            cat conflict-report.md >> "$GITHUB_STEP_SUMMARY"
 +            git am --abort || true
 +            exit 1
 +          fi
@@ -278,13 +284,16 @@ index 00000000..7063e156
 +
 +      - name: 冲突时开 issue 提醒
 +        if: failure() && steps.up.outputs.changed == 'true'
++        continue-on-error: true # 这个通知本身失败，不该再给这次运行添一个红叉
 +        env:
 +          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 +        run: |
 +          [ -f conflict-report.md ] || exit 0
-+          gh issue create \
-+            --title "上游 ${{ steps.up.outputs.new }} 与 TV 补丁冲突，需要手工处理" \
-+            --body-file conflict-report.md
++          if ! gh issue create \
++              --title "上游 ${{ steps.up.outputs.new }} 与 TV 补丁冲突，需要手工处理" \
++              --body-file conflict-report.md; then
++            echo "::warning::Issue 没开出来（多半是 token 没有 issues 写权限）。冲突详情见本页摘要。"
++          fi
 diff --git a/.gitignore b/.gitignore
 index d5a9de77..a636a321 100644
 --- a/.gitignore
@@ -301,10 +310,10 @@ index d5a9de77..a636a321 100644
 +/local/
 diff --git a/FORK.md b/FORK.md
 new file mode 100644
-index 00000000..7a7b7531
+index 00000000..785d6e8d
 --- /dev/null
 +++ b/FORK.md
-@@ -0,0 +1,330 @@
+@@ -0,0 +1,342 @@
 +# 这个 fork 怎么维护
 +
 +上游：[cwuom/NeriPlayer](https://github.com/cwuom/NeriPlayer)（Android 音乐播放器，手机版 UI）。
@@ -378,8 +387,12 @@ index 00000000..7a7b7531
 +网页路径：**Settings** → 左侧 **Actions** → **General** → 拉到最下面
 +**Workflow permissions** → 选 **Read and write permissions** → **Save**。
 +
-+> 不开这一步，最后创建 Release 会报 403（没权限）。
++> 工作流文件里已经写了 `permissions: contents: write / issues: write`，正常情况下不开也能跑。
++> 但这里开一下更保险——万一 GitHub 那边策略优先级不同，不开会卡在推分支 / 建 Release（403）。
++>
++> 这一项只影响我写的那个工作流能不能动仓库，不会让上游那些 CI 跑起来（它们只认 `master`）。
 +
++### 0.6 手动跑一次
 +### 0.6 手动跑一次
 +
 +网页路径：仓库顶部 **Actions** → 左侧 **「同步上游并发布 TV 版」** →
@@ -619,6 +632,14 @@ index 00000000..7a7b7531
 +上游更新交给两样东西就够了：
 +- 平时：CI 每 6 小时自动做（`fork-sync.yml`）
 +- 本地手动：`bash fork-tools/sync-upstream.sh`
++
++**Q：Actions 里那个「冲突时开 issue 提醒」是干什么的？我的 Issues 页是空的**
++A：`fork-sync.yml` 最后一步。**它只在自动合并失败时才尝试执行**，成功了根本不会触发，
++所以平时 Issues 一直是空的，这是正常的。
++上游改到我们动过的代码 → `git am` 冲突 → 它把冲突文件清单写成一条 Issue 方便你看见，
++同时也会贴到那次运行的 **Summary** 页（`Run` 页面最上方）。
++Issue 开不出来（token 没写权限、Issues 功能关了）也不影响同步本身，
++只是少一个通知渠道——GitHub 另外还会给仓库 owner 发一封「workflow 运行失败」的邮件。
 +
 +**Q：Release 里的包和电视上装的对不上 / 装不上**
 +A：CI 有两道校验——密钥库指纹（编译前）和 APK 签名指纹（发布前），
