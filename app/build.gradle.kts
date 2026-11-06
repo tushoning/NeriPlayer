@@ -155,11 +155,16 @@ android {
         // 每次随机生成）和本地包签名不同，电视上根本覆盖安装不了。
         create("tvrelease") {
             initWith(getByName("release"))
-            applicationIdSuffix = ".debug"
+            // 独立包名 moe.ouom.neriplayer.tv：与手机版（moe.ouom.neriplayer）、
+            // 调试版（.debug）都能共存，互不覆盖。
+            // 注意：改后缀 = 换应用，旧包的数据不会迁移过来，装新包前要把旧包卸掉。
+            applicationIdSuffix = ".tv"
             isDebuggable = false
             signingConfig =
                 if (releaseSigningReady) releaseSigningConfig else signingConfigs.getByName("debug")
             matchingFallbacks += listOf("release", "debug")
+            // 一起听邀请 scheme 沿用 neriplayer-debug：解析器只认 neriplayer / neriplayer-debug
+            // 两种，改这里要同步改 ListenTogetherInviteParser 的白名单，否则邀请链接进不来。
             val inviteScheme = "neriplayer-debug"
             manifestPlaceholders["listenTogetherInviteScheme"] = inviteScheme
             buildConfigField("String", "LISTEN_TOGETHER_INVITE_SCHEME", "\"$inviteScheme\"")

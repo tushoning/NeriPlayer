@@ -90,16 +90,18 @@ cat aerial.b64
 
 ### 0.7 电视上装
 
-**第一次必须卸载重装**：以前电视上那个包是 debug 签名，现在换成 aerial 签名，
-签名不一样不能覆盖安装。
+包名是 **`moe.ouom.neriplayer.tv`**，和电视上原来那个 `moe.ouom.neriplayer.debug`
+是两个不同的应用，可以直接共存安装（不会覆盖、也不会继承旧包的数据）。
+
+建议把旧的卸掉，免得桌面出现两个图标：
 
 ```bash
-adb uninstall moe.ouom.neriplayer.debug
-adb install -r NeriPlayer-TV.apk
+adb uninstall moe.ouom.neriplayer.debug   # 卸掉旧的调试包
+adb install -r NeriPlayer-TV.apk          # 装新的 .tv 包
 ```
 
-卸载会清掉应用数据（歌单缓存、登录态要重来）。之后就都是 aerial 签名了，
-以后可以直接覆盖安装。
+旧包的数据（歌单缓存、登录态）不会迁移过来，需要重新设置。之后就都是 aerial 签名 +
+`.tv` 包名了，以后可以直接覆盖安装。
 
 ---
 
