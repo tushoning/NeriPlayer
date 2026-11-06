@@ -290,6 +290,25 @@ A：**不要点。** 一次都不要。
 更危险的是同一个位置还有一个 **「Discard N commits」**——点了会把你所有 TV 改动
 直接删掉，回到上游原样。
 
+**Q：仓库页左上角的「Contribute」要不要点？**
+A：**不要点。** 那个按钮 = 向上游 `cwuom/NeriPlayer` 提 Pull Request，
+会把你的 21 个提交原样提交给上游作者审。这是本地适配 fork，不是给上游的贡献：
+改了包名后缀、加了 aerial 签名配置、加了 `FORK.md` / `patches/` / CI，
+上游不会接受，也给人添麻烦。
+
+将来如果发现某个 bug 是上游通用问题（比如焦点逻辑本身的缺陷），
+可以从那次修复里单独摘一个 commit 提 PR —— 那属于另一件事，到时候再说。
+
+**Q：仓库右侧的「About」要不要改？**
+A：建议改。fork 出来的 About 默认抄的上游描述，别人搜到会以为是官方版。
+点 About 右边的齿轮，填：
+
+- **Description**：`NeriPlayer 的电视适配 fork（Android TV / 遥控器）：侧栏导航、遥控焦点、精简动效。非上游官方版本。`
+- **Website**：留空
+- **Topics**：`android-tv` `android` `tv` `music-player` `kotlin` `jetpack-compose` `tv-fork`
+
+不改也不影响任何功能，纯粹是别让人误会。
+
 上游更新交给两样东西就够了：
 - 平时：CI 每 6 小时自动做（`fork-sync.yml`）
 - 本地手动：`bash fork-tools/sync-upstream.sh`
