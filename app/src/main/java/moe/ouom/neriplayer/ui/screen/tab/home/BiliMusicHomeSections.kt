@@ -38,7 +38,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import moe.ouom.neriplayer.ui.tv.tvStripClamp
-import moe.ouom.neriplayer.ui.tv.tvStripItemFocus
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -307,7 +306,6 @@ private fun BiliMusicRankStrip(
                 song = song,
                 offlineMode = offlineMode,
                 modifier = Modifier
-                    .tvStripItemFocus(stripState, index)
                     .tvStripClamp(stripState, index, state.songs.lastIndex),
                 onClick = {
                     val target = song.toPlayableBiliVideoItem()
@@ -488,7 +486,6 @@ private fun BiliMusicHotStrip(
                 index = index,
                 offlineMode = offlineMode,
                 modifier = Modifier
-                    .tvStripItemFocus(stripState, index)
                     .tvStripClamp(stripState, index, videos.lastIndex),
                 onClick = {
                     val target = playableVideos.indexOfFirst {

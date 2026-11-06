@@ -79,10 +79,6 @@ class NeriPlayerApplication : Application(), WorkConfiguration.Provider {
 
     override fun onCreate() {
         super.onCreate()
-        // 临时：主线程消息耗时探针，仅用来定位电视端切页卡顿，定位完删除
-        if (BuildConfig.DEBUG) {
-            moe.ouom.neriplayer.ui.tv.TvPerfProbe.install()
-        }
         AndroidRuntimeCompatibility.installHiddenApiExemptions()
         // 电视 A/B 开关（adb: settings put global neri_tv_biv 0/1），启动时读一次
         moe.ouom.neriplayer.ui.tv.TvTuning.refresh(this)

@@ -331,7 +331,7 @@ internal fun SettingsScreen(
     // SharedFlow 没有 replay，中间那一拍的事件会丢；而且 collect 里改 activePage
     // 会让 effect 重启，后续挂起的 scrollToItem 会被取消。
     LaunchedEffect(Unit) {
-        TvTabRootBus.requests.collect { route ->
+        TvTabRootBus.events.collect { route ->
             if (route != Destinations.Settings.route) return@collect
             val page = navigation.activePage
             if (page == null) {

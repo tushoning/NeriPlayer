@@ -10,46 +10,23 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 
 /**
- * 电视端页面左右安全边距。
+ * 电视端页面的左右内边距，恒为 0。
  *
- * 移到左侧竖栏后，边距不再由页面自己给：左边是 [moe.ouom.neriplayer.ui.component.navigation.TvSidebarWidth]
- * 的导航栏，右边由 AppNavigationRail 补同样宽度的留白，内容左右边距自然对称。
- * 页面再自己加一层就是「双重边距」，所以这里恒为 0。
- *
- * 手机/平板不走这个函数（各页面自己传 base），不受影响。
+ * 导航搬到左侧竖栏之后，左右留白由导航外壳统一负责：左边是
+ * [moe.ouom.neriplayer.ui.component.navigation.TvSidebarWidth] 的侧栏，
+ * 右边由 `AppAdaptiveNavigationContent` 补同样宽度的留白，内容自然居中对称。
+ * 页面再自己加一层就成了双重边距，所以这里恒为 0；手机平板各页面自己传 base。
  */
 @Composable
 fun tvPageSidePadding(): Dp = 0.dp
 
-/** 电视端列表的左右内容内边距；非电视返回 0，手机平板保持原样。 */
-@Composable
-fun tvPageSidePaddingOrZero(): Dp =
-    if (LocalIsTelevision.current) tvPageSidePadding() else 0.dp
-
 /**
- * 所有页面统一使用的左右边距。
+ * 页面最外侧的左右边距：电视用 [tvPageSidePadding]（0），手机平板用 [base]。
  *
- * 顶栏时代这里等于「屏宽 4.5% + 8dp」（960dp 屏上是 51.2dp）。改用左侧竖栏后，
- * 这 51dp 已经由导航栏本身 + 内容区右侧留白占住，页面再加一遍就会把内容推到 102dp 开外，
- * 所以现在恒等于 [tvPageSidePadding]（= 0）。
- */
-@Composable
-fun tvContentSidePadding(): Dp = tvPageSidePadding()
-
-/**
- * 电视上把「原来那一档页面内边距」换成统一的页面边距；手机平板照旧用 [base]。
- * 这样每个页面最外侧的留白都是同一个数，不会出现「歌单页留一条白边、媒体库却贴边」。
+ * 所有页面都走这一个函数，保证「歌单页留一条白边、媒体库却贴边」这类不一致不会再出现。
  */
 @Composable
 fun pageSidePaddingOr(base: Dp): Dp =
-    if (LocalIsTelevision.current) tvContentSidePadding() else base
-
-/**
- * 首页等「外面还要套一层 8dp 横条内边距」的容器用这个：只留 [tvPageSidePadding]，
- * 加上里面那 8dp 后正好等于 [tvContentSidePadding]，和其它页面对齐。
- */
-@Composable
-fun pageSidePaddingOuterOr(base: Dp): Dp =
     if (LocalIsTelevision.current) tvPageSidePadding() else base
 
 /**

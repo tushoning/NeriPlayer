@@ -185,14 +185,13 @@ import kotlin.math.min
 import java.util.Locale
 import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 import moe.ouom.neriplayer.ui.tv.tvBringGridToTopOnUp
-import moe.ouom.neriplayer.ui.tv.pageSidePaddingOuterOr
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import moe.ouom.neriplayer.ui.tv.LocalTvRowMenuKeyState
 import moe.ouom.neriplayer.ui.tv.TvRowMenuKeyEffect
 import moe.ouom.neriplayer.ui.tv.rememberTvMenuFirstItemFocus
 import moe.ouom.neriplayer.ui.tv.rememberTvDeferredImage
 import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
 import moe.ouom.neriplayer.ui.tv.rememberTvRowMenuKeyState
-import moe.ouom.neriplayer.ui.tv.tvStripItemFocus
 import moe.ouom.neriplayer.ui.tv.tvReturnFocus
 import moe.ouom.neriplayer.ui.tv.tvStripClamp
 import moe.ouom.neriplayer.ui.tv.tvBringIntoViewOnFocus
@@ -467,7 +466,7 @@ fun HomeScreen(
                 modifier = Modifier
                     // 电视：左右留白跟其它页面用同一个值；同时不再套 1240dp 上限——
                     // 窗口宽度会随用户的缩放变化，这个上限会把整页压成中间的一条。
-                    .padding(horizontal = pageSidePaddingOuterOr(pageHorizontalPadding), vertical = 4.dp)
+                    .padding(horizontal = pageSidePaddingOr(pageHorizontalPadding), vertical = 4.dp)
                     .then(if (isTelevision) Modifier else Modifier.widthIn(max = 1240.dp))
                     .fillMaxWidth()
                     .weight(1f)

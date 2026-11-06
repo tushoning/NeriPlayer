@@ -65,39 +65,10 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
-/**
- * 电视：横向卡片条里的卡片聚焦时的滚动 —— **已停用，保留签名**。
- *
- * 原来在这里手动滚，是因为以为没人会替我们滚。实际情况是 Compose 的 `focusable`
- * 自己就会在拿到焦点时请求一次 bring-into-view（`FocusableNode.onFocusStateChange`），
- * 只不过电视上默认用的是 Pivot 规范，会把卡片拽到视口中间，于是「焦点框钉在第三格」。
- * 那个问题已经在 [TvMinimalBringIntoViewSpec] 里从规范层面修掉了，这里再滚一次
- * 反而会重复滚动（一次按键滚两格），所以这段逻辑整个退出，只保留形状让调用点不动。
- */
-@Composable
-@Suppress("UNUSED_PARAMETER")
-fun Modifier.tvStripItemFocus(state: LazyListState, index: Int): Modifier = this
-
-/**
- * 电视：网格（LazyVerticalGrid）里，焦点已经在最左一列时吞掉左键。
- *
- * 不吞的话，Compose 的方向搜索会往上跑到根节点那一层，把顶部标签栏当成候选，
- * 表现就是「卡片最左侧按左漂到首页标签」。这里只按网格自己的 column 判断，
- * 不碰 canFocus，不会把当前焦点清掉。
- */
-@Composable
-fun Modifier.tvGridClampLeft(state: androidx.compose.foundation.lazy.grid.LazyGridState, index: Int): Modifier {
-    if (!LocalIsTelevision.current) return this
-    return this.onPreviewKeyEvent { event ->
-        if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionLeft) {
-            return@onPreviewKeyEvent false
-        }
-        val layout = state.layoutInfo
-        val info = layout.visibleItemsInfo.firstOrNull { it.index == index }
-        val column = info?.column ?: (index % layout.maxSpan.coerceAtLeast(1))
-        column <= 0
-    }
-}
+// 电视横条的滚动交给 Compose 自己：它在拿到焦点时会请求 bring-into-view，落点规范由
+// TvMinimalBringIntoViewSpec 决定（不把卡片拽到视口中间）。这里曾经有一份手写的
+// 「聚焦即滚动」，和规范重复、一次按键滚两格，已经整段删掉 —— 现在只剩 tvStripClamp
+// 负责两端夹住。
 
 /**
  * 电视：横条走到尽头就别再往那个方向走了。
