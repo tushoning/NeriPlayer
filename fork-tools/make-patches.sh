@@ -85,10 +85,19 @@ mkdir -p patches/series
 } > patches/tv-fork.diff
 
 # ---- 2. 按提交拆分的补丁链 ------------------------------------------------
+# 必须给 format-patch 也带上 pathspec：否则会把提交里对 patches/（快照自己）的改动
+# 一起写进补丁，重放时和自己打架。
 i=1
 for c in "${COMMITS[@]}"; do
   sha=$(git rev-parse --short "$c")
-  git format-patch -1 --no-signature --stdout "$c" > "patches/series/$(printf '%04d' $i)-$sha.patch"
+  out="patches/series/$(printf '%04d' $i)-$sha.patch"
+  git format-patch -1 --no-signature --stdout "$c" "${FILTER[@]}" > "$out"
+  # 只动了 patches/ 的提交，过滤后没有 diff，丢掉
+  if ! grep -q "^diff --git " "$out"; then
+    rm -f "$out"
+    echo "跳过 $sha（只动了 patches/）"
+    continue
+  fi
   i=$((i + 1))
 done
 
@@ -107,7 +116,10 @@ echo "补丁链  : ${#COMMITS[@]} 个"
 TMPROOT=$(mktemp -d)
 WT="$TMPROOT/verify"
 git worktree add -q --detach "$WT" "$BASE_FULL"
-cleanup() { git worktree remove --force "$WT" >/dev/null 2>&1 || true; rm -rf "$TMPROOT"; }
+cleanup() {
+  git worktree remove --force "$WT" >/dev/null 2>&1 || true
+  rm -rf "$TMPROOT" >/dev/null 2>&1 || true
+}
 trap cleanup EXIT
 
 (
