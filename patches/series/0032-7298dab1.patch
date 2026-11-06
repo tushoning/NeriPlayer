@@ -1,0 +1,74 @@
+From 7298dab17d9ade8c1abda7f48c69c90c80c489c8 Mon Sep 17 00:00:00 2001
+From: neri-fork <local@neriplayer.fork>
+Date: Sat, 7 Nov 2026 02:56:55 +0800
+Subject: [PATCH] =?UTF-8?q?fix(ci):=20CI=20=E4=B8=8A=E8=B7=B3=E8=BF=87?=
+ =?UTF-8?q?=E9=98=BF=E9=87=8C=E4=BA=91=20Maven=20=E9=95=9C=E5=83=8F?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+日志里 Gradle 挂在配置阶段：
+  Could not HEAD https://maven.aliyun.com/repository/gradle-plugin/...
+  Received status code 502 from server: Bad Gateway
+GitHub 的 runner 在美国，阿里云镜像返回 502；Gradle 遇到 5xx 会把仓库整个禁用，
+不会回退到 google()/mavenCentral()，于是 classpath（AGP、KSP、Kotlin 插件）全部解析失败。
+
+改为通过 GITHUB_ACTIONS 环境变量判断：本地仍走镜像加速，CI 走官方仓库。
+job 另加 60 分钟超时。
+---
+ .github/workflows/fork-sync.yml |  1 +
+ settings.gradle.kts             | 23 +++++++++++++++++------
+ 2 files changed, 18 insertions(+), 6 deletions(-)
+
+diff --git a/.github/workflows/fork-sync.yml b/.github/workflows/fork-sync.yml
+index 5edb44be..bd81336c 100644
+--- a/.github/workflows/fork-sync.yml
++++ b/.github/workflows/fork-sync.yml
+@@ -34,6 +34,7 @@ env:
+ jobs:
+   sync:
+     runs-on: ubuntu-latest
++    timeout-minutes: 60 # 卡死时早失败，而不是拖到 GitHub 默认的 6 小时
+     # 显式声明 token 权限，不依赖仓库的默认设置（否则推分支/建 Release 会 403）
+     permissions:
+       contents: write # 推 main、打 tag、建 Release
+diff --git a/settings.gradle.kts b/settings.gradle.kts
+index 3ec02106..7e173c7d 100644
+--- a/settings.gradle.kts
++++ b/settings.gradle.kts
+@@ -1,9 +1,17 @@
+ pluginManagement {
+     repositories {
+-        // 本地构建加速：阿里云镜像优先，原仓库兜底
+-        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
+-        maven { url = uri("https://maven.aliyun.com/repository/google") }
+-        maven { url = uri("https://maven.aliyun.com/repository/public") }
++        // 本地构建加速：阿里云镜像优先，原仓库兜底。
++        //
++        // 但 GitHub Actions 的 runner 在美国，访问 maven.aliyun.com 会返回 502
++        // （实测 com.google.devtools.ksp.gradle.plugin-2.3.10.jar → 502 Bad Gateway）。
++        // Gradle 遇到 5xx 会把这个仓库标记为失效（"Repository maven is disabled"），
++        // **不会**回退到 google()/mavenCentral()，整个配置阶段直接失败。
++        // 所以 CI 上必须跳过镜像，走官方仓库。
++        if (System.getenv("GITHUB_ACTIONS").isNullOrEmpty()) {
++            maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
++            maven { url = uri("https://maven.aliyun.com/repository/google") }
++            maven { url = uri("https://maven.aliyun.com/repository/public") }
++        }
+         google {
+             content {
+                 includeGroupByRegex("com\\.android.*")
+@@ -19,8 +27,11 @@ pluginManagement {
+ dependencyResolutionManagement {
+     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+     repositories {
+-        maven { url = uri("https://maven.aliyun.com/repository/google") }
+-        maven { url = uri("https://maven.aliyun.com/repository/public") }
++        // 同上：CI 上跳过阿里云镜像
++        if (System.getenv("GITHUB_ACTIONS").isNullOrEmpty()) {
++            maven { url = uri("https://maven.aliyun.com/repository/google") }
++            maven { url = uri("https://maven.aliyun.com/repository/public") }
++        }
+         google()
+         mavenCentral()
+         maven { url = uri("https://jitpack.io") }

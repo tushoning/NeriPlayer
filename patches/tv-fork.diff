@@ -1,6 +1,6 @@
 # NeriPlayer TV fork — 相对上游的完整改动（单个合并补丁）
 # 基线 upstream commit : 1ce32a4b  (fix(settings): 修复设置默认启动页后启动应用时需要从首页跳转到启动页 (#641))
-# 我方 tip             : 5396f76d  (docs: README 去掉固定的修改日期（改由 NOTICE + 每次 Release 说明承载）)
+# 我方 tip             : 7298dab1  (fix(ci): CI 上跳过阿里云 Maven 镜像)
 # 生成命令             : bash fork-tools/make-patches.sh 1ce32a4b
 # 应用                 : git apply -3 patches/tv-fork.diff
 
@@ -18,10 +18,10 @@ index 00000000..94431c7a
 +patches/BASE -text
 diff --git a/.github/workflows/fork-sync.yml b/.github/workflows/fork-sync.yml
 new file mode 100644
-index 00000000..5edb44be
+index 00000000..bd81336c
 --- /dev/null
 +++ b/.github/workflows/fork-sync.yml
-@@ -0,0 +1,281 @@
+@@ -0,0 +1,282 @@
 +name: 同步上游并发布 TV 版
 +
 +# 干什么：
@@ -58,6 +58,7 @@ index 00000000..5edb44be
 +jobs:
 +  sync:
 +    runs-on: ubuntu-latest
++    timeout-minutes: 60 # 卡死时早失败，而不是拖到 GitHub 默认的 6 小时
 +    # 显式声明 token 权限，不依赖仓库的默认设置（否则推分支/建 Release 会 403）
 +    permissions:
 +      contents: write # 推 main、打 tag、建 Release
@@ -27610,25 +27611,36 @@ index 4a94a74b..ce64fd66 100644
              cmake {
                  cppFlags += listOf("-fexceptions", "-frtti")
 diff --git a/settings.gradle.kts b/settings.gradle.kts
-index 92ac909f..3ec02106 100644
+index 92ac909f..7e173c7d 100644
 --- a/settings.gradle.kts
 +++ b/settings.gradle.kts
-@@ -1,5 +1,9 @@
+@@ -1,5 +1,17 @@
  pluginManagement {
      repositories {
-+        // 本地构建加速：阿里云镜像优先，原仓库兜底
-+        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
-+        maven { url = uri("https://maven.aliyun.com/repository/google") }
-+        maven { url = uri("https://maven.aliyun.com/repository/public") }
++        // 本地构建加速：阿里云镜像优先，原仓库兜底。
++        //
++        // 但 GitHub Actions 的 runner 在美国，访问 maven.aliyun.com 会返回 502
++        // （实测 com.google.devtools.ksp.gradle.plugin-2.3.10.jar → 502 Bad Gateway）。
++        // Gradle 遇到 5xx 会把这个仓库标记为失效（"Repository maven is disabled"），
++        // **不会**回退到 google()/mavenCentral()，整个配置阶段直接失败。
++        // 所以 CI 上必须跳过镜像，走官方仓库。
++        if (System.getenv("GITHUB_ACTIONS").isNullOrEmpty()) {
++            maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
++            maven { url = uri("https://maven.aliyun.com/repository/google") }
++            maven { url = uri("https://maven.aliyun.com/repository/public") }
++        }
          google {
              content {
                  includeGroupByRegex("com\\.android.*")
-@@ -15,6 +19,8 @@ pluginManagement {
+@@ -15,6 +27,11 @@ pluginManagement {
  dependencyResolutionManagement {
      repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
      repositories {
-+        maven { url = uri("https://maven.aliyun.com/repository/google") }
-+        maven { url = uri("https://maven.aliyun.com/repository/public") }
++        // 同上：CI 上跳过阿里云镜像
++        if (System.getenv("GITHUB_ACTIONS").isNullOrEmpty()) {
++            maven { url = uri("https://maven.aliyun.com/repository/google") }
++            maven { url = uri("https://maven.aliyun.com/repository/public") }
++        }
          google()
          mavenCentral()
          maven { url = uri("https://jitpack.io") }

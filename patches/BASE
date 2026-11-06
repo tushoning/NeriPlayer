@@ -1,5 +1,5 @@
 base_sha=1ce32a4b
 base_full_sha=1ce32a4b368296014ab7c7758d3d898f33c3275c
 base_subject=fix(settings): 修复设置默认启动页后启动应用时需要从首页跳转到启动页 (#641)
-tip_sha=5396f76d
-commits=31
+tip_sha=7298dab1
+commits=32
