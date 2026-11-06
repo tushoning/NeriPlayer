@@ -1,0 +1,71 @@
+From 7b2f496a69e03cff3a11e4e0f3a444baacc99caa Mon Sep 17 00:00:00 2001
+From: neri-fork <local@neriplayer.fork>
+Date: Fri, 6 Nov 2026 23:51:13 +0800
+Subject: [PATCH] =?UTF-8?q?fix(tv):=20=E8=AE=BE=E7=BD=AE=E5=AD=90=E9=A1=B5?=
+ =?UTF-8?q?=E5=88=87=E6=8D=A2=E5=8E=BB=E6=8E=89=E6=A8=AA=E5=90=91=E6=BB=91?=
+ =?UTF-8?q?=E5=8A=A8=EF=BC=88=E7=9C=9F=E5=87=B6=EF=BC=9A=E6=BB=91=E5=87=BA?=
+ =?UTF-8?q?=E4=B8=AD=E7=9A=84=E4=B8=8A=E4=B8=80=E9=A1=B5=E4=BB=8D=E5=8F=AF?=
+ =?UTF-8?q?=E8=81=9A=E7=84=A6=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+「刚进二级页就按左，返回键闪一下、光标没进侧栏」的根因不是焦点补偿重试，
+而是切页那 200~300ms 的横向滑动：上一页正在往左滑出、仍然可聚焦，
+几何上位于左侧，于是 moveFocus(Left) 钻进那一层；等它销毁，焦点被
+「交给树里第一个可聚焦元素」的兜底丢回本页返回按钮。
+
+电视上改成瞬时切换（EnterTransition.None），窗口消失。日志验证 8 次
+「进页面 → 立刻按左」，moveFocus 全部 false，焦点直接落到侧栏本页标签。
+---
+ .../navigation/SettingsPageTransition.kt      | 20 ++++++++++++++++---
+ 1 file changed, 17 insertions(+), 3 deletions(-)
+
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/navigation/SettingsPageTransition.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/navigation/SettingsPageTransition.kt
+index e1b50bb0..b0dbf953 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/navigation/SettingsPageTransition.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/navigation/SettingsPageTransition.kt
+@@ -3,6 +3,8 @@ package moe.ouom.neriplayer.ui.screen.tab.settings.navigation
+ import androidx.compose.animation.AnimatedContent
+ import androidx.compose.animation.ContentTransform
+ import androidx.compose.animation.EnterExitState
++import androidx.compose.animation.EnterTransition
++import androidx.compose.animation.ExitTransition
+ import androidx.compose.animation.SizeTransform
+ import androidx.compose.animation.core.CubicBezierEasing
+ import androidx.compose.animation.core.animateFloat
+@@ -38,6 +40,7 @@ import moe.ouom.neriplayer.ui.effect.glass.isolatedAdvancedGlassHorizontalTransi
+ import moe.ouom.neriplayer.ui.screen.tab.settings.page.SettingsPage
+ import moe.ouom.neriplayer.ui.screen.host.rememberHostPredictiveBackTransition
+ import moe.ouom.neriplayer.ui.screen.tab.settings.page.backTargetPage
++import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+ 
+ internal const val SETTINGS_PAGE_ENTER_DURATION_MS = 300
+ // 旧页稍慢退场，让新页接上时画面和模糊遮罩保持连续
+@@ -170,12 +173,23 @@ internal fun PhoneSettingsPageTransitionHost(
+         onBack = { onBack() },
+         label = "settings_page_switch"
+     )
++    // transitionSpec 不是 @Composable，电视判断必须在外面读
++    val tvSkipMotion = LocalIsTelevision.current
+     pageTransition.AnimatedContent(
+         modifier = Modifier.fillMaxSize(),
+         transitionSpec = {
+-            isolatedAdvancedGlassHorizontalTransition(
+-                forward = isForwardSettingsPageTransition(initialState, targetState)
+-            ).using(SizeTransform(clip = true))
++            if (tvSkipMotion) {
++                // 电视：切设置子页不做横向滑动。
++                // 滑动的那 200~300ms 里，**正在滑出的上一页仍然可以拿焦点**，而它此刻
++                // 在几何上位于左侧 —— 按「左」的焦点搜索会钻进那一层，等它退场时
++                // 焦点又被丢回本页第一个可聚焦元素（返回按钮），表现就是
++                // 「返回键闪一下、光标没进侧栏」。用户反馈只在刚进页面时出现，正好是这段窗口。
++                EnterTransition.None togetherWith ExitTransition.None
++            } else {
++                isolatedAdvancedGlassHorizontalTransition(
++                    forward = isForwardSettingsPageTransition(initialState, targetState)
++                ).using(SizeTransform(clip = true))
++            }
+         }
+     ) { page ->
+         Box(Modifier.fillMaxSize().testTag(settingsPageTransitionSceneTag(page))) {

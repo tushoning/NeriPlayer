@@ -1,0 +1,263 @@
+From f374f363b380a732b22bd2bd527ee336c13e40e7 Mon Sep 17 00:00:00 2001
+From: local <local@work>
+Date: Mon, 2 Nov 2026 08:31:38 +0800
+Subject: [PATCH] perf(tv): disable glass/cover blur, static indicators, no
+ marquee, kill tab lens shader
+
+---
+ .../ui/component/navigation/CleanTabLens.kt   |  3 +++
+ .../ui/component/navigation/NeriTvTopBar.kt   |  4 ++-
+ .../ui/effect/glass/AdvancedGlassSurface.kt   |  3 ++-
+ .../playback/visual/AppNowPlayingBackdrop.kt  | 18 +++++++++++++
+ .../ui/screen/history/RecentScreen.kt         | 23 ++++++++++++++++
+ .../ui/screen/lyrics/LyricsScreen.kt          |  2 +-
+ .../ui/screen/nowplaying/NowPlayingScreen.kt  |  4 +--
+ .../playlist/NeteaseCollectionDetailScreen.kt | 26 +++++++++++++++++++
+ .../moe/ouom/neriplayer/ui/theme/NeriTheme.kt |  6 ++++-
+ 9 files changed, 83 insertions(+), 6 deletions(-)
+
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/component/navigation/CleanTabLens.kt b/app/src/main/java/moe/ouom/neriplayer/ui/component/navigation/CleanTabLens.kt
+index 9b641f8d..f3d3b0d4 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/component/navigation/CleanTabLens.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/component/navigation/CleanTabLens.kt
+@@ -43,6 +43,7 @@ import androidx.compose.ui.platform.LocalDensity
+ import androidx.compose.ui.unit.Density
+ import androidx.compose.ui.unit.IntOffset
+ import androidx.compose.ui.unit.dp
++import moe.ouom.neriplayer.ui.tv.TvPerf
+ import moe.ouom.neriplayer.ui.effect.glass.AdvancedGlassRole
+ import moe.ouom.neriplayer.ui.effect.glass.AdvancedGlassSurface
+ import moe.ouom.neriplayer.ui.effect.glass.LocalAdvancedGlassController
+@@ -261,6 +262,8 @@ private class LensRefractionEffect {
+         edgeBandPx: Float,
+         refractionPx: Float
+     ): androidx.compose.ui.graphics.RenderEffect? {
++        // 电视：镜头折射是逐像素着色器，弱 GPU 上直接拖垮整条标签栏
++        if (TvPerf.disableBlur) return null
+         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return null
+         val runtime = shader as? RuntimeShader ?: return null
+         return build(runtime, width, height, edgeBandPx, refractionPx)
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/component/navigation/NeriTvTopBar.kt b/app/src/main/java/moe/ouom/neriplayer/ui/component/navigation/NeriTvTopBar.kt
+index e4bdd4ec..e7141036 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/component/navigation/NeriTvTopBar.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/component/navigation/NeriTvTopBar.kt
+@@ -63,6 +63,7 @@ import androidx.compose.ui.res.stringResource
+ import androidx.compose.ui.text.font.FontWeight
+ import androidx.compose.ui.unit.dp
+ import androidx.navigation.NavDestination
++import moe.ouom.neriplayer.ui.tv.TvPerf
+ import moe.ouom.neriplayer.navigation.Destinations
+ import moe.ouom.neriplayer.ui.haptic.performHapticFeedback
+ import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+@@ -376,7 +377,8 @@ private fun TvNowPlayingTab(
+  */
+ @Composable
+ private fun TvNowPlayingBars(color: Color, animate: Boolean) {
+-    if (!animate) {
++    // 电视：顶栏是常驻的，频谱柱一直动就等于一直重绘，直接静态化
++    if (!animate || TvPerf.reduceMotion) {
+         TvNowPlayingBarsRow(color = color, heights = StaticBarHeights)
+         return
+     }
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/effect/glass/AdvancedGlassSurface.kt b/app/src/main/java/moe/ouom/neriplayer/ui/effect/glass/AdvancedGlassSurface.kt
+index 6a65034c..56b1a8c4 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/effect/glass/AdvancedGlassSurface.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/effect/glass/AdvancedGlassSurface.kt
+@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.toSize
+ import androidx.lifecycle.compose.LocalLifecycleOwner
+ import kotlin.math.max
+ import kotlin.math.min
++import moe.ouom.neriplayer.ui.tv.TvPerf
+ import moe.ouom.neriplayer.ui.theme.NeriDesign
+ 
+ internal fun isAdvancedGlassNavigationOwnerActive(
+@@ -130,7 +131,7 @@ internal fun AdvancedGlassSurface(
+         navigationOwner = navigationOwner
+     )
+     val belongsToPrewarmedNavigationScreen = navigationOwner in prewarmedNavigationOwners
+-    val canRenderGlass = enabled && sceneActive && backdropsReady &&
++    val canRenderGlass = enabled && !TvPerf.disableBlur && sceneActive && backdropsReady &&
+         canSampleAdvancedGlassBackdrop(controller, glassDepth, role)
+     val glassEnabled = canRenderGlass && belongsToActiveNavigationScreen
+     val suppressesInactiveNavigationSurface =
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/playback/visual/AppNowPlayingBackdrop.kt b/app/src/main/java/moe/ouom/neriplayer/ui/playback/visual/AppNowPlayingBackdrop.kt
+index b171c338..f9ee7df0 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/playback/visual/AppNowPlayingBackdrop.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/playback/visual/AppNowPlayingBackdrop.kt
+@@ -14,6 +14,7 @@ import coil.Coil
+ import coil.ImageLoader
+ import coil.request.CachePolicy
+ import kotlinx.coroutines.flow.StateFlow
++import moe.ouom.neriplayer.ui.tv.TvPerf
+ import moe.ouom.neriplayer.data.identity.stableKey
+ import moe.ouom.neriplayer.data.local.storage.LocalAssetInvalidationBus
+ import moe.ouom.neriplayer.data.model.SongItem
+@@ -85,6 +86,23 @@ internal fun nowPlayingBackdropFrame(
+     blurAvailable: Boolean
+ ): NowPlayingBackdropFrame {
+     val effectiveCover = if (cover.clearCover) cover.copy(url = null) else cover
++    // 电视：不做封面模糊。它要解码一张大图再在 CPU/GPU 上模糊，切歌和进出播放页都会卡一下，
++    // 而画面观感靠渐变底色就够了。
++    if (TvPerf.disableBlur) {
++        return NowPlayingBackdropFrame(
++            cover = effectiveCover,
++            background = background,
++            blurState = blurState,
++            hasCoverBlur = false,
++            blurStrength = 0f,
++            imageSizePx = resolvedNowPlayingBlurImageSizePx(effectiveCover.url),
++            assetVersion = nowPlayingBlurAssetVersion(effectiveCover),
++            requestKey = nowPlayingBlurRequestKey(
++                effectiveCover.url, effectiveCover.songKey, 0f, nowPlayingBlurAssetVersion(effectiveCover)
++            ),
++            latestRequestKey = null
++        )
++    }
+     val blurStrength = background.blurAmount.coerceIn(0f, 500f)
+     val effectiveBlurStrength = resolvedNowPlayingBlurStrength(effectiveCover.url, blurStrength)
+     val assetVersion = nowPlayingBlurAssetVersion(effectiveCover)
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/history/RecentScreen.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/history/RecentScreen.kt
+index 8d29c093..fcc5672f 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/history/RecentScreen.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/history/RecentScreen.kt
+@@ -23,6 +23,7 @@ package moe.ouom.neriplayer.ui.screen.history
+  * Updated: 2026/3/23
+  */
+ 
++import moe.ouom.neriplayer.ui.tv.TvPerf
+ import moe.ouom.neriplayer.ui.theme.neriRoundedShape
+ import moe.ouom.neriplayer.data.identity.sameIdentityAs
+ import moe.ouom.neriplayer.data.identity.stableKey
+@@ -894,6 +895,11 @@ private fun RecentRowText(
+ /** 播放中指示 */
+ @Composable
+ private fun PlayingIndicator(color: Color, animate: Boolean) {
++    // 电视：不创建无限动画。只要还读着动画 state，这一行就会一直重绘，列表滚动时尤其浪费。
++    if (TvPerf.reduceMotion) {
++        StaticPlayingIndicator(color)
++        return
++    }
+     // 三条不同节奏/相位的无限动画
+     val t = rememberInfiniteTransition(label = "playing")
+     val flatHeight = 8f
+@@ -965,3 +971,20 @@ private fun PlayingIndicator(color: Color, animate: Boolean) {
+         )
+     }
+ }
++
++/** 电视用的静态「播放中」指示：固定高度，不读任何动画 state。 */
++@Composable
++private fun StaticPlayingIndicator(color: Color) {
++    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.width(24.dp)) {
++        listOf(12f, 15f, 10f).forEachIndexed { index, height ->
++            if (index > 0) Spacer(Modifier.width(3.dp))
++            Box(
++                Modifier
++                    .width(3.dp)
++                    .height(height.dp)
++                    .clip(neriRoundedShape(1.dp))
++                    .background(color)
++            )
++        }
++    }
++}
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/lyrics/LyricsScreen.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/lyrics/LyricsScreen.kt
+index d4a8ff45..fa4e75cc 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/lyrics/LyricsScreen.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/lyrics/LyricsScreen.kt
+@@ -591,7 +591,7 @@ fun LyricsScreen(
+                         BoxWithConstraints {
+                             NowPlayingSongTitle(
+                                 text = currentSong?.displayName() ?: stringResource(CoreCommonR.string.lyrics_unknown_song),
+-                                marqueeEnabled = nowPlayingSongTitleMarqueeEnabled,
++                                marqueeEnabled = nowPlayingSongTitleMarqueeEnabled && !LocalIsTelevision.current,
+                                 style = MaterialTheme.typography.titleLarge,
+                                 color = LocalNeriTargetColorScheme.current.onSurface,
+                                 modifier = Modifier
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/NowPlayingScreen.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/NowPlayingScreen.kt
+index 14825958..6d6ea925 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/NowPlayingScreen.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/NowPlayingScreen.kt
+@@ -1706,7 +1706,7 @@ fun NowPlayingScreen(
+                                 NowPlayingTrackIdentity(
+                                     display = resolveNowPlayingTrackDisplay(currentSong),
+                                     visible = contentVisible,
+-                                    marqueeEnabled = nowPlayingSongTitleMarqueeEnabled,
++                                    marqueeEnabled = nowPlayingSongTitleMarqueeEnabled && !LocalIsTelevision.current,
+                                     titleColor = targetNowPlayingColorScheme.onSurface,
+                                     sharedTransitionScope = this@SharedTransitionLayout,
+                                     animatedVisibilityScope = this@AnimatedContent,
+@@ -1718,7 +1718,7 @@ fun NowPlayingScreen(
+                                 NowPlayingTrackIdentity(
+                                     display = resolveNowPlayingTrackDisplay(currentSong),
+                                     visible = contentVisible,
+-                                    marqueeEnabled = nowPlayingSongTitleMarqueeEnabled,
++                                    marqueeEnabled = nowPlayingSongTitleMarqueeEnabled && !LocalIsTelevision.current,
+                                     titleColor = targetNowPlayingColorScheme.onSurface,
+                                     sharedTransitionScope = this@SharedTransitionLayout,
+                                     animatedVisibilityScope = this@AnimatedContent,
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/playlist/NeteaseCollectionDetailScreen.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/playlist/NeteaseCollectionDetailScreen.kt
+index 242d8317..982cdc63 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/playlist/NeteaseCollectionDetailScreen.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/playlist/NeteaseCollectionDetailScreen.kt
+@@ -23,6 +23,7 @@ package moe.ouom.neriplayer.ui.screen.playlist
+  * Created: 2025/8/10
+  */
+ 
++import moe.ouom.neriplayer.ui.tv.TvPerf
+ import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
+ import androidx.compose.foundation.interaction.MutableInteractionSource
+ import androidx.compose.foundation.LocalIndication
+@@ -1202,6 +1203,11 @@ fun PlayingIndicator(
+     color: Color = MaterialTheme.colorScheme.primary,
+     animate: Boolean = true
+ ) {
++    // 电视：不创建无限动画。只要还读着动画 state，这一行就永远在重绘，列表滚动时尤其浪费。
++    if (TvPerf.reduceMotion) {
++        StaticPlayingIndicator(modifier = modifier, color = color)
++        return
++    }
+     val transition = rememberInfiniteTransition(label = "playing")
+     val flatHeight = 0.35f
+     val transitionSpec: FiniteAnimationSpec<Float> =
+@@ -1275,3 +1281,23 @@ fun PlayingIndicator(
+ 
+ private fun playingBarHoldTarget(animate: Boolean, animated: State<Float>, flatHeight: Float): Float =
+     if (animate) animated.value else flatHeight
++
++/** 电视用的静态「播放中」指示：固定高度，不读任何动画 state。 */
++@Composable
++private fun StaticPlayingIndicator(modifier: Modifier = Modifier, color: Color) {
++    Row(
++        modifier = modifier.height(12.dp),
++        verticalAlignment = Alignment.Bottom,
++        horizontalArrangement = Arrangement.spacedBy(1.dp)
++    ) {
++        listOf(0.45f, 0.7f, 0.55f).forEach { fraction ->
++            Box(
++                Modifier
++                    .width(3.dp)
++                    .height(12.dp * fraction)
++                    .clip(RoundedCornerShape(50))
++                    .background(color)
++            )
++        }
++    }
++}
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/theme/NeriTheme.kt b/app/src/main/java/moe/ouom/neriplayer/ui/theme/NeriTheme.kt
+index 608f583c..649c8650 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/theme/NeriTheme.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/theme/NeriTheme.kt
+@@ -161,7 +161,11 @@ fun NeriTheme(
+                 TvFocusIndication(tvRingColor, cornerRadius = tvRingRadius)
+             }
+             // 电视上关掉所有装饰性动效（标签切换、页面进出场），只保留播放页动画
+-            SideEffect { TvPerf.reduceMotion = isTelevision }
++            // 玻璃模糊同样关掉：RenderEffect 在电视 GPU 上每帧都要重新取样，是最大的一个开销
++            SideEffect {
++                TvPerf.reduceMotion = isTelevision
++                TvPerf.disableBlur = isTelevision
++            }
+             // Material3 的组件（Surface/Card/Button/列表项）内部硬写 ripple()，不读 LocalIndication，
+             // 所以额外把 ripple 的焦点态叠加强化，否则电视上看不出光标停在哪
+             val tvRipple = remember(colorScheme.primary) {

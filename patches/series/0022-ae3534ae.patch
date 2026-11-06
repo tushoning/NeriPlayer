@@ -1,0 +1,75 @@
+From ae3534ae6d302e5a4d462f60a70acef5a057334b Mon Sep 17 00:00:00 2001
+From: neri-fork <local@neriplayer.fork>
+Date: Sat, 7 Nov 2026 00:56:42 +0800
+Subject: [PATCH] =?UTF-8?q?docs(license):=20Release=20=E8=AF=B4=E6=98=8E?=
+ =?UTF-8?q?=E8=A1=A5=E5=AD=90=E6=A8=A1=E5=9D=97=E6=B8=85=E5=8D=95=EF=BC=88?=
+ =?UTF-8?q?GitHub=20=E6=BA=90=E7=A0=81=E5=8C=85=E4=B8=8D=E5=90=AB=20submod?=
+ =?UTF-8?q?ule=EF=BC=89=EF=BC=8CFORK.md=20=E8=A1=A5=20GPL=20=E5=9B=9B?=
+ =?UTF-8?q?=E6=9D=A1=E7=A1=AC=E6=B3=A8=E6=84=8F?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .github/workflows/fork-sync.yml |  7 +++++++
+ FORK.md                         | 29 +++++++++++++++++++++++++++--
+ 2 files changed, 34 insertions(+), 2 deletions(-)
+
+diff --git a/.github/workflows/fork-sync.yml b/.github/workflows/fork-sync.yml
+index 257d3cb0..f02b8b4d 100644
+--- a/.github/workflows/fork-sync.yml
++++ b/.github/workflows/fork-sync.yml
+@@ -198,6 +198,13 @@ jobs:
+ 
+           与本次 APK 完全对应的源码：**本仓库 tag \`$(git rev-parse --short=7 HEAD)\`**
+           （GitHub 已自动为该 tag 提供 Source code 压缩包）。
++
++          GitHub 的源码包**不包含子模块**。构建还需要下列子模块（仓库内 \`.gitmodules\` 有地址）：
++
++          \`\`\`
++          $(git submodule status --recursive | sed 's/^[ +-]*//' | awk '{printf "%s @ %s\n", $2, $1}')
++          \`\`\`
++
+           上游项目：https://github.com/cwuom/NeriPlayer
+ 
+           ## 许可
+diff --git a/FORK.md b/FORK.md
+index 74f0020b..6bf1aa94 100644
+--- a/FORK.md
++++ b/FORK.md
+@@ -184,8 +184,33 @@ Capsulyric（GPL-3.0-or-later）、InstallerX Revived（GPL-3.0-only）、libusb
+ | §10 | 不得追加额外限制 | 不写「禁止商用/转载」之类 |
+ | §7 | 保留上游署名 | README、NOTICE 都指向上游 |
+ 
+-**不要做的事**：改成 MIT 发布；只发 APK 不给源码；宣称是官方版；
+-用「本软件版权归我，禁止转载」这类话。
++### 四个真正容易踩的坑
++
++1. **别删 tag、别删 Release。** 删了 tag，GitHub 的源码包跟着没了，已经发出去的 APK 就失去
++   对应源码——这是唯一会真正造成违规的操作。`tv-*` 的 tag 一个都别动。
++
++2. **别加任何额外限制。** 国内安卓圈习惯写「仅供学习交流，禁止转载/商用/二次分发」、
++   「下载即视为同意本协议」——这些话和 GPLv3 §10（不得对接收者施加额外限制）**直接冲突**，
++   写了就等于自己把授权变成非自由许可。可以写的是：这是 fork、不是官方、无担保。
++
++3. **GitHub 的源码包不含子模块。** 这个项目构建依赖 `np-submodule/accompanist-lyrics-core`
++   和 `accompanist-lyrics-ui`，GitHub 给 tag 自动打的 zip 里它们是空目录。
++   所以 Release 说明里必须列出子模块地址和 commit（CI 已经自动写进去），
++   别人才能真的复现出这个 APK。
++
++4. **GPL 不可撤回。** 一旦发布了某个版本，任何人拿到后都可以按 GPL 继续分发，
++   你之后想收回、想改成闭源都做不到。发之前想清楚。
++
++### 可以做的事（常见误解）
++
++- ✅ 公开仓库、发 Releases、发网盘、发群里 —— 只要同时能看到源码
++- ✅ 换应用名、换图标、改包名
++- ✅ 收费（GPL 允许卖二进制），但买了的人有权拿到源码并再分发
++- ✅ 只发 APK 不附源码文件本身 —— 前提是**同一个地方**能拿到源码（本仓库 tag 即可）
++- ❌ 只发 APK 且不提供任何源码获取方式
++- ❌ 在 Release 里写「禁止转载」「版权归我所有」
++
++**不要做的事**：改成 MIT 发布；宣称是官方版；用上游作者名义发版（商标不在 GPL 授权范围）。
+ 
+ ---
+ 

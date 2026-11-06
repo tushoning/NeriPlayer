@@ -1,0 +1,32 @@
+From 870a6582fa422e83d70a169c91aa94b34413da5f Mon Sep 17 00:00:00 2001
+From: neri-fork <local@neriplayer.fork>
+Date: Sat, 7 Nov 2026 00:47:19 +0800
+Subject: [PATCH] =?UTF-8?q?docs(fork-tools):=20=E6=B3=A8=E9=87=8A=E9=87=8C?=
+ =?UTF-8?q?=E7=9A=84=E5=88=86=E6=94=AF=E5=90=8D=E4=B8=8E=E8=B7=AF=E5=BE=84?=
+ =?UTF-8?q?=E6=94=B9=E5=9B=9E=20main=20/=20fork-tools?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ fork-tools/make-patches.sh | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/fork-tools/make-patches.sh b/fork-tools/make-patches.sh
+index 3bae0307..f41e8b00 100644
+--- a/fork-tools/make-patches.sh
++++ b/fork-tools/make-patches.sh
+@@ -2,11 +2,11 @@
+ # ---------------------------------------------------------------------------
+ # 生成「我方改动 vs 上游」补丁快照
+ #
+-#   bash tools/make-patches.sh [上游基线]
++#   bash fork-tools/make-patches.sh [上游基线]
+ #
+ # 不传基线时默认取 origin/master 与 HEAD 的 merge-base。
+ #
+-# 前置约定：our-changes 分支必须是「线性」的（没有 merge commit），
++# 前置约定：main 分支必须是「线性」的（没有 merge commit），
+ # 否则拆分出的补丁链无法逐个 git am。见 FORK.md「为什么分支必须线性」。
+ #
+ # 产物：

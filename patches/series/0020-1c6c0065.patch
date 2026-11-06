@@ -1,0 +1,52 @@
+From 1c6c0065eabbbd7676eb86c0113560fcbb676bbd Mon Sep 17 00:00:00 2001
+From: neri-fork <local@neriplayer.fork>
+Date: Sat, 7 Nov 2026 00:45:39 +0800
+Subject: [PATCH] =?UTF-8?q?fix(fork-tools):=20format-patch=20=E4=B9=9F?=
+ =?UTF-8?q?=E8=A6=81=E5=B8=A6=20pathspec=EF=BC=8C=E5=90=A6=E5=88=99?=
+ =?UTF-8?q?=E8=A1=A5=E4=B8=81=E4=BC=9A=E6=8A=8A=20patches/=20=E5=BF=AB?=
+ =?UTF-8?q?=E7=85=A7=E8=87=AA=E5=B7=B1=E5=8C=85=E8=BF=9B=E5=8E=BB?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ fork-tools/make-patches.sh | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/fork-tools/make-patches.sh b/fork-tools/make-patches.sh
+index f7553207..3bae0307 100644
+--- a/fork-tools/make-patches.sh
++++ b/fork-tools/make-patches.sh
+@@ -85,10 +85,19 @@ mkdir -p patches/series
+ } > patches/tv-fork.diff
+ 
+ # ---- 2. 按提交拆分的补丁链 ------------------------------------------------
++# 必须给 format-patch 也带上 pathspec：否则会把提交里对 patches/（快照自己）的改动
++# 一起写进补丁，重放时和自己打架。
+ i=1
+ for c in "${COMMITS[@]}"; do
+   sha=$(git rev-parse --short "$c")
+-  git format-patch -1 --no-signature --stdout "$c" > "patches/series/$(printf '%04d' $i)-$sha.patch"
++  out="patches/series/$(printf '%04d' $i)-$sha.patch"
++  git format-patch -1 --no-signature --stdout "$c" "${FILTER[@]}" > "$out"
++  # 只动了 patches/ 的提交，过滤后没有 diff，丢掉
++  if ! grep -q "^diff --git " "$out"; then
++    rm -f "$out"
++    echo "跳过 $sha（只动了 patches/）"
++    continue
++  fi
+   i=$((i + 1))
+ done
+ 
+@@ -107,7 +116,10 @@ echo "补丁链  : ${#COMMITS[@]} 个"
+ TMPROOT=$(mktemp -d)
+ WT="$TMPROOT/verify"
+ git worktree add -q --detach "$WT" "$BASE_FULL"
+-cleanup() { git worktree remove --force "$WT" >/dev/null 2>&1 || true; rm -rf "$TMPROOT"; }
++cleanup() {
++  git worktree remove --force "$WT" >/dev/null 2>&1 || true
++  rm -rf "$TMPROOT" >/dev/null 2>&1 || true
++}
+ trap cleanup EXIT
+ 
+ (

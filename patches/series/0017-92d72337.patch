@@ -1,0 +1,38 @@
+From 92d72337cf2356f9b2c87e5df614167e622b5e2e Mon Sep 17 00:00:00 2001
+From: neri-fork <local@neriplayer.fork>
+Date: Sat, 7 Nov 2026 00:12:37 +0800
+Subject: [PATCH] =?UTF-8?q?chore:=20=E8=A1=A5=E4=B8=81=E7=94=9F=E6=88=90?=
+ =?UTF-8?q?=E7=BB=93=E6=9E=9C=E7=A1=AE=E5=AE=9A=E5=8C=96=EF=BC=88=E5=8E=BB?=
+ =?UTF-8?q?=E6=8E=89=E6=97=B6=E9=97=B4=E6=88=B3=EF=BC=89=EF=BC=8C=E9=87=8D?=
+ =?UTF-8?q?=E5=A4=8D=E6=89=A7=E8=A1=8C=E4=B8=8D=E5=86=8D=E4=BA=A7=E7=94=9F?=
+ =?UTF-8?q?=E6=97=A0=E6=84=8F=E4=B9=89=20diff?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ fork-tools/make-patches.sh | 4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/fork-tools/make-patches.sh b/fork-tools/make-patches.sh
+index 0189b78d..0a88ebd8 100644
+--- a/fork-tools/make-patches.sh
++++ b/fork-tools/make-patches.sh
+@@ -50,8 +50,7 @@ mkdir -p patches/series
+     "# NeriPlayer TV fork — 相对上游的完整改动（单个合并补丁）" \
+     "# 基线 upstream commit : $BASE_SHA  ($BASE_SUBJECT)" \
+     "# 我方 tip             : $HEAD_SHA  ($(git log -1 --format=%s HEAD))" \
+-    "# 生成时间             : $(date -Iseconds)" \
+-    "# 生成命令             : bash tools/make-patches.sh $BASE_SHA" \
++    "# 生成命令             : bash fork-tools/make-patches.sh $BASE_SHA" \
+     "# 应用                 : git apply -3 patches/tv-fork.diff" \
+     ""
+   git diff "$BASE_FULL" HEAD "${FILTER[@]}"
+@@ -72,7 +71,6 @@ base_sha=$BASE_SHA
+ base_full_sha=$BASE_FULL
+ base_subject=$BASE_SUBJECT
+ tip_sha=$HEAD_SHA
+-created=$(date -Iseconds)
+ commits=${#COMMITS[@]}
+ EOF
+ 

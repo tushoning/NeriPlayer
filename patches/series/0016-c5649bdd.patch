@@ -1,0 +1,122 @@
+From c5649bdd7f5f59db067bcd5659076d284c4ea44f Mon Sep 17 00:00:00 2001
+From: neri-fork <local@neriplayer.fork>
+Date: Sat, 7 Nov 2026 00:10:21 +0800
+Subject: [PATCH] =?UTF-8?q?fix:=20git=20am=20=E5=BF=85=E9=A1=BB=E5=B8=A6?=
+ =?UTF-8?q?=20--keep-cr=EF=BC=88=E4=B8=8A=E6=B8=B8=E6=9C=89=20CRLF=20?=
+ =?UTF-8?q?=E6=96=87=E4=BB=B6=EF=BC=8C=E9=BB=98=E8=AE=A4=E5=89=A5=E7=A6=BB?=
+ =?UTF-8?q?=20\r=20=E4=BC=9A=E5=AF=BC=E8=87=B4=20hunk=20=E5=A4=B1=E9=85=8D?=
+ =?UTF-8?q?=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .gitattributes                  |  2 ++
+ .github/workflows/fork-sync.yml |  2 +-
+ FORK.md                         | 19 ++++++++++++++-----
+ fork-tools/make-patches.sh      |  2 +-
+ fork-tools/sync-upstream.sh     |  8 ++++----
+ 5 files changed, 22 insertions(+), 11 deletions(-)
+
+diff --git a/.gitattributes b/.gitattributes
+index 7603462a..94431c7a 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -2,3 +2,5 @@
+ # 补丁的上下文行随之失配，git am / git apply 会莫名其妙报 "patch failed"。
+ *.patch -text
+ *.diff  -text
++# BASE 里的 sha 会被脚本直接读走做比对，末尾多一个 \r 就会失配
++patches/BASE -text
+diff --git a/.github/workflows/fork-sync.yml b/.github/workflows/fork-sync.yml
+index fa9dc032..71070e53 100644
+--- a/.github/workflows/fork-sync.yml
++++ b/.github/workflows/fork-sync.yml
+@@ -62,7 +62,7 @@ jobs:
+           # patches/ 是我方分支上的文件，切到上游分支后会被删掉，先挪到临时目录
+           cp -r patches /tmp/patches
+           git switch -c "sync/${GITHUB_RUN_ID}" upstream/master
+-          if git am -3 /tmp/patches/series/*.patch; then
++          if git am -3 --keep-cr /tmp/patches/series/*.patch; then
+             echo "ok=true" >> "$GITHUB_OUTPUT"
+             git submodule update --init --recursive
+           else
+diff --git a/FORK.md b/FORK.md
+index 71cb27fc..1d7c07b5 100644
+--- a/FORK.md
++++ b/FORK.md
+@@ -45,7 +45,7 @@ bash fork-tools/sync-upstream.sh --build
+ ```
+ 
+ 脚本做的事：`git fetch origin master` → 在新上游上开 `sync/<日期>` 分支 →
+-`git am -3 patches/series/*.patch` → 编译。
++`git am -3 --keep-cr patches/series/*.patch` → 编译。
+ 
+ - **没冲突**：分支直接变成「新上游 + 我方补丁」，`git diff` 复核后
+   `git checkout our-changes && git reset --hard sync/<日期>` 接受，
+@@ -237,13 +237,22 @@ key 泄露 = 所有 app 都能被人伪造升级；一把 key 用在 Google Play
+ 每天定时 / 手动触发
+   → fetch 上游
+   → 新提交？没有就退出
+-  → git am -3 patches/series/*.patch
++  → git am -3 --keep-cr patches/series/*.patch
+       失败 → 开 issue 列出冲突文件，停止（等人处理）
+-      成功 → 编译 :app:assembleTvrelease（用组织 secret 签名）
+-           → 打 tag tv-<上游sha前7位>
+-           → 建 Release，附 APK + §4 的改动声明
++      成功 → 编译 :app:assembleRelease -PbuildAllReleaseAbis=true（组织 secret 签名）
++           → 打 tag tv-<日期>-<上游sha前7位>
++           → 建 Release，附 APK + Release notes（含 §4 的改动声明与源码指引）
+            → push our-changes
+ ```
+ 
++> 为什么是 `assembleRelease` 而不是 `assembleTvrelease`：后者是给本地迭代用的
++> ——`.debug` 包名后缀 + 调试签名，方便覆盖安装不丢数据。对外发布的包必须用
++> 正式包名 + 正式签名，否则别人装不上，你自己的升级链也断在这里。
++>
++> 为什么必须 `--keep-cr`：上游有两个文件（`SongEncyclopediaContent.kt`、
++> `SongEncyclopediaArtistSection.kt`）的内容本身就是 CRLF。`git am` 默认会把补丁行
++> 末尾的 `\r` 剥掉，导致这两段 hunk 对不上，报 "patch does not apply"。
++> 这不是补丁坏了，是 `git am` 的默认行为，加 `--keep-cr` 即可。
++
+ 注意：Release 的 tag 一定要由 CI 打在**刚编译成功的那个 commit** 上，
+ GitHub 会自动给这个 tag 附源码包，这就是 §6 的合规闭环。
+diff --git a/fork-tools/make-patches.sh b/fork-tools/make-patches.sh
+index bbd95c68..0189b78d 100644
+--- a/fork-tools/make-patches.sh
++++ b/fork-tools/make-patches.sh
+@@ -97,7 +97,7 @@ trap cleanup EXIT
+   cd "$WT"
+   git reset -q --hard "$BASE_FULL"
+   git clean -qfdx
+-  git am -3 "$REPO_ROOT"/patches/series/*.patch >/dev/null
++  git am -3 --keep-cr "$REPO_ROOT"/patches/series/*.patch >/dev/null
+   git rev-parse HEAD^{tree} > "$TMPROOT/series.tree"
+ )
+ 
+diff --git a/fork-tools/sync-upstream.sh b/fork-tools/sync-upstream.sh
+index 9e1146e4..44098bbd 100644
+--- a/fork-tools/sync-upstream.sh
++++ b/fork-tools/sync-upstream.sh
+@@ -2,9 +2,9 @@
+ # ---------------------------------------------------------------------------
+ # 上游更新后，把我方改动重新落到新上游上
+ #
+-#   bash tools/sync-upstream.sh            # 用补丁链（git am -3），保留提交信息
+-#   bash tools/sync-upstream.sh --squash   # 用单个合并补丁（冲突一次解决）
+-#   bash tools/sync-upstream.sh --build    # 同步完顺便编译 TV release
++#   bash fork-tools/sync-upstream.sh       # 用补丁链（git am -3 --keep-cr），保留提交信息
++#   bash fork-tools/sync-upstream.sh --squash   # 用单个合并补丁（冲突一次解决）
++#   bash fork-tools/sync-upstream.sh --build    # 同步完顺便编译 TV release
+ #
+ # 成功 → 当前分支变成「新上游 + 我方补丁」，直接 push 即可。
+ # 冲突 → 停下来，工作区保留冲突标记，按提示手工解决后 git am --continue。
+@@ -59,7 +59,7 @@ if [ "$MODE" = squash ]; then
+   git apply -3 patches/tv-fork.diff
+   RC=$?
+ else
+-  git am -3 patches/series/*.patch
++  git am -3 --keep-cr patches/series/*.patch
+   RC=$?
+ fi
+ set -e

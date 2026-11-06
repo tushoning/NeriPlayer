@@ -1,0 +1,93 @@
+From 50f9d6847ae5a69f28985320e3eaa3abe4edd9cc Mon Sep 17 00:00:00 2001
+From: local <local@work>
+Date: Mon, 2 Nov 2026 08:15:54 +0800
+Subject: [PATCH] tweak: now-playing title/artist match lyrics page size; drop
+ focus ring on lyrics title
+
+---
+ .../ui/screen/lyrics/LyricsScreen.kt          |  8 +++++++
+ .../nowplaying/NowPlayingTrackIdentity.kt     | 22 +++++++++++++------
+ 2 files changed, 23 insertions(+), 7 deletions(-)
+
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/lyrics/LyricsScreen.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/lyrics/LyricsScreen.kt
+index 26f9778a..d4a8ff45 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/lyrics/LyricsScreen.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/lyrics/LyricsScreen.kt
+@@ -132,6 +132,7 @@ import androidx.compose.ui.unit.dp
+ import androidx.compose.ui.unit.sp
+ import androidx.compose.ui.zIndex
+ import androidx.compose.ui.focus.FocusRequester
++import androidx.compose.ui.focus.focusProperties
+ import androidx.compose.ui.focus.focusRequester
+ import androidx.compose.ui.layout.Layout
+ import androidx.compose.ui.unit.Constraints
+@@ -166,6 +167,7 @@ import moe.ouom.neriplayer.ui.component.local.LocalSongSyncConfirmDialog
+ import moe.ouom.neriplayer.ui.component.lyrics.LyricVisualSpec
+ import moe.ouom.neriplayer.ui.component.playback.PlaybackControlIndicator
+ import moe.ouom.neriplayer.ui.component.playback.NowPlayingSongTitle
++import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+ import moe.ouom.neriplayer.ui.theme.LocalNeriTargetColorScheme
+ import moe.ouom.neriplayer.ui.component.playback.scaleButtonSize
+ import moe.ouom.neriplayer.ui.component.playback.scaleIconSize
+@@ -595,6 +597,12 @@ fun LyricsScreen(
+                                 modifier = Modifier
+                                     .widthIn(max = maxWidth)
+                                     .clip(RoundedCornerShape(6.dp))
++                                    // 电视：歌名是纯展示，不要焦点框（方向键移到这一行会亮一圈很脏）
++                                    .then(
++                                        if (LocalIsTelevision.current) {
++                                            Modifier.focusProperties { canFocus = false }
++                                        } else Modifier
++                                    )
+                                     .combinedClickable(
+                                         onClick = {},
+                                         onLongClick = { showSongNameMenu = true }
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/NowPlayingTrackIdentity.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/NowPlayingTrackIdentity.kt
+index 1d7ef0e3..5a376ef0 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/NowPlayingTrackIdentity.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/NowPlayingTrackIdentity.kt
+@@ -48,7 +48,6 @@ import moe.ouom.neriplayer.data.local.media.displayName
+ import moe.ouom.neriplayer.ui.component.playback.NowPlayingSongTitle
+ import androidx.compose.ui.focus.focusProperties
+ import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+-import androidx.compose.ui.unit.sp
+ 
+ internal data class NowPlayingTrackDisplay(
+     val name: String?,
+@@ -76,11 +75,11 @@ internal fun resolveNowPlayingTrackIdentityPresentation(
+     typography: Typography,
+     isTelevision: Boolean = false
+ ): NowPlayingTrackIdentityPresentation = when (layout) {
+-    // 电视：坐在两三米外看，这两行字要明显大一号；两行都居中（容器会按整屏宽度居中）
++    // 电视：和整页歌词的歌名/歌手名同号（titleLarge / bodyLarge），两行居中
+     NowPlayingTrackIdentityLayout.Compact -> if (isTelevision) {
+         NowPlayingTrackIdentityPresentation(
+-            typography.titleLarge.copy(fontSize = 32.sp, lineHeight = 42.sp),
+-            typography.bodyMedium.copy(fontSize = 18.sp, lineHeight = 26.sp),
++            typography.titleLarge,
++            typography.bodyLarge,
+             Alignment.CenterHorizontally,
+             Modifier
+         )
+@@ -89,9 +88,18 @@ internal fun resolveNowPlayingTrackIdentityPresentation(
+             typography.titleLarge, typography.bodyMedium, Alignment.Start, Modifier
+         )
+     }
+-    NowPlayingTrackIdentityLayout.Expanded -> NowPlayingTrackIdentityPresentation(
+-        typography.headlineSmall, typography.bodyLarge, Alignment.CenterHorizontally, Modifier
+-    )
++    NowPlayingTrackIdentityLayout.Expanded -> if (isTelevision) {
++        NowPlayingTrackIdentityPresentation(
++            typography.titleLarge,
++            typography.bodyLarge,
++            Alignment.CenterHorizontally,
++            Modifier
++        )
++    } else {
++        NowPlayingTrackIdentityPresentation(
++            typography.headlineSmall, typography.bodyLarge, Alignment.CenterHorizontally, Modifier
++        )
++    }
+     NowPlayingTrackIdentityLayout.LargeCover -> NowPlayingTrackIdentityPresentation(
+         typography.headlineMedium,
+         typography.titleMedium.copy(fontWeight = FontWeight.Normal),

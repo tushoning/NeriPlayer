@@ -1,0 +1,160 @@
+From 9bc3eaad0041a7bca00c7dddd6d49a4fbb3d0267 Mon Sep 17 00:00:00 2001
+From: neri-fork <local@neriplayer.fork>
+Date: Fri, 6 Nov 2026 23:02:58 +0800
+Subject: [PATCH] =?UTF-8?q?fix(tv):=20=E8=AE=BE=E7=BD=AE=E4=BA=8C=E7=BA=A7?=
+ =?UTF-8?q?=E9=A1=B5=E3=80=8C=E5=BF=AB=E9=80=9F=E6=8C=89=E5=B7=A6=EF=BC=8C?=
+ =?UTF-8?q?=E7=84=A6=E7=82=B9=E8=A2=AB=E6=8A=A2=E5=9B=9E=E8=BF=94=E5=9B=9E?=
+ =?UTF-8?q?=E9=94=AE=E3=80=8D+=20=E8=BF=94=E5=9B=9E=E5=90=8E=E5=88=97?=
+ =?UTF-8?q?=E8=A1=A8=E5=9B=9E=E9=A1=B6?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 内容区根节点给每次按键打计数（TvUserInput）：逐帧重试 requestFocus 的补偿逻辑
+  在「重试开始后用户按过键」时立刻收手，不再把光标从侧栏抢回返回按钮。
+- 返回键获得焦点时顺手把正文滚回顶部那段只对「用户自己按上走上来」生效，
+  程序进页面抢焦点时不触发（原来会把这一页记住的滚动位置抹掉 → 返回上一页就回顶）。
+- 从二级页返回后落回原入口行：由单次请求改成最多 6 帧重试（同样按键即停），
+  弱机型上首页行还没挂上节点时不会再退化成「光标回标签栏」。
+---
+ .../ui/screen/tab/settings/SettingsScreen.kt  | 16 +++++++++---
+ .../settings/page/MiuixSettingsScaffold.kt    | 26 +++++++++++++++----
+ .../ouom/neriplayer/ui/tv/TvFocusBoundary.kt  | 26 +++++++++++++++++++
+ 3 files changed, 59 insertions(+), 9 deletions(-)
+
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/SettingsScreen.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/SettingsScreen.kt
+index ee544d14..1093cd37 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/SettingsScreen.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/SettingsScreen.kt
+@@ -157,6 +157,7 @@ import moe.ouom.neriplayer.ui.screen.tab.settings.navigation.canNavigateBackFrom
+ import moe.ouom.neriplayer.ui.screen.tab.settings.page.SettingsEntryFocus
+ import moe.ouom.neriplayer.ui.component.navigation.TvTopBarFocus
+ import moe.ouom.neriplayer.navigation.Destinations
++import moe.ouom.neriplayer.ui.tv.TvUserInput
+ import moe.ouom.neriplayer.ui.tv.TvTabRootBus
+ 
+ @OptIn(ExperimentalMaterial3Api::class)
+@@ -312,11 +313,18 @@ internal fun SettingsScreen(
+             val previous = previousSettingsPage
+             previousSettingsPage = activeSettingsPage
+             if (previous == null || activeSettingsPage != null) return@LaunchedEffect
+-            withFrameNanos { }
+-            withFrameNanos { }
+-            if (!SettingsEntryFocus.request(SettingsEntryFocus.lastFocusedPage)) {
+-                TvTopBarFocus.requestTab(Destinations.Settings.route)
++            // 首页的行是懒加载的：返回瞬间那一行可能还没挂上节点，单次 requestFocus
++            // 会失败，退到「光标回标签栏」——用户看到的就是「返回上一页没有记忆了」。
++            // 逐帧试几帧；但用户一按键就收手，别和用户抢光标。
++            val startTick = TvUserInput.keyDownTick
++            repeat(6) {
++                withFrameNanos { }
++                if (TvUserInput.keyDownTick != startTick) return@LaunchedEffect
++                if (SettingsEntryFocus.request(SettingsEntryFocus.lastFocusedPage)) {
++                    return@LaunchedEffect
++                }
+             }
++            TvTopBarFocus.requestTab(Destinations.Settings.route)
+         }
+     }
+     ObserveSettingsBackupPlaylistCount(activeSettingsPage, context, backupTransfer)
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/page/MiuixSettingsScaffold.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/page/MiuixSettingsScaffold.kt
+index 01e8f81c..e9b9224c 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/page/MiuixSettingsScaffold.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/page/MiuixSettingsScaffold.kt
+@@ -72,6 +72,7 @@ import moe.ouom.neriplayer.ui.theme.LocalHasCustomBackground
+ import moe.ouom.neriplayer.ui.theme.NeriDesign
+ import moe.ouom.neriplayer.ui.tv.TvFocusIndication
+ import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
++import moe.ouom.neriplayer.ui.tv.TvUserInput
+ import moe.ouom.neriplayer.ui.tv.tvPageSidePadding
+ import moe.ouom.neriplayer.ui.tv.tvBringIntoViewOnFocus
+ import moe.ouom.neriplayer.ui.tv.tvClampLeft
+@@ -603,15 +604,25 @@ internal fun MiuixSettingsDetailScaffold(
+     // 全站详情页的返回键才落在同一条竖线上（手机/平板本来就没有 gutter）。
+     // 二级页一进来光标默认落在左上角的返回按钮上（标题就是这一页的身份，
+     // 换页时 title 变，等于「又进了一个二级页」）。页面刚切过来时焦点节点还没挂好，
+-    // 单次 requestFocus 会失败，所以逐帧试几帧。
++    // 单次 requestFocus 会失败，所以逐帧试几帧 —— **但用户一按键就立刻停手**。
++    // 否则用户按左把光标送进侧栏后，下一帧这个循环又把它抢回返回键，
++    // 表现就是「返回键闪一下、焦点还留在返回键上」。
+     val backFocusRequester = remember { FocusRequester() }
+     val settingsScrollScope = rememberCoroutineScope()
++    // 这次焦点是程序自己抢的：抢到时不要顺手把正文滚回顶部 —— 那是「用户按上键
++    // 走回返回键」才需要的动作，进页面时执行会把这一页记住的位置清掉（看着就是
++    // 「返回上一页，列表回顶了」）。
++    val autoFocusingBack = remember { mutableStateOf(false) }
+     LaunchedEffect(title, showBackButton, isTelevision) {
+         if (!isTelevision || !showBackButton) return@LaunchedEffect
++        val startTick = TvUserInput.keyDownTick
+         repeat(6) {
+-            if (runCatching { backFocusRequester.requestFocus() }.getOrDefault(false)) {
+-                return@LaunchedEffect
+-            }
++            // 用户已经自己按过键，别再跟用户抢光标
++            if (TvUserInput.keyDownTick != startTick) return@LaunchedEffect
++            autoFocusingBack.value = true
++            val focused = runCatching { backFocusRequester.requestFocus() }.getOrDefault(false)
++            autoFocusingBack.value = false
++            if (focused) return@LaunchedEffect
+             withFrameNanos { }
+         }
+     }
+@@ -641,8 +652,13 @@ internal fun MiuixSettingsDetailScaffold(
+                                         // 电视：光标从正文走到返回键时，正文如果还停在中间，
+                                         // 顺手把它带回顶部 —— 页面顶部那段说明文字是纯文字、
+                                         // 拿不到焦点，不这样处理就永远滚不回来了。
++                                        // 程序自己抢焦点那一次不算（autoFocusingBack）。
+                                         .onFocusChanged { focus ->
+-                                            if (focus.isFocused && listState.canScrollBackward) {
++                                            if (
++                                                focus.isFocused &&
++                                                !autoFocusingBack.value &&
++                                                listState.canScrollBackward
++                                            ) {
+                                                 // 瞬时到位：动画还没跑完就按下键的话，
+                                                 // 焦点项的 bringIntoView 会再抢一次滚动，页面会抖一下。
+                                                 settingsScrollScope.launch {
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvFocusBoundary.kt b/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvFocusBoundary.kt
+index cbc00048..6a62174f 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvFocusBoundary.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvFocusBoundary.kt
+@@ -115,6 +115,29 @@ object TvFocusEdge {
+     }
+ }
+ 
++/**
++ * 电视：内容区里「用户按过多少下键」的计数器。
++ *
++ * 页面切过来之后，有几处逻辑会「逐帧重试 requestFocus」来补偿初始焦点（设置二级页
++ * 要把光标送到返回键）。用户一旦自己按键，这些补偿必须立刻停手 —— 否则就会出现
++ * 「按左已经把光标送进侧栏，下一帧又被拽回返回键」的闪烁。
++ *
++ * 判断方式不是「最近 N 毫秒内按过键」（进页面的那一下确定键本身就会命中），
++ * 而是「重试开始之后有没有新按键」：调用方记下一次计数值，循环里比对。
++ *
++ * 写入点是内容区根节点的按键监听（[tvSealVerticalEdges]），内容区里任何一次按键
++ * 都会经过它。必须是 @Volatile 普通字段：按键回调与协程要读到同一份最新值。
++ */
++object TvUserInput {
++    @Volatile
++    var keyDownTick: Int = 0
++        private set
++
++    fun stampKeyDown() {
++        keyDownTick++
++    }
++}
++
+ /**
+  * 把这个可聚焦项标记为「所在行的第 0 列」。
+  *
+@@ -163,6 +186,9 @@ fun Modifier.tvSealVerticalEdges(): Modifier {
+         .onPreviewKeyEvent { event ->
+             when {
+                 event.type == KeyEventType.KeyDown -> {
++                    // 任何一次按键都算「用户已接管光标」：页面里那些逐帧重试
++                    // requestFocus 的补偿逻辑靠这个计数及时收手（见 [TvUserInput]）
++                    TvUserInput.stampKeyDown()
+                     lastVertical.intValue = when (event.key) {
+                         Key.DirectionUp -> -1
+                         Key.DirectionDown -> 1

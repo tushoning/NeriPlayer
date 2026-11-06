@@ -1,0 +1,1042 @@
+From 4633d0ee8c05d1cdee4de99c0e827e751a850a81 Mon Sep 17 00:00:00 2001
+From: neri-fork <local@neriplayer.fork>
+Date: Fri, 6 Nov 2026 22:12:31 +0800
+Subject: [PATCH] =?UTF-8?q?refactor(tv):=20=E5=88=A0=E9=99=A4=E6=AD=BB?=
+ =?UTF-8?q?=E4=BB=A3=E7=A0=81=E4=B8=8E=E9=87=8D=E5=A4=8D=E5=AE=9E=E7=8E=B0?=
+ =?UTF-8?q?=EF=BC=88-641=20=E8=A1=8C=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 删 ui/navigation/MainTabTransitionController.kt 及其测试：旧转场实现，生产用的是
+  MainTabLayerTransitionController（已有自己的测试）
+- 删 ui/tv/TvPerfProbe.kt：临时主线程探针，注释写明定位完即删
+- 删 tvStripItemFocus（空实现，6 处调用）与 tvGridClampLeft（无调用）
+- 删 TvLayoutMetrics 里恒等的 tvPageSidePaddingOrZero / tvContentSidePadding，
+  pageSidePaddingOuterOr 与 pageSidePaddingOr 合并
+- TvTabConfirmBus / TvTabRootBus 合并到 TvRouteRequestBus 基类，统一 events 字段
+- TvDeferredList 里已无调用的 rememberDeferredListReveal 删除，文档保留
+---
+ .../ouom/neriplayer/NeriPlayerApplication.kt  |   4 -
+ .../navigation/MainTabTransitionController.kt | 234 ------------------
+ .../ui/screen/host/ExploreHostScreen.kt       |   2 +-
+ .../ui/screen/host/HomeHostScreen.kt          |   2 +-
+ .../ui/screen/host/LibraryHostScreen.kt       |   2 +-
+ .../tab/explore/ExploreBrowseContent.kt       |   2 -
+ .../ui/screen/tab/explore/ExploreScreen.kt    |   3 -
+ .../screen/tab/home/BiliMusicHomeSections.kt  |   3 -
+ .../ui/screen/tab/home/HomeScreen.kt          |   5 +-
+ .../ui/screen/tab/settings/SettingsScreen.kt  |   2 +-
+ .../ouom/neriplayer/ui/tv/TvDeferredList.kt   |  39 +--
+ .../moe/ouom/neriplayer/ui/tv/TvFocusNav.kt   |  37 +--
+ .../ouom/neriplayer/ui/tv/TvLayoutMetrics.kt  |  37 +--
+ .../moe/ouom/neriplayer/ui/tv/TvPerfProbe.kt  |  71 ------
+ .../ouom/neriplayer/ui/tv/TvTabConfirmBus.kt  |  47 ----
+ .../neriplayer/ui/tv/TvTabRequestBuses.kt     |  67 +++++
+ .../moe/ouom/neriplayer/ui/tv/TvTabRootBus.kt |  49 ----
+ .../MainTabTransitionRequestTest.kt           | 152 ------------
+ 18 files changed, 92 insertions(+), 666 deletions(-)
+ delete mode 100644 app/src/main/java/moe/ouom/neriplayer/ui/navigation/MainTabTransitionController.kt
+ delete mode 100644 app/src/main/java/moe/ouom/neriplayer/ui/tv/TvPerfProbe.kt
+ delete mode 100644 app/src/main/java/moe/ouom/neriplayer/ui/tv/TvTabConfirmBus.kt
+ create mode 100644 app/src/main/java/moe/ouom/neriplayer/ui/tv/TvTabRequestBuses.kt
+ delete mode 100644 app/src/main/java/moe/ouom/neriplayer/ui/tv/TvTabRootBus.kt
+ delete mode 100644 app/src/test/java/moe/ouom/neriplayer/ui/navigation/MainTabTransitionRequestTest.kt
+
+diff --git a/app/src/main/java/moe/ouom/neriplayer/NeriPlayerApplication.kt b/app/src/main/java/moe/ouom/neriplayer/NeriPlayerApplication.kt
+index 69d4c807..7f670283 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/NeriPlayerApplication.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/NeriPlayerApplication.kt
+@@ -79,10 +79,6 @@ class NeriPlayerApplication : Application(), WorkConfiguration.Provider {
+ 
+     override fun onCreate() {
+         super.onCreate()
+-        // 临时：主线程消息耗时探针，仅用来定位电视端切页卡顿，定位完删除
+-        if (BuildConfig.DEBUG) {
+-            moe.ouom.neriplayer.ui.tv.TvPerfProbe.install()
+-        }
+         AndroidRuntimeCompatibility.installHiddenApiExemptions()
+         // 电视 A/B 开关（adb: settings put global neri_tv_biv 0/1），启动时读一次
+         moe.ouom.neriplayer.ui.tv.TvTuning.refresh(this)
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/navigation/MainTabTransitionController.kt b/app/src/main/java/moe/ouom/neriplayer/ui/navigation/MainTabTransitionController.kt
+deleted file mode 100644
+index ae60e55d..00000000
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/navigation/MainTabTransitionController.kt
++++ /dev/null
+@@ -1,234 +0,0 @@
+-package moe.ouom.neriplayer.ui.navigation
+-
+-import androidx.compose.animation.core.FiniteAnimationSpec
+-import androidx.compose.animation.core.animate
+-import androidx.compose.runtime.Composable
+-import androidx.compose.runtime.DisposableEffect
+-import androidx.compose.runtime.LaunchedEffect
+-import androidx.compose.runtime.Stable
+-import androidx.compose.runtime.getValue
+-import androidx.compose.runtime.mutableFloatStateOf
+-import androidx.compose.runtime.mutableStateOf
+-import androidx.compose.runtime.remember
+-import androidx.compose.runtime.rememberCoroutineScope
+-import androidx.compose.runtime.rememberUpdatedState
+-import androidx.compose.runtime.setValue
+-import kotlinx.coroutines.CoroutineScope
+-import kotlinx.coroutines.Job
+-import kotlinx.coroutines.launch
+-import moe.ouom.neriplayer.ui.effect.glass.ADVANCED_GLASS_MAIN_TAB_EXIT_DURATION_MS
+-import moe.ouom.neriplayer.ui.effect.glass.advancedGlassMainTabEnterSpec
+-import moe.ouom.neriplayer.ui.effect.glass.advancedGlassMainTabExitSpec
+-import kotlin.math.abs
+-import kotlin.math.roundToInt
+-
+-@Stable
+-internal class MainTabTransitionController(
+-    private val scope: CoroutineScope,
+-    initialRoute: String?,
+-    initialEntryId: String?,
+-    private val onNavigate: (String) -> String?
+-) {
+-    private var offsetState by mutableFloatStateOf(0f)
+-    private var displayedRoute = initialRoute
+-    private var renderedRouteState by mutableStateOf(initialRoute)
+-    private var renderedEntryIdState by mutableStateOf(initialEntryId)
+-    private var requestedRoute: String? = null
+-    private var transitionJob: Job? = null
+-    private var generation = 0L
+-    private var runningState by mutableStateOf(false)
+-
+-    internal val isRunning: Boolean
+-        get() = runningState
+-
+-    internal val offsetFraction: Float
+-        get() = offsetState
+-
+-    internal val renderedRoute: String?
+-        get() = renderedRouteState
+-
+-    internal val renderedEntryId: String?
+-        get() = renderedEntryIdState
+-
+-    internal fun request(targetRoute: String) {
+-        if (targetRoute == requestedRoute) return
+-        if (!runningState && targetRoute == displayedRoute) return
+-
+-        val direction = resolveMainTabTransitionDirection(displayedRoute, targetRoute)
+-        if (targetRoute == displayedRoute) {
+-            requestedRoute = targetRoute
+-            val requestGeneration = ++generation
+-            cancelCurrentTransition()
+-            runningState = true
+-            transitionJob = scope.launch {
+-                try {
+-                    animateIn(requestGeneration)
+-                } finally {
+-                    if (requestGeneration == generation) {
+-                        runningState = false
+-                        requestedRoute = null
+-                        transitionJob = null
+-                    }
+-                }
+-            }
+-            return
+-        }
+-        if (direction == null) {
+-            val requestGeneration = ++generation
+-            cancelCurrentTransition()
+-            runningState = true
+-            transitionJob = scope.launch {
+-                try {
+-                    offsetState = 0f
+-                    displayedRoute = targetRoute
+-                    val targetEntryId = onNavigate(targetRoute)
+-                    renderedRouteState = targetRoute
+-                    renderedEntryIdState = targetEntryId
+-                } finally {
+-                    if (requestGeneration == generation) {
+-                        runningState = false
+-                        requestedRoute = null
+-                        transitionJob = null
+-                    }
+-                }
+-            }
+-            return
+-        }
+-
+-        requestedRoute = targetRoute
+-        val requestGeneration = ++generation
+-        cancelCurrentTransition()
+-        runningState = true
+-        transitionJob = scope.launch {
+-            try {
+-                val activeDirection = resolveMainTabTransitionDirection(
+-                    initialRoute = displayedRoute,
+-                    targetRoute = targetRoute
+-                ) ?: return@launch
+-                val exitTarget = -activeDirection * MAIN_TAB_EDGE_OFFSET_FRACTION
+-                val remainingExitFraction = (
+-                    abs(exitTarget - offsetState) / MAIN_TAB_EDGE_OFFSET_FRACTION
+-                ).coerceIn(MAIN_TAB_MIN_EXIT_DURATION_FRACTION, 1f)
+-                val exitDurationMillis = (
+-                    ADVANCED_GLASS_MAIN_TAB_EXIT_DURATION_MS *
+-                        remainingExitFraction
+-                ).roundToInt()
+-                animateOffsetTo(
+-                    targetValue = exitTarget,
+-                    animationSpec = advancedGlassMainTabExitSpec(exitDurationMillis),
+-                    requestGeneration = requestGeneration
+-                )
+-
+-                commitRouteAndAnimateIn(
+-                    targetRoute = targetRoute,
+-                    direction = activeDirection,
+-                    requestGeneration = requestGeneration
+-                )
+-            } finally {
+-                if (requestGeneration == generation) {
+-                    runningState = false
+-                    requestedRoute = null
+-                    transitionJob = null
+-                }
+-            }
+-        }
+-    }
+-
+-    internal fun syncRoute(route: String?, entryId: String?) {
+-        if (route == null) return
+-        if (runningState) {
+-            if (route == displayedRoute || route == requestedRoute) {
+-                if (route == renderedRouteState && entryId != null) {
+-                    renderedEntryIdState = entryId
+-                }
+-                return
+-            }
+-            generation++
+-            cancelCurrentTransition()
+-            runningState = false
+-        }
+-        displayedRoute = route
+-        renderedRouteState = route
+-        renderedEntryIdState = entryId
+-        requestedRoute = null
+-        offsetState = 0f
+-    }
+-
+-    internal fun dispose() {
+-        generation++
+-        cancelCurrentTransition()
+-        runningState = false
+-        requestedRoute = null
+-    }
+-
+-    private fun cancelCurrentTransition() {
+-        transitionJob?.cancel()
+-        transitionJob = null
+-    }
+-
+-    private suspend fun commitRouteAndAnimateIn(
+-        targetRoute: String,
+-        direction: Int,
+-        requestGeneration: Long
+-    ) {
+-        offsetState = direction * MAIN_TAB_EDGE_OFFSET_FRACTION
+-        displayedRoute = targetRoute
+-        val targetEntryId = onNavigate(targetRoute)
+-        renderedRouteState = targetRoute
+-        renderedEntryIdState = targetEntryId
+-        animateIn(requestGeneration)
+-    }
+-
+-    private suspend fun animateIn(requestGeneration: Long) {
+-        animateOffsetTo(
+-            targetValue = 0f,
+-            animationSpec = advancedGlassMainTabEnterSpec(),
+-            requestGeneration = requestGeneration
+-        )
+-    }
+-
+-    private suspend fun animateOffsetTo(
+-        targetValue: Float,
+-        animationSpec: FiniteAnimationSpec<Float>,
+-        requestGeneration: Long
+-    ) {
+-        animate(
+-            initialValue = offsetState,
+-            targetValue = targetValue,
+-            animationSpec = animationSpec
+-        ) { value, _ ->
+-            if (requestGeneration == generation) {
+-                offsetState = value
+-            }
+-        }
+-    }
+-}
+-
+-@Composable
+-internal fun rememberMainTabTransitionController(
+-    currentRoute: String?,
+-    currentEntryId: String?,
+-    initialRoute: String,
+-    onNavigate: (String) -> String?
+-): MainTabTransitionController {
+-    val scope = rememberCoroutineScope()
+-    val latestOnNavigate by rememberUpdatedState(onNavigate)
+-    val controller = remember(scope) {
+-        MainTabTransitionController(
+-            scope = scope,
+-            initialRoute = currentRoute ?: initialRoute,
+-            initialEntryId = currentEntryId,
+-            onNavigate = { route -> latestOnNavigate(route) }
+-        )
+-    }
+-    LaunchedEffect(controller, currentRoute, currentEntryId, controller.isRunning) {
+-        controller.syncRoute(currentRoute, currentEntryId)
+-    }
+-    DisposableEffect(controller) {
+-        onDispose(controller::dispose)
+-    }
+-    return controller
+-}
+-
+-internal const val MAIN_TAB_EDGE_OFFSET_FRACTION = 0.14f
+-private const val MAIN_TAB_MIN_EXIT_DURATION_FRACTION = 0.25f
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/ExploreHostScreen.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/ExploreHostScreen.kt
+index 18cf7659..952d7eaa 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/ExploreHostScreen.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/ExploreHostScreen.kt
+@@ -293,7 +293,7 @@ fun ExploreHostScreen(
+     // 详情态下 ExploreScreen 不在组合里，刷新总线没人收，所以先在这里把「回根」
+     // 翻译成「退出详情 + 清掉残留的滚动恢复标记 + 回顶」；根态才走原来的刷新逻辑。
+     LaunchedEffect(Unit) {
+-        TvTabRootBus.requests.collect { route ->
++        TvTabRootBus.events.collect { route ->
+             if (route != Destinations.Explore.route) return@collect
+             if (selected != null) {
+                 cancelPendingNeteaseCoverWarmup()
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/HomeHostScreen.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/HomeHostScreen.kt
+index c7f3a730..db8ca287 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/HomeHostScreen.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/HomeHostScreen.kt
+@@ -393,7 +393,7 @@ fun HomeHostScreen(
+     // 详情态下 HomeScreen 根本不在组合里，刷新总线没人收，所以先在这里把「回根」
+     // 翻译成「退出详情 + 清掉残留的滚动恢复标记 + 回顶」；根态才走原来的刷新逻辑。
+     LaunchedEffect(Unit) {
+-        TvTabRootBus.requests.collect { route ->
++        TvTabRootBus.events.collect { route ->
+             if (route != Destinations.Home.route) return@collect
+             if (selected != null) {
+                 cancelPendingNeteaseCoverWarmup()
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/LibraryHostScreen.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/LibraryHostScreen.kt
+index a13298c2..90154297 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/LibraryHostScreen.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/LibraryHostScreen.kt
+@@ -541,7 +541,7 @@ fun LibraryHostScreen(
+     // 详情态下 LibraryScreen 不在组合里，刷新总线没人收，所以先在这里把「回根」
+     // 翻译成「退出详情 + 清掉残留的滚动恢复标记 + 回顶」；根态才走原来的刷新逻辑。
+     LaunchedEffect(Unit) {
+-        TvTabRootBus.requests.collect { route ->
++        TvTabRootBus.events.collect { route ->
+             if (route != Destinations.Library.route) return@collect
+             if (selected != null) {
+                 cancelPendingNeteaseCoverWarmup()
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/explore/ExploreBrowseContent.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/explore/ExploreBrowseContent.kt
+index f843811d..7bcbdd27 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/explore/ExploreBrowseContent.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/explore/ExploreBrowseContent.kt
+@@ -4,7 +4,6 @@ import moe.ouom.neriplayer.ui.tv.tvReturnFocus
+ import moe.ouom.neriplayer.ui.theme.neriRoundedShape
+ import androidx.compose.foundation.BorderStroke
+ import androidx.compose.foundation.clickable
+-import moe.ouom.neriplayer.ui.tv.tvStripItemFocus
+ import moe.ouom.neriplayer.ui.tv.tvStripClamp
+ import androidx.compose.foundation.layout.Arrangement
+ import androidx.compose.foundation.layout.Box
+@@ -169,7 +168,6 @@ internal fun NeteaseDefaultContent(
+                             modifier = Modifier
+                                 // 电视：焦点走到哪滚到哪，且走到尽头不再往右跑
+                                 // （不夹住的话会翻到分页器的下一页，画面整块左移）
+-                                .tvStripItemFocus(tagListState, index)
+                                 .tvStripClamp(tagListState, index, displayKeys.lastIndex)
+                         )
+                     }
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/explore/ExploreScreen.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/explore/ExploreScreen.kt
+index 3d313b19..e7cc7605 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/explore/ExploreScreen.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/explore/ExploreScreen.kt
+@@ -37,7 +37,6 @@ import androidx.compose.ui.semantics.contentDescription
+ import androidx.compose.foundation.shape.CircleShape
+ import moe.ouom.neriplayer.ui.component.common.CleanSegmentedTabs
+ import moe.ouom.neriplayer.ui.theme.NeriDesign
+-import moe.ouom.neriplayer.ui.tv.tvStripItemFocus
+ import moe.ouom.neriplayer.ui.tv.tvStripClamp
+ import moe.ouom.neriplayer.ui.tv.TvTabConfirmBus
+ import moe.ouom.neriplayer.ui.screen.tab.library.LibraryPrimaryTabShape
+@@ -1899,7 +1898,6 @@ internal fun ExploreSearchTypeBar(
+                             // 电视不需要 48dp 最小触控尺寸，不关掉这一行压不到 26dp
+                             enforceMinInteractiveSize = !isTelevision,
+                             modifier = Modifier
+-                                .tvStripItemFocus(neteaseTypeState, index)
+                                 // 左端不夹：左边就是搜索框，光标要能走过去
+                                 .tvStripClamp(
+                                     neteaseTypeState,
+@@ -1941,7 +1939,6 @@ internal fun ExploreSearchTypeBar(
+                             // 电视不需要 48dp 最小触控尺寸，不关掉这一行压不到 26dp
+                             enforceMinInteractiveSize = !isTelevision,
+                             modifier = Modifier
+-                                .tvStripItemFocus(youtubeTypeState, index)
+                                 .tvStripClamp(
+                                     youtubeTypeState,
+                                     index,
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/home/BiliMusicHomeSections.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/home/BiliMusicHomeSections.kt
+index c1514278..ce30e79f 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/home/BiliMusicHomeSections.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/home/BiliMusicHomeSections.kt
+@@ -38,7 +38,6 @@ import androidx.compose.runtime.remember
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import moe.ouom.neriplayer.ui.tv.tvStripClamp
+-import moe.ouom.neriplayer.ui.tv.tvStripItemFocus
+ import androidx.compose.foundation.lazy.rememberLazyListState
+ import androidx.compose.ui.draw.clip
+ import androidx.compose.ui.graphics.vector.ImageVector
+@@ -307,7 +306,6 @@ private fun BiliMusicRankStrip(
+                 song = song,
+                 offlineMode = offlineMode,
+                 modifier = Modifier
+-                    .tvStripItemFocus(stripState, index)
+                     .tvStripClamp(stripState, index, state.songs.lastIndex),
+                 onClick = {
+                     val target = song.toPlayableBiliVideoItem()
+@@ -488,7 +486,6 @@ private fun BiliMusicHotStrip(
+                 index = index,
+                 offlineMode = offlineMode,
+                 modifier = Modifier
+-                    .tvStripItemFocus(stripState, index)
+                     .tvStripClamp(stripState, index, videos.lastIndex),
+                 onClick = {
+                     val target = playableVideos.indexOfFirst {
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/home/HomeScreen.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/home/HomeScreen.kt
+index 8cda0f06..a665ab44 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/home/HomeScreen.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/home/HomeScreen.kt
+@@ -185,14 +185,13 @@ import kotlin.math.min
+ import java.util.Locale
+ import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+ import moe.ouom.neriplayer.ui.tv.tvBringGridToTopOnUp
+-import moe.ouom.neriplayer.ui.tv.pageSidePaddingOuterOr
++import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
+ import moe.ouom.neriplayer.ui.tv.LocalTvRowMenuKeyState
+ import moe.ouom.neriplayer.ui.tv.TvRowMenuKeyEffect
+ import moe.ouom.neriplayer.ui.tv.rememberTvMenuFirstItemFocus
+ import moe.ouom.neriplayer.ui.tv.rememberTvDeferredImage
+ import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
+ import moe.ouom.neriplayer.ui.tv.rememberTvRowMenuKeyState
+-import moe.ouom.neriplayer.ui.tv.tvStripItemFocus
+ import moe.ouom.neriplayer.ui.tv.tvReturnFocus
+ import moe.ouom.neriplayer.ui.tv.tvStripClamp
+ import moe.ouom.neriplayer.ui.tv.tvBringIntoViewOnFocus
+@@ -467,7 +466,7 @@ fun HomeScreen(
+                 modifier = Modifier
+                     // 电视：左右留白跟其它页面用同一个值；同时不再套 1240dp 上限——
+                     // 窗口宽度会随用户的缩放变化，这个上限会把整页压成中间的一条。
+-                    .padding(horizontal = pageSidePaddingOuterOr(pageHorizontalPadding), vertical = 4.dp)
++                    .padding(horizontal = pageSidePaddingOr(pageHorizontalPadding), vertical = 4.dp)
+                     .then(if (isTelevision) Modifier else Modifier.widthIn(max = 1240.dp))
+                     .fillMaxWidth()
+                     .weight(1f)
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/SettingsScreen.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/SettingsScreen.kt
+index 6c5a4f94..ee544d14 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/SettingsScreen.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/SettingsScreen.kt
+@@ -331,7 +331,7 @@ internal fun SettingsScreen(
+     // SharedFlow 没有 replay，中间那一拍的事件会丢；而且 collect 里改 activePage
+     // 会让 effect 重启，后续挂起的 scrollToItem 会被取消。
+     LaunchedEffect(Unit) {
+-        TvTabRootBus.requests.collect { route ->
++        TvTabRootBus.events.collect { route ->
+             if (route != Destinations.Settings.route) return@collect
+             val page = navigation.activePage
+             if (page == null) {
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvDeferredList.kt b/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvDeferredList.kt
+index 024bf7e9..5714c91f 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvDeferredList.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvDeferredList.kt
+@@ -27,43 +27,17 @@ import kotlinx.coroutines.delay
+  */
+ 
+ /**
+- * 分帧组合：把「页头」和「首屏列表项」拆到两帧里组合。
++ * 进歌单/专辑这类页面时，LazyColumn 的第一帧要同时完成两件事：组合页头（封面、渐变、
++ * 标题、操作条）和组合首屏那七八行。实测那一帧要 **99ms 重组 + 110ms 测量**，而 60fps
++ * 的帧预算只有 16.7ms —— 观感就是「页面已经切过去了，但要卡一下才出内容」。
+  *
+- * 进歌单/专辑这类页面时，LazyColumn 的第一帧要同时完成两件事：
+- * 组合页头（封面、渐变、标题、操作条）和组合首屏那七八行。实测那一帧需要
+- * **99ms 重组 + 110ms 测量**，而 60fps 的帧预算只有 16.7ms —— 于是观感就是
+- * 「页面已经切过去了，但要卡一下才出内容」。设备越弱，这一下越明显。
+- *
+- * 用法：把返回值直接用在列表数据上，首帧给它空列表、下一帧再给真实数据。
+- *
+- * ```
+- * val listRevealed = rememberDeferredListReveal()
+- * itemsIndexed(if (listRevealed.value) songs else emptyList()) { ... }
+- * ```
+- *
+- * 这样第一帧只组合页头（页面先出现），第二帧再把行组合进去，单帧峰值大约减半；
+- * 列表位置在页头下方，晚一帧出现不会造成布局跳动。
+- *
+- * 用 `delay` 而不是 `withFrameNanos`：如果页面恰好不出帧（完全静止），等帧会永远
+- * 等下去、列表就永远不出现了；`delay` 按时间放行，最坏情况只是并回同一帧，不会卡死。
++ * 曾经还有一版「页头 / 列表分两帧」的实现（只拆一刀，单帧峰值减半），它已经被下面这个
++ * 分批版本取代并删除：拆一刀仍然有 90ms 的单帧，还是肉眼可见的一顿。
+  */
+-@Composable
+-fun rememberDeferredListReveal(delayMs: Long = 24L): State<Boolean> {
+-    val revealed = remember { mutableStateOf(false) }
+-    LaunchedEffect(Unit) {
+-        delay(delayMs)
+-        revealed.value = true
+-    }
+-    return revealed
+-}
+ 
+ /**
+  * 分批揭示：进页面时把首屏行**拆成两三批**填进去，而不是一次性全填。
+  *
+- * [rememberDeferredListReveal] 只把「页头」和「列表」拆成两帧，但列表那一帧本身仍然
+- * 要一次性组合首屏七八行。实测那一帧的重组仍有 **90ms**（超过帧预算 5 倍），
+- * 所以观感还是「切过去了，但要卡一下才出行」。
+- *
+  * 这里返回「当前该显示多少行」：
+  * 1. 首帧返回 0 —— 只组合页头，页面先出现；
+  * 2. 约一帧后返回 [firstBatch] —— 先出最上面几行；
+@@ -72,6 +46,9 @@ fun rememberDeferredListReveal(delayMs: Long = 24L): State<Boolean> {
+  * 每批之间的间隔很小（默认 24ms，约 1.5 帧），肉眼看到的是「内容紧接着出现」，
+  * 但单帧峰值被摊成三份。行在页头下方依次出现，不会造成布局跳动。
+  *
++ * 用 `delay` 而不是 `withFrameNanos`：如果页面恰好不出帧（完全静止），等帧会永远
++ * 等下去、列表就永远不出现了；`delay` 按时间放行，最坏情况只是并回同一帧，不会卡死。
++ *
+  * 用法：`items = songs.take(state.value)`（带上限判断避免整表复制）。
+  */
+ @Composable
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvFocusNav.kt b/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvFocusNav.kt
+index 9b23c854..dffdb861 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvFocusNav.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvFocusNav.kt
+@@ -65,39 +65,10 @@ import androidx.compose.ui.unit.dp
+ import kotlinx.coroutines.CoroutineScope
+ import kotlinx.coroutines.launch
+ 
+-/**
+- * 电视：横向卡片条里的卡片聚焦时的滚动 —— **已停用，保留签名**。
+- *
+- * 原来在这里手动滚，是因为以为没人会替我们滚。实际情况是 Compose 的 `focusable`
+- * 自己就会在拿到焦点时请求一次 bring-into-view（`FocusableNode.onFocusStateChange`），
+- * 只不过电视上默认用的是 Pivot 规范，会把卡片拽到视口中间，于是「焦点框钉在第三格」。
+- * 那个问题已经在 [TvMinimalBringIntoViewSpec] 里从规范层面修掉了，这里再滚一次
+- * 反而会重复滚动（一次按键滚两格），所以这段逻辑整个退出，只保留形状让调用点不动。
+- */
+-@Composable
+-@Suppress("UNUSED_PARAMETER")
+-fun Modifier.tvStripItemFocus(state: LazyListState, index: Int): Modifier = this
+-
+-/**
+- * 电视：网格（LazyVerticalGrid）里，焦点已经在最左一列时吞掉左键。
+- *
+- * 不吞的话，Compose 的方向搜索会往上跑到根节点那一层，把顶部标签栏当成候选，
+- * 表现就是「卡片最左侧按左漂到首页标签」。这里只按网格自己的 column 判断，
+- * 不碰 canFocus，不会把当前焦点清掉。
+- */
+-@Composable
+-fun Modifier.tvGridClampLeft(state: androidx.compose.foundation.lazy.grid.LazyGridState, index: Int): Modifier {
+-    if (!LocalIsTelevision.current) return this
+-    return this.onPreviewKeyEvent { event ->
+-        if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionLeft) {
+-            return@onPreviewKeyEvent false
+-        }
+-        val layout = state.layoutInfo
+-        val info = layout.visibleItemsInfo.firstOrNull { it.index == index }
+-        val column = info?.column ?: (index % layout.maxSpan.coerceAtLeast(1))
+-        column <= 0
+-    }
+-}
++// 电视横条的滚动交给 Compose 自己：它在拿到焦点时会请求 bring-into-view，落点规范由
++// TvMinimalBringIntoViewSpec 决定（不把卡片拽到视口中间）。这里曾经有一份手写的
++// 「聚焦即滚动」，和规范重复、一次按键滚两格，已经整段删掉 —— 现在只剩 tvStripClamp
++// 负责两端夹住。
+ 
+ /**
+  * 电视：横条走到尽头就别再往那个方向走了。
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvLayoutMetrics.kt b/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvLayoutMetrics.kt
+index 1889af6e..35ba9247 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvLayoutMetrics.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvLayoutMetrics.kt
+@@ -10,46 +10,23 @@ import androidx.compose.ui.unit.sp
+ import androidx.compose.ui.unit.dp
+ 
+ /**
+- * 电视端页面左右安全边距。
++ * 电视端页面的左右内边距，恒为 0。
+  *
+- * 移到左侧竖栏后，边距不再由页面自己给：左边是 [moe.ouom.neriplayer.ui.component.navigation.TvSidebarWidth]
+- * 的导航栏，右边由 AppNavigationRail 补同样宽度的留白，内容左右边距自然对称。
+- * 页面再自己加一层就是「双重边距」，所以这里恒为 0。
+- *
+- * 手机/平板不走这个函数（各页面自己传 base），不受影响。
++ * 导航搬到左侧竖栏之后，左右留白由导航外壳统一负责：左边是
++ * [moe.ouom.neriplayer.ui.component.navigation.TvSidebarWidth] 的侧栏，
++ * 右边由 `AppAdaptiveNavigationContent` 补同样宽度的留白，内容自然居中对称。
++ * 页面再自己加一层就成了双重边距，所以这里恒为 0；手机平板各页面自己传 base。
+  */
+ @Composable
+ fun tvPageSidePadding(): Dp = 0.dp
+ 
+-/** 电视端列表的左右内容内边距；非电视返回 0，手机平板保持原样。 */
+-@Composable
+-fun tvPageSidePaddingOrZero(): Dp =
+-    if (LocalIsTelevision.current) tvPageSidePadding() else 0.dp
+-
+ /**
+- * 所有页面统一使用的左右边距。
++ * 页面最外侧的左右边距：电视用 [tvPageSidePadding]（0），手机平板用 [base]。
+  *
+- * 顶栏时代这里等于「屏宽 4.5% + 8dp」（960dp 屏上是 51.2dp）。改用左侧竖栏后，
+- * 这 51dp 已经由导航栏本身 + 内容区右侧留白占住，页面再加一遍就会把内容推到 102dp 开外，
+- * 所以现在恒等于 [tvPageSidePadding]（= 0）。
+- */
+-@Composable
+-fun tvContentSidePadding(): Dp = tvPageSidePadding()
+-
+-/**
+- * 电视上把「原来那一档页面内边距」换成统一的页面边距；手机平板照旧用 [base]。
+- * 这样每个页面最外侧的留白都是同一个数，不会出现「歌单页留一条白边、媒体库却贴边」。
++ * 所有页面都走这一个函数，保证「歌单页留一条白边、媒体库却贴边」这类不一致不会再出现。
+  */
+ @Composable
+ fun pageSidePaddingOr(base: Dp): Dp =
+-    if (LocalIsTelevision.current) tvContentSidePadding() else base
+-
+-/**
+- * 首页等「外面还要套一层 8dp 横条内边距」的容器用这个：只留 [tvPageSidePadding]，
+- * 加上里面那 8dp 后正好等于 [tvContentSidePadding]，和其它页面对齐。
+- */
+-@Composable
+-fun pageSidePaddingOuterOr(base: Dp): Dp =
+     if (LocalIsTelevision.current) tvPageSidePadding() else base
+ 
+ /**
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvPerfProbe.kt b/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvPerfProbe.kt
+deleted file mode 100644
+index 2edb86ab..00000000
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvPerfProbe.kt
++++ /dev/null
+@@ -1,71 +0,0 @@
+-package moe.ouom.neriplayer.ui.tv
+-
+-import android.os.Looper
+-import android.os.SystemClock
+-import android.util.Log
+-
+-/**
+- * 临时性能探针（定位完即删）。
+- *
+- * 目的：回答「按一下遥控器之后那一秒多，主线程到底在处理哪条消息」。
+- *
+- * 原理：给主线程 Looper 挂一个 Printer。Android 在派发每条消息前后各回调一次，
+- * 我们据此算出这条消息占住主线程多久，以及它是哪个 Handler 的哪个 callback。
+- *
+- * 判定方式：
+- * - 若打出 `android.view.Choreographer | ...FrameDisplayEventReceiver` → 卡在一帧内的工作
+- *   （组合 / 测量 / 布局 / 录制绘制），配合 gfxinfo framestats 可再切段；
+- * - 若打出别的 Handler → 直接就是那个 Handler 的活，与渲染无关。
+- */
+-object TvPerfProbe {
+-
+-    private const val TAG = "NERI_PERF"
+-
+-    /** 只记录明显卡顿的消息，避免刷屏 */
+-    private const val THRESHOLD_MS = 80L
+-
+-    @Volatile
+-    private var installed = false
+-
+-    fun install() {
+-        if (installed) return
+-        installed = true
+-
+-        var startUptime = 0L
+-        var label = ""
+-        var seq = 0L
+-
+-        Looper.getMainLooper().setMessageLogging { line ->
+-            if (line.startsWith(">>>>>")) {
+-                startUptime = SystemClock.uptimeMillis()
+-                label = parseLabel(line)
+-            } else if (line.startsWith("<<<<<")) {
+-                val cost = SystemClock.uptimeMillis() - startUptime
+-                if (cost >= THRESHOLD_MS) {
+-                    seq += 1
+-                    Log.w(TAG, "MAIN_BLOCK #$seq ${cost}ms :: $label")
+-                }
+-            }
+-        }
+-        Log.w(TAG, "TvPerfProbe installed (threshold=${THRESHOLD_MS}ms)")
+-    }
+-
+-    /**
+-     * 从
+-     * `>>>>> Dispatching to Handler (android.view.Choreographer) {2f1a3b} android.view.Choreographer$FrameHandler: 0`
+-     * 里取出 `android.view.Choreographer | android.view.Choreographer$FrameHandler: 0`
+-     */
+-    private fun parseLabel(line: String): String {
+-        val handler = run {
+-            val open = line.indexOf("Handler (")
+-            if (open < 0) return@run "?"
+-            val close = line.indexOf(')', open + 9)
+-            if (close < 0) "?" else line.substring(open + 9, close)
+-        }
+-        val callback = run {
+-            val i = line.lastIndexOf("} ")
+-            if (i < 0) "" else line.substring(i + 2)
+-        }
+-        return "$handler | $callback"
+-    }
+-}
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvTabConfirmBus.kt b/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvTabConfirmBus.kt
+deleted file mode 100644
+index 89695581..00000000
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvTabConfirmBus.kt
++++ /dev/null
+@@ -1,47 +0,0 @@
+-package moe.ouom.neriplayer.ui.tv
+-
+-/*
+- * NeriPlayer - A unified Android player for streaming music and videos from multiple online platforms.
+- * Copyright (C) 2025-2025 NeriPlayer developers
+- * https://github.com/cwuom/NeriPlayer
+- *
+- * This software is free software: you can redistribute it and/or modify
+- * it under the terms of the GNU General Public License as published by
+- * the Free Software Foundation, either version 3 of the License, or
+- * (at your option) any later version.
+- *
+- * This software is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+- * See the GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License
+- * along with this software.
+- * If not, see <https://www.gnu.org/licenses/>.
+- *
+- * File: moe.ouom.neriplayer.ui.tv/TvTabConfirmBus
+- * Created: 2026/10/31
+- */
+-
+-import kotlinx.coroutines.flow.MutableSharedFlow
+-import kotlinx.coroutines.flow.SharedFlow
+-
+-/**
+- * 电视顶部标签栏「再按一次确定键」的请求总线。
+- *
+- * 标签栏在导航层，拿不到各页自己的 ViewModel 和列表状态，所以用一条按路由过滤的
+- * 事件流把请求转达给真正持有数据的那一层：
+- *  - 探索 / 媒体库：刷新当前内容 + 回到顶部；
+- *  - 设置：只回顶部（没有可刷新的远端数据）；
+- *  - 首页仍走 [moe.ouom.neriplayer.ui.screen.tab.home.HomeRefreshBus]。
+- */
+-object TvTabConfirmBus {
+-
+-    private val _events = MutableSharedFlow<String>(extraBufferCapacity = 8)
+-
+-    val events: SharedFlow<String> = _events
+-
+-    fun request(route: String) {
+-        _events.tryEmit(route)
+-    }
+-}
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvTabRequestBuses.kt b/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvTabRequestBuses.kt
+new file mode 100644
+index 00000000..c7d8e05e
+--- /dev/null
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvTabRequestBuses.kt
+@@ -0,0 +1,67 @@
++package moe.ouom.neriplayer.ui.tv
++
++/*
++ * NeriPlayer - A unified Android player for streaming music and videos from multiple online platforms.
++ * Copyright (C) 2025-2025 NeriPlayer developers
++ * https://github.com/cwuom/NeriPlayer
++ *
++ * This software is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * This software is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
++ * See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this software.
++ * If not, see <https://www.gnu.org/licenses/>.
++ *
++ * File: moe.ouom.neriplayer.ui.tv/TvTabRequestBuses
++ * Created: 2026/11/06
++ */
++
++import kotlinx.coroutines.flow.MutableSharedFlow
++import kotlinx.coroutines.flow.SharedFlow
++
++/**
++ * 「按路由下发一条请求」的通用总线。
++ *
++ * 侧栏在导航层，拿不到各页自己的 ViewModel 和列表状态，只能靠一条按 route 过滤的事件流
++ * 把请求转达给真正持有数据的那一层。两个子类型只是语义不同，机制完全一样：
++ *  - [TvTabRootBus]    「再按一次当前标签」，由标签宿主办判断当前在哪一层；
++ *  - [TvTabConfirmBus] 宿主把它翻译成「刷新 + 回顶」，交给页面自己消费。
++ */
++open class TvRouteRequestBus {
++
++    private val _events = MutableSharedFlow<String>(extraBufferCapacity = 8)
++
++    val events: SharedFlow<String> = _events
++
++    fun request(route: String) {
++        _events.tryEmit(route)
++    }
++}
++
++/**
++ * 电视侧栏「再按一次当前标签」的请求总线。
++ *
++ * 侧栏只知道 NavHost 的 route：首页 / 探索 / 归集各自把详情页藏在宿主内部的 `selected` 里，
++ * route 一直停在标签根上。所以「二级界面点本页标签」和「一级界面点本页标签」发出的信号
++ * 必须一模一样，由宿主自己判断当前处在哪一层：
++ *  - 详情态 → 退回根页面 + 列表回顶（不刷新网络数据）；
++ *  - 根态   → 转成原来的刷新逻辑（首页走 HomeRefreshBus，其余走 [TvTabConfirmBus]）。
++ *
++ * 设置页没有详情态分层，直接自己消费这一条流。
++ */
++object TvTabRootBus : TvRouteRequestBus()
++
++/**
++ * 标签宿主翻译后的「刷新当前内容 + 回到顶部」请求。
++ *
++ * 页面对应关系：探索 / 媒体库 → 刷新 + 回顶；设置 → 只回顶（没有可刷新的远端数据）；
++ * 首页不走这条，它有自己的 [moe.ouom.neriplayer.ui.screen.tab.home.HomeRefreshBus]。
++ */
++object TvTabConfirmBus : TvRouteRequestBus()
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvTabRootBus.kt b/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvTabRootBus.kt
+deleted file mode 100644
+index 60b58f51..00000000
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvTabRootBus.kt
++++ /dev/null
+@@ -1,49 +0,0 @@
+-package moe.ouom.neriplayer.ui.tv
+-
+-/*
+- * NeriPlayer - A unified Android player for streaming music and videos from multiple online platforms.
+- * Copyright (C) 2025-2025 NeriPlayer developers
+- * https://github.com/cwuom/NeriPlayer
+- *
+- * This software is free software: you can redistribute it and/or modify
+- * it under the terms of the GNU General Public License as published by
+- * the Free Software Foundation, either version 3 of the License, or
+- * (at your option) any later version.
+- *
+- * This software is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+- * See the GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License
+- * along with this software.
+- * If not, see <https://www.gnu.org/licenses/>.
+- *
+- * File: moe.ouom.neriplayer.ui.tv/TvTabRootBus
+- * Created: 2026/11/05
+- */
+-
+-import kotlinx.coroutines.flow.MutableSharedFlow
+-import kotlinx.coroutines.flow.SharedFlow
+-
+-/**
+- * 电视侧栏「再按一次当前标签」的请求总线。
+- *
+- * 侧栏在导航层，只知道 NavHost 的 route：首页 / 探索 / 归集各自把详情页藏在宿主内部的
+- * `selected` 里，route 一直停在标签根上。所以「二级界面点本页标签」和「一级界面点本页标签」
+- * 发出的信号必须一模一样，由宿主自己判断当前处在哪一层：
+- *  - 详情态 → 退回根页面 + 列表回顶（不刷新网络数据）；
+- *  - 根态   → 转成原来的刷新逻辑（首页走 HomeRefreshBus，其余走 [TvTabConfirmBus]）。
+- *
+- * 设置页没有详情态分层，直接自己消费这一条流。
+- */
+-object TvTabRootBus {
+-
+-    private val _requests = MutableSharedFlow<String>(extraBufferCapacity = 8)
+-
+-    val requests: SharedFlow<String> = _requests
+-
+-    fun request(route: String) {
+-        _requests.tryEmit(route)
+-    }
+-}
+diff --git a/app/src/test/java/moe/ouom/neriplayer/ui/navigation/MainTabTransitionRequestTest.kt b/app/src/test/java/moe/ouom/neriplayer/ui/navigation/MainTabTransitionRequestTest.kt
+deleted file mode 100644
+index 5c31ec1a..00000000
+--- a/app/src/test/java/moe/ouom/neriplayer/ui/navigation/MainTabTransitionRequestTest.kt
++++ /dev/null
+@@ -1,152 +0,0 @@
+-package moe.ouom.neriplayer.ui.navigation
+-
+-import androidx.compose.runtime.BroadcastFrameClock
+-import kotlinx.coroutines.CoroutineScope
+-import kotlinx.coroutines.Job
+-import kotlinx.coroutines.cancel
+-import kotlinx.coroutines.test.StandardTestDispatcher
+-import org.junit.After
+-import org.junit.Assert.assertEquals
+-import org.junit.Assert.assertFalse
+-import org.junit.Assert.assertTrue
+-import org.junit.Test
+-
+-class MainTabTransitionRequestTest {
+-
+-    private val dispatcher = StandardTestDispatcher()
+-    private val frameClock = BroadcastFrameClock()
+-    private val scope = CoroutineScope(dispatcher + frameClock + Job())
+-    private val navigations = mutableListOf<String>()
+-    private val controller = MainTabTransitionController(
+-        scope = scope,
+-        initialRoute = "home",
+-        initialEntryId = "entry-home",
+-        onNavigate = { route ->
+-            navigations += route
+-            "entry-$route"
+-        }
+-    )
+-    private var frameTimeNanos = 0L
+-
+-    @After
+-    fun tearDown() {
+-        controller.dispose()
+-        scope.cancel()
+-    }
+-
+-    @Test
+-    fun `requesting the displayed tab while idle does nothing`() {
+-        controller.request("home")
+-        dispatcher.scheduler.runCurrent()
+-
+-        assertFalse(controller.isRunning)
+-        assertEquals("home", controller.renderedRoute)
+-        assertTrue(navigations.isEmpty())
+-    }
+-
+-    @Test
+-    fun `routes outside the tab order are committed without a slide`() {
+-        controller.request("debug/youtube")
+-        assertTrue(controller.isRunning)
+-
+-        dispatcher.scheduler.runCurrent()
+-
+-        assertEquals(listOf("debug/youtube"), navigations)
+-        assertEquals("debug/youtube", controller.renderedRoute)
+-        assertEquals("entry-debug/youtube", controller.renderedEntryId)
+-        assertFalse(controller.isRunning)
+-    }
+-
+-    @Test
+-    fun `tab switch navigates after the exit slide and settles centered`() {
+-        controller.request("explore")
+-        controller.request("explore")
+-        dispatcher.scheduler.runCurrent()
+-
+-        assertTrue(controller.isRunning)
+-        assertEquals("home", controller.renderedRoute)
+-        assertTrue(navigations.isEmpty())
+-
+-        settleAnimations()
+-
+-        assertEquals(listOf("explore"), navigations)
+-        assertEquals("explore", controller.renderedRoute)
+-        assertEquals("entry-explore", controller.renderedEntryId)
+-        assertEquals(0f, controller.offsetFraction, 0f)
+-        assertFalse(controller.isRunning)
+-    }
+-
+-    @Test
+-    fun `requesting the displayed tab mid slide cancels the pending navigation`() {
+-        controller.request("explore")
+-        dispatcher.scheduler.runCurrent()
+-
+-        controller.request("home")
+-        settleAnimations()
+-
+-        assertTrue(navigations.isEmpty())
+-        assertEquals("home", controller.renderedRoute)
+-        assertEquals(0f, controller.offsetFraction, 0f)
+-        assertFalse(controller.isRunning)
+-    }
+-
+-    @Test
+-    fun `route sync without a route keeps the current tab`() {
+-        controller.syncRoute(null, "entry-other")
+-
+-        assertEquals("home", controller.renderedRoute)
+-        assertEquals("entry-home", controller.renderedEntryId)
+-    }
+-
+-    @Test
+-    fun `idle route sync adopts the observed route and entry`() {
+-        controller.syncRoute("library", "entry-library")
+-
+-        assertEquals("library", controller.renderedRoute)
+-        assertEquals("entry-library", controller.renderedEntryId)
+-        assertFalse(controller.isRunning)
+-    }
+-
+-    @Test
+-    fun `route sync during a slide only refreshes the rendered entry`() {
+-        controller.request("explore")
+-
+-        controller.syncRoute("home", "entry-home-2")
+-        assertEquals("entry-home-2", controller.renderedEntryId)
+-
+-        controller.syncRoute("home", null)
+-        controller.syncRoute("explore", "entry-explore")
+-
+-        assertEquals("home", controller.renderedRoute)
+-        assertEquals("entry-home-2", controller.renderedEntryId)
+-        assertTrue(controller.isRunning)
+-    }
+-
+-    @Test
+-    fun `route sync to an unrelated route aborts the slide`() {
+-        controller.request("explore")
+-
+-        controller.syncRoute("settings", "entry-settings")
+-        settleAnimations()
+-
+-        assertFalse(controller.isRunning)
+-        assertEquals("settings", controller.renderedRoute)
+-        assertEquals("entry-settings", controller.renderedEntryId)
+-        assertTrue(navigations.isEmpty())
+-    }
+-
+-    private fun settleAnimations() {
+-        repeat(MAX_FRAMES) {
+-            dispatcher.scheduler.runCurrent()
+-            if (!controller.isRunning) return
+-            frameClock.sendFrame(frameTimeNanos)
+-            frameTimeNanos += FRAME_STEP_NANOS
+-        }
+-        dispatcher.scheduler.runCurrent()
+-    }
+-
+-    private companion object {
+-        const val MAX_FRAMES = 20
+-        const val FRAME_STEP_NANOS = 1_000_000_000L
+-    }
+-}

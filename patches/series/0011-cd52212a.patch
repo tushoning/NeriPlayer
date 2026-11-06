@@ -1,0 +1,67 @@
+From cd52212ad8041f1b07704ccada568df2e9f9e0f9 Mon Sep 17 00:00:00 2001
+From: neri-fork <local@neriplayer.fork>
+Date: Fri, 6 Nov 2026 22:34:21 +0800
+Subject: [PATCH] =?UTF-8?q?fix(tv):=20=E8=AE=BE=E7=BD=AE=E4=BA=8C=E7=BA=A7?=
+ =?UTF-8?q?=E9=A1=B5=E8=BF=94=E5=9B=9E=E9=94=AE=E4=BD=8D=E7=BD=AE=E5=AF=B9?=
+ =?UTF-8?q?=E9=BD=90=E4=B8=89=E7=BA=A7=E9=A1=B5=E3=80=8C=E4=B8=8B=E8=BD=BD?=
+ =?UTF-8?q?=E7=AE=A1=E7=90=86=E3=80=8D?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+MiuixSettingsDetailScaffold 的电视顶栏原来按「居中正文」补了
+(currentWindowWidthDp - tvContentWidth)/2 的左右 gutter（960dp 屏上是 20dp），
+导致返回按钮比 DownloadManagerTopBar（只吃 pageSidePaddingOr(0.dp)）右移 20dp。
+去掉 gutter，两个页面的返回键落在同一条竖线上。
+---
+ .../tab/settings/page/MiuixSettingsScaffold.kt  | 17 +++++------------
+ 1 file changed, 5 insertions(+), 12 deletions(-)
+
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/page/MiuixSettingsScaffold.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/page/MiuixSettingsScaffold.kt
+index 1bd07f8c..01e8f81c 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/page/MiuixSettingsScaffold.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/page/MiuixSettingsScaffold.kt
+@@ -590,22 +590,17 @@ internal fun MiuixSettingsDetailScaffold(
+     val miniPlayerHeight = LocalMiniPlayerHeight.current
+     val isTabletLayout = currentWindowWidthDp() >= 720.dp
+     val horizontalPadding = settingsHorizontalPadding(isTabletLayout)
+-    // 电视：二级页要和一级页用同一条左边缘（居中内容宽度 + 自身内容边距），
+-    // 否则返回按钮比一级页的卡片更靠左，看着像「没设置边距」。
++    // 电视：正文按「居中 + 最大宽」排，和一级页同宽。
+     val tvSidePadding = if (isTelevision) tvPageSidePadding() else 0.dp
+     val tvContentWidth = if (isTelevision) {
+         (currentWindowWidthDp() - tvSidePadding * 2).coerceAtMost(MiuixSettingsTabletMaxWidth)
+     } else {
+         MiuixSettingsTabletMaxWidth
+     }
+-    // 电视：二级页和歌单详情页同一套边距关系 ——
+-    // 「返回」那一行只贴页面边距（tvPageSidePadding），正文字段再往里 18/22。
+-    // 原来顶栏在页面边距之上又叠了一层 28dp，正文只有 10dp，两者对不齐。
+-    val tvGutter = if (isTelevision) {
+-        (currentWindowWidthDp() - tvContentWidth) / 2
+-    } else {
+-        0.dp
+-    }
++    // 电视：顶栏不再为「对齐居中正文」补左右 gutter。
++    // 返回按钮的位置以三级页「下载管理」为准 —— 那个页面的 DownloadManagerTopBar
++    // 只吃 pageSidePaddingOr(0.dp)，也就是顶着内容区左边缘；这里跟着它走，
++    // 全站详情页的返回键才落在同一条竖线上（手机/平板本来就没有 gutter）。
+     // 二级页一进来光标默认落在左上角的返回按钮上（标题就是这一页的身份，
+     // 换页时 title 变，等于「又进了一个二级页」）。页面刚切过来时焦点节点还没挂好，
+     // 单次 requestFocus 会失败，所以逐帧试几帧。
+@@ -633,7 +628,6 @@ internal fun MiuixSettingsDetailScaffold(
+         topBar = {
+             if (isTelevision) {
+                 TopAppBar(
+-                    modifier = Modifier.padding(horizontal = tvGutter),
+                     title = {
+                         Text(title, style = MaterialTheme.typography.titleLarge)
+                     },
+@@ -673,7 +667,6 @@ internal fun MiuixSettingsDetailScaffold(
+                     )
+                 )
+             } else LargeTopAppBar(
+-                modifier = Modifier.padding(horizontal = tvGutter),
+                 title = { Text(title) },
+                 navigationIcon = {
+                     if (showBackButton) {

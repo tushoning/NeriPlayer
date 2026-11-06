@@ -1,0 +1,28 @@
+From 6923162562590c0e4925556e5fbcea85c4091e09 Mon Sep 17 00:00:00 2001
+From: local <local@work>
+Date: Mon, 2 Nov 2026 09:42:04 +0800
+Subject: [PATCH] perf(tv): disable audio-reactive tee processor
+ (per-PCM-buffer Kotlin DSP, only active while now-playing is open)
+
+---
+ app/src/main/java/moe/ouom/neriplayer/ui/NeriApp.kt | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/NeriApp.kt b/app/src/main/java/moe/ouom/neriplayer/ui/NeriApp.kt
+index 34ffee4b..b4809ea3 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/NeriApp.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/NeriApp.kt
+@@ -1775,7 +1775,12 @@ private fun NeriAppContent(
+             NowPlayingPresentationEffects(
+                 showNowPlaying = showNowPlaying,
+                 lifecycleResumed = lifecycleResumed,
+-                audioReactiveEnabled = backgroundMode.audioReactive,
++                // 电视：永远不开「音频响应」。
++                // 它会在音频链路上挂一个 TeeAudioProcessor，**每个 PCM buffer 都在 Kotlin 里
++                // 逐样本算能量/节拍**，而且只在播放页打开时才启用/禁用——等于每次进出播放页
++                // 都要重配一次音频管线。在 4 核 1.45GHz 的盒子上这是实打实的持续 CPU 负载，
++                // 而它算出来的 level/beat 目前在 UI 里没有任何消费者。
++                audioReactiveEnabled = backgroundMode.audioReactive && !LocalIsTelevision.current,
+                 keepScreenOn = nowPlayingKeepScreenOn
+             )
+ 

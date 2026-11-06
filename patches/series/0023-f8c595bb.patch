@@ -1,0 +1,150 @@
+From f8c595bbebb0c95839982c2eedb4128ac4319ec2 Mon Sep 17 00:00:00 2001
+From: neri-fork <local@neriplayer.fork>
+Date: Sat, 7 Nov 2026 01:23:47 +0800
+Subject: [PATCH] =?UTF-8?q?ci:=20=E8=AF=81=E4=B9=A6=E6=8C=87=E7=BA=B9?=
+ =?UTF-8?q?=E5=86=99=E6=AD=BB=E8=BF=9B=20workflow=EF=BC=88=E5=B0=91?=
+ =?UTF-8?q?=E9=85=8D=E4=B8=80=E4=B8=AA=20secret=EF=BC=89=EF=BC=8C=E5=8F=91?=
+ =?UTF-8?q?=E5=B8=83=E5=89=8D=E5=86=8D=E9=AA=8C=E4=B8=80=E6=AC=A1=20APK=20?=
+ =?UTF-8?q?=E7=AD=BE=E5=90=8D?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- CERT_SHA256 移到 workflow 级 env，不再是 secret（指纹是公开信息）
+- 新增「校验产物的签名」：apksigner 读 APK 指纹比对，防止密钥读了但签名没生效
+- FORK.md 补「和上游 CONTRIBUTING 构建发布版章节的关系」，secret 从 4 个减到 3 个
+---
+ .github/workflows/fork-sync.yml | 42 ++++++++++++++++++++++-----------
+ FORK.md                         | 26 +++++++++++++++++---
+ 2 files changed, 51 insertions(+), 17 deletions(-)
+
+diff --git a/.github/workflows/fork-sync.yml b/.github/workflows/fork-sync.yml
+index f02b8b4d..d8f08804 100644
+--- a/.github/workflows/fork-sync.yml
++++ b/.github/workflows/fork-sync.yml
+@@ -24,6 +24,8 @@ env:
+   UPSTREAM_REPO: https://github.com/cwuom/NeriPlayer.git
+   KEY_ALIAS: aerial
+   APK_OUT: NeriPlayer-TV.apk
++  # aerial 证书的 SHA-256（公开信息，不是密钥）。传错密钥 / 没生效签名都会在这里失败。
++  CERT_SHA256: 4ca292129ad97359a262d5f5269e7fd7ef0287b33cd19f6e761dd671946581b5
+ 
+ jobs:
+   sync:
+@@ -125,25 +127,21 @@ jobs:
+         env:
+           KEYSTORE_B64: ${{ secrets.AERIAL_KEYSTORE_B64 }}
+           STORE_PASS: ${{ secrets.AERIAL_STORE_PASSWORD }}
+-          CERT_SHA256: ${{ secrets.AERIAL_CERT_SHA256 }}
+         run: |
+           set -euo pipefail
+           test -n "$KEYSTORE_B64" || { echo "::error::缺少 secret AERIAL_KEYSTORE_B64"; exit 1; }
+           printf '%s' "$KEYSTORE_B64" | base64 -d > app/aerial.keystore
+-          # 密钥传错的话，包发出去也装不上（签名不一致），这里先验一遍
+-          if [ -n "${CERT_SHA256:-}" ]; then
+-            GOT=$(keytool -list -v -keystore app/aerial.keystore -storepass "$STORE_PASS" \
+-                    -alias "$KEY_ALIAS" 2>/dev/null \
+-                  | sed -n 's/^[[:space:]]*SHA256: //p' | tr -d ':' | tr 'A-Z' 'a-z')
+-            WANT=$(printf '%s' "$CERT_SHA256" | tr -d ':' | tr 'A-Z' 'a-z')
+-            if [ "$GOT" != "$WANT" ]; then
+-              echo "::error::密钥库证书指纹不符，期望 $WANT 实际 $GOT"
+-              exit 1
+-            fi
+-            echo "证书指纹校验通过：$GOT"
+-          else
+-            echo "::warning::未配置 AERIAL_CERT_SHA256，跳过指纹校验"
++          # 密钥传错的话，包发出去也装不上（签名不一致），这里先验一遍。
++          # 指纹是公开信息（不是秘密），直接写死，省得再配一个 secret。
++          GOT=$(keytool -list -v -keystore app/aerial.keystore -storepass "$STORE_PASS" \
++                  -alias "$KEY_ALIAS" 2>/dev/null \
++                | sed -n 's/^[[:space:]]*SHA256: //p' | tr -d ':' | tr 'A-Z' 'a-z')
++          WANT=$(printf '%s' "$CERT_SHA256" | tr -d ':' | tr 'A-Z' 'a-z')
++          if [ "$GOT" != "$WANT" ]; then
++            echo "::error::密钥库证书指纹不符，期望 $WANT 实际 $GOT"
++            exit 1
+           fi
++          echo "密钥库指纹校验通过：$GOT"
+ 
+       - name: 编译电视包
+         if: steps.apply.outputs.ok == 'true'
+@@ -214,6 +212,22 @@ jobs:
+           本构建不是上游官方发布，也不代表上游作者的观点。
+           EOF
+ 
++      - name: 校验产物的签名
++        if: steps.apply.outputs.ok == 'true'
++        run: |
++          set -euo pipefail
++          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
++          BT=$(ls -d "$SDK"/build-tools/*/ | sort -V | tail -1)
++          GOT=$("${BT}apksigner" verify --print-certs "$APK_OUT" \
++                | grep -i 'SHA-256 digest' | head -1 | sed 's/.*digest: *//' \
++                | tr -d ':' | tr 'A-Z' 'a-z')
++          WANT=$(printf '%s' "$CERT_SHA256" | tr -d ':' | tr 'A-Z' 'a-z')
++          if [ "$GOT" != "$WANT" ]; then
++            echo "::error::APK 签名指纹不符：期望 $WANT 实际 $GOT（签名没生效？）"
++            exit 1
++          fi
++          echo "APK 签名校验通过：$GOT"
++
+       - name: 打 tag 并发布 Release
+         if: steps.apply.outputs.ok == 'true'
+         env:
+diff --git a/FORK.md b/FORK.md
+index 6bf1aa94..bc5b1c44 100644
+--- a/FORK.md
++++ b/FORK.md
+@@ -37,7 +37,7 @@ git push -f fork main:main
+ 
+ > 为什么必须改：GitHub Actions 的定时任务（schedule）只在**默认分支**上生效。
+ 
+-### 0.4 填 4 个签名 Secret
++### 0.4 填 3 个签名 Secret
+ 
+ 网页路径：`仓库主页` → **Settings** → 左侧 **Secrets and variables** → **Actions** →
+ 右上 **New repository secret**，一个一个加：
+@@ -47,7 +47,9 @@ git push -f fork main:main
+ | `AERIAL_KEYSTORE_B64` | 见下面 0.4.1 |
+ | `AERIAL_STORE_PASSWORD` | `C:/Users/Tushon/keystores/aerial/README.md` 里的 `storePassword` |
+ | `AERIAL_KEY_PASSWORD` | 同一个文件里的 `keyPassword` |
+-| `AERIAL_CERT_SHA256`（可选但强烈建议） | `4ca292129ad97359a262d5f5269e7fd7ef0287b33cd19f6e761dd671946581b5` |
++
++只需要这 3 个。证书指纹（`4ca2921…581b5`）是公开信息、不是密钥，
++已经写死在 workflow 的 `CERT_SHA256` 里，不用再配。
+ 
+ #### 0.4.1 把密钥库转成 base64 文本
+ 
+@@ -227,6 +229,23 @@ Capsulyric（GPL-3.0-or-later）、InstallerX Revived（GPL-3.0-only）、libusb
+ 
+ 密码在同目录 `README.md` 里，**不要写进本仓库**（仓库是公开的）。
+ 
++### 和上游 `CONTRIBUTING.md`「构建发布版」的关系
++
++上游文档那一段是写给**自己编 release 的贡献者**看的，作用有三个：
++
++1. 说清楚签名参数怎么传（`KEYSTORE_FILE` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`
++   四个 Gradle 属性，`KEYSTORE_FILE` 写相对路径时按 `app/` 模块目录解析）；
++2. 说清楚产物在哪（`app/build/outputs/apk/release/`，命名 `NeriPlayer-<短哈希>.<MMddHHmm>.apk`）；
++3. 隐含一条规矩：**上游不会给你签名密钥**，官方发布包的签名只有上游自己有，
++   任何人自编的包都不可能覆盖安装官方版。
++
++我们的做法和它一致（属性名、相对路径规则、产物命名全对齐）。
++
++唯一分歧：上游的 `release` 变体「不会回退到 debug signing config，没密钥就直接报错」，
++而本 fork 的 `tvrelease` 变体在**没有正式密钥时回退 debug 签名**——这是为了本地没密钥也能快速迭代。
++发出去的包不受影响：CI 里「密钥库指纹」和「APK 签名指纹」两道校验都过硬才允许发 Release，
++哪一步不对都会直接失败，不会出现「用 debug 签名发出去、电视装不上」的情况。
++
+ ### 本地出带签名的包
+ 
+ ```bash
+@@ -260,7 +279,8 @@ GitHub 的 Secret 分三级，**只有 Organization secrets 是「配一次全
+ ## 6. 常见问题
+ 
+ **Q：Release 里的包和电视上装的对不上 / 装不上**
+-A：先确认签名。`AERIAL_CERT_SHA256` 配了的话 CI 会在编译前校验，签名不对直接失败。
++A：CI 有两道校验——密钥库指纹（编译前）和 APK 签名指纹（发布前），
++签名不对会直接失败，不会发出装不上的包。
+ 
+ **Q：定时任务没跑**
+ A：① 默认分支是不是 `main`；② 仓库 60 天没提交会被暂停 schedule，

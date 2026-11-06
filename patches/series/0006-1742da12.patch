@@ -1,0 +1,110 @@
+From 1742da121e04a021665a1433cf64175037b1f435 Mon Sep 17 00:00:00 2001
+From: local <local@work>
+Date: Mon, 2 Nov 2026 09:14:57 +0800
+Subject: [PATCH] perf(tv): skip underlay rasterization while now-playing open;
+ static per-line lyric scale/tilt
+
+---
+ .../java/moe/ouom/neriplayer/ui/NeriApp.kt    |  4 ++-
+ .../ui/NeriAppPresentationEffects.kt          | 10 +++++--
+ .../ui/component/lyrics/SyncedLyricsView.kt   | 27 ++++++++++++-------
+ 3 files changed, 29 insertions(+), 12 deletions(-)
+
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/NeriApp.kt b/app/src/main/java/moe/ouom/neriplayer/ui/NeriApp.kt
+index 83f376a4..34ffee4b 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/NeriApp.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/NeriApp.kt
+@@ -1827,7 +1827,9 @@ private fun NeriAppContent(
+                             .drawNowPlayingUnderlay(
+                                 flight = sharedCoverFlight,
+                                 playbackVisible = { showNowPlaying },
+-                                backProgress = { nowPlayingDismissState.progress }
++                                backProgress = { nowPlayingDismissState.progress },
++                                // 电视：播放页是整屏瞬切，没有变形交接，一出现就是完整遮挡
++                                alwaysCovered = LocalIsTelevision.current
+                             )
+                     ) {
+                     AppNavigationScaffold(
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/NeriAppPresentationEffects.kt b/app/src/main/java/moe/ouom/neriplayer/ui/NeriAppPresentationEffects.kt
+index 489c502b..7b1eb02f 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/NeriAppPresentationEffects.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/NeriAppPresentationEffects.kt
+@@ -60,14 +60,20 @@ private val BackdropRecedeCorner = 28.dp
+ internal fun Modifier.drawNowPlayingUnderlay(
+     flight: SharedCoverFlightState,
+     playbackVisible: () -> Boolean,
+-    backProgress: () -> Float
++    backProgress: () -> Float,
++    /**
++     * 电视：播放页没有任何容器变形动画（没有 mini player 长成整页那一段），
++     * 所以「完全遮挡」的判定不能等 morphProgress 到 1——那个值在电视上永远是 0，
++     * 结果是播放页打开时，底下整个标签页每帧还在被光栅化一遍。
++     */
++    alwaysCovered: Boolean = false
+ ): Modifier = drawWithContent {
+     // 完整遮挡才省去下层绘制，任何露底或交接阶段都沿用原画面
+     val completelyCovered = playbackVisible() &&
+         backProgress() == 0f &&
+         flight.dragOpenProgress == null &&
+         !flight.linked &&
+-        flight.nowPlayingMorphProgressState?.value == 1f
++        (alwaysCovered || flight.nowPlayingMorphProgressState?.value == 1f)
+     if (!completelyCovered) drawContent()
+ }
+ 
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/component/lyrics/SyncedLyricsView.kt b/app/src/main/java/moe/ouom/neriplayer/ui/component/lyrics/SyncedLyricsView.kt
+index bdd605f0..7e513760 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/component/lyrics/SyncedLyricsView.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/component/lyrics/SyncedLyricsView.kt
+@@ -817,12 +817,17 @@ fun SyncedLyricsView(
+                         if (!visualEffectsEnabled) resolveEmbeddedLyricScale(isActive)
+                         else if (isActive) visualSpec.activeScale
+                         else scaleForDistance(distance, visualSpec)
+-                    val animatedPlaybackScale by if (visualEffectsEnabled) {
++                    // 电视：每行都挂着「缩放 + 3D 翻转」两条动画，换行时十几行同时起动画，
++                    // 每帧十几行重绘。电视上直接取目标值，不做过渡。
++                    val tvStaticLineMotion = LocalIsTelevision.current
++                    val animatedPlaybackScale: Float = if (tvStaticLineMotion) {
++                        playbackScaleTarget
++                    } else if (visualEffectsEnabled) {
+                         animateFloatWhenEnabled(
+                             targetValue = playbackScaleTarget,
+                             enabled = true,
+                             label = "lyric_scale"
+-                        )
++                        ).value
+                     } else {
+                         animateFloatAsState(
+                             targetValue = playbackScaleTarget,
+@@ -831,7 +836,7 @@ fun SyncedLyricsView(
+                                 easing = FastOutSlowInEasing
+                             ),
+                             label = "embedded_lyric_scale"
+-                        )
++                        ).value
+                     }
+                     val playbackScale = if (isActive && visualEffectsEnabled) {
+                         1f
+@@ -852,12 +857,16 @@ fun SyncedLyricsView(
+                         } else {
+                             -visualSpec.pageTiltDeg
+                         }
+-                    val animatedPlaybackRotationX by animateFloatWhenEnabled(
+-                        targetValue = playbackTilt,
+-                        enabled = visualEffectsEnabled,
+-                        animationDurationMs = visualSpec.flipDurationMs,
+-                        label = "lyric_flip"
+-                    )
++                    val animatedPlaybackRotationX: Float = if (tvStaticLineMotion) {
++                        playbackTilt
++                    } else {
++                        animateFloatWhenEnabled(
++                            targetValue = playbackTilt,
++                            enabled = visualEffectsEnabled,
++                            animationDurationMs = visualSpec.flipDurationMs,
++                            label = "lyric_flip"
++                        ).value
++                    }
+                     val rotationX = interpolateLyricVisualValue(
+                         playbackValue = animatedPlaybackRotationX,
+                         clearValue = 0f,

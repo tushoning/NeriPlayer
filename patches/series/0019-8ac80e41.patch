@@ -1,0 +1,979 @@
+From 8ac80e417d318251f36107fdac8e117e115417f6 Mon Sep 17 00:00:00 2001
+From: neri-fork <local@neriplayer.fork>
+Date: Sat, 7 Nov 2026 00:34:08 +0800
+Subject: [PATCH] =?UTF-8?q?chore(fork):=20=E9=80=82=E9=85=8D=20tushoning/N?=
+ =?UTF-8?q?eriPlayer=20=E2=80=94=E2=80=94=20aerial=20=E7=AD=BE=E5=90=8D?=
+ =?UTF-8?q?=E3=80=81CI=20=E5=8F=91=E7=94=B5=E8=A7=86=E5=8C=85=E3=80=81?=
+ =?UTF-8?q?=E9=A6=96=E6=AC=A1=E4=B8=8A=E4=BC=A0=E6=89=8B=E5=86=8C?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 签名默认改为 aerial.keystore / alias aerial
+- tvrelease 有正式密钥时用正式签名（原来固定 debug 签名，CI 出的包装不上）
+- CI 改成构建 assembleTvrelease，secret 统一 AERIAL_*，加证书指纹校验
+- 分支统一叫 main；脚本自动识别 upstream/origin 远端
+- README 顶部加 fork 声明；FORK.md 补首次上传的逐步操作
+- .gitignore 挡住 keystore/jks/b64
+---
+ .github/workflows/fork-sync.yml | 154 ++++++++-----
+ .gitignore                      |   6 +
+ FORK.md                         | 374 ++++++++++++++++----------------
+ README.md                       |  14 ++
+ app/build.gradle.kts            |  13 +-
+ fork-tools/make-patches.sh      |  20 +-
+ fork-tools/sync-upstream.sh     |  70 +++---
+ 7 files changed, 371 insertions(+), 280 deletions(-)
+
+diff --git a/.github/workflows/fork-sync.yml b/.github/workflows/fork-sync.yml
+index 71070e53..257d3cb0 100644
+--- a/.github/workflows/fork-sync.yml
++++ b/.github/workflows/fork-sync.yml
+@@ -1,18 +1,20 @@
+-name: Fork sync upstream & release
++name: 同步上游并发布 TV 版
+ 
+-# 用途：上游有新提交时，自动把 patches/series/ 叠到新上游上，
+-#       编译正式签名的 Release APK，打 tag 发 Release。
+-# 合规要点：tag 打在「实际编译的那个 commit」上，GitHub 会自动为该 tag
+-#          附上源码包，满足 GPLv3 §6「对应源码可得」。
++# 干什么：
++#   定时去上游 cwuom/NeriPlayer 看 master 有没有新提交。
++#   有 → 把我方补丁叠上去 → 编译电视包（aerial 签名）→ 发 Release → 把结果推回 main。
++#   没有 → 直接退出，不编译。
++#
++# 合规：Release 的 tag 打在「实际编译的那个 commit」上，GitHub 自动给 tag 附源码包，
++#       满足 GPLv3 §6「分发二进制必须能拿到对应源码」。
+ 
+ on:
+   schedule:
+-    - cron: '0 18 * * *' # UTC 18:00 = 北京时间 02:00
++    - cron: '23 */6 * * *' # 每 6 小时检查一次（UTC 分钟 23，避开整点高峰）
+   workflow_dispatch:
+ 
+ permissions:
+-  contents: write
+-  issues: write
++  contents: write # 打 tag、发 Release、push 分支都要写权限
+ 
+ concurrency:
+   group: fork-sync
+@@ -20,23 +22,25 @@ concurrency:
+ 
+ env:
+   UPSTREAM_REPO: https://github.com/cwuom/NeriPlayer.git
++  KEY_ALIAS: aerial
++  APK_OUT: NeriPlayer-TV.apk
+ 
+ jobs:
+   sync:
+     runs-on: ubuntu-latest
+     steps:
+-      - name: Checkout fork
++      - name: 拉取本仓库
+         uses: actions/checkout@v4
+         with:
+-          fetch-depth: 0 # 需要完整历史：git am -3 要用到补丁原始 blob
++          fetch-depth: 0 # 需要完整历史：git am -3 要用到补丁的原始 blob
+           submodules: recursive
+ 
+-      - name: Configure git identity
++      - name: 配置 git 身份
+         run: |
+           git config user.name  "github-actions[bot]"
+           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+ 
+-      - name: Fetch upstream and detect new commits
++      - name: 检查上游有没有新提交
+         id: up
+         run: |
+           set -euo pipefail
+@@ -46,15 +50,19 @@ jobs:
+           BASE=$(sed -n 's/^base_full_sha=//p' patches/BASE)
+           echo "new=$NEW" >> "$GITHUB_OUTPUT"
+           echo "base=$BASE" >> "$GITHUB_OUTPUT"
++          if [ -z "$BASE" ]; then
++            echo "::error::patches/BASE 里读不到 base_full_sha"
++            exit 1
++          fi
+           if git merge-base --is-ancestor "$NEW" "$BASE"; then
+             echo "changed=false" >> "$GITHUB_OUTPUT"
+-            echo "上游没有新提交（$(git rev-parse --short "$NEW") 已在基线内），跳过。"
++            echo "上游没有新提交（当前基线 $(git rev-parse --short "$BASE")），跳过。"
+           else
+             echo "changed=true" >> "$GITHUB_OUTPUT"
+-            echo "上游有新提交：$(git rev-parse --short "$BASE") -> $(git rev-parse --short "$NEW")"
++            echo "上游有新提交：$(git rev-parse --short "$BASE") → $(git rev-parse --short "$NEW")"
+           fi
+ 
+-      - name: Apply our patch series onto new upstream
++      - name: 把补丁叠到新上游
+         id: apply
+         if: steps.up.outputs.changed == 'true'
+         run: |
+@@ -68,77 +76,118 @@ jobs:
+           else
+             echo "ok=false" >> "$GITHUB_OUTPUT"
+             {
+-              echo "上游 \`${{ steps.up.outputs.new }}\` 的改动和我方补丁冲突。"
++              echo "上游 \`${{ steps.up.outputs.new }}\` 动到了我方补丁改过的代码，自动合并失败。"
+               echo ""
+-              echo "冲突文件："
++              echo "**冲突文件：**"
+               git diff --name-only --diff-filter=U | sed 's/^/- `/;s/$/`/'
+               echo ""
+-              echo "本地处理："
++              echo "**在本地怎么修：**"
+               echo '```bash'
+-              echo 'bash fork-tools/sync-upstream.sh        # 按提示解决冲突'
+-              echo 'bash fork-tools/make-patches.sh         # 重新生成补丁快照'
++              echo 'git fetch upstream master'
++              echo 'bash fork-tools/sync-upstream.sh'
++              echo 'bash fork-tools/make-patches.sh   # 修好后重新生成补丁'
+               echo '```'
++              echo ""
++              echo "处理原则：import 冲突取并集；上游只是改名就取我方再批量改名；"
++              echo "上游真重构了就取上游，再把 TV 逻辑补回去。"
+             } > conflict-report.md
+             git am --abort || true
+             exit 1
+           fi
+ 
+-      - name: Set up JDK 21
++      - name: 刷新补丁快照（基线指向新上游）
++        if: steps.apply.outputs.ok == 'true'
++        run: |
++          set -euo pipefail
++          bash fork-tools/make-patches.sh
++          git add -A patches/
++          if ! git diff --cached --quiet; then
++            git commit -qm "chore: 同步上游 $(git rev-parse --short '${{ steps.up.outputs.new }}')，刷新补丁快照"
++          fi
++
++      - name: 安装 JDK 21
+         if: steps.apply.outputs.ok == 'true'
+         uses: actions/setup-java@v5
+         with:
+           distribution: temurin
+           java-version: 21
+ 
+-      - name: Set up Gradle cache
++      - name: Gradle 缓存
+         if: steps.apply.outputs.ok == 'true'
+         uses: gradle/actions/setup-gradle@v5
+ 
+-      # 组织级 secret：配一次，组织内所有仓库都能引用
+-      - name: Decode keystore
++      - name: 安装 NDK
++        if: steps.apply.outputs.ok == 'true'
++        uses: ./.github/actions/android-ndk
++
++      - name: 写入签名密钥
+         if: steps.apply.outputs.ok == 'true'
+         env:
+-          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
++          KEYSTORE_B64: ${{ secrets.AERIAL_KEYSTORE_B64 }}
++          STORE_PASS: ${{ secrets.AERIAL_STORE_PASSWORD }}
++          CERT_SHA256: ${{ secrets.AERIAL_CERT_SHA256 }}
+         run: |
+           set -euo pipefail
+-          test -n "$KEYSTORE_B64" || { echo "缺少 KEYSTORE_B64 secret" >&2; exit 1; }
+-          printf '%s' "$KEYSTORE_B64" | base64 -d > app/neri.jks
++          test -n "$KEYSTORE_B64" || { echo "::error::缺少 secret AERIAL_KEYSTORE_B64"; exit 1; }
++          printf '%s' "$KEYSTORE_B64" | base64 -d > app/aerial.keystore
++          # 密钥传错的话，包发出去也装不上（签名不一致），这里先验一遍
++          if [ -n "${CERT_SHA256:-}" ]; then
++            GOT=$(keytool -list -v -keystore app/aerial.keystore -storepass "$STORE_PASS" \
++                    -alias "$KEY_ALIAS" 2>/dev/null \
++                  | sed -n 's/^[[:space:]]*SHA256: //p' | tr -d ':' | tr 'A-Z' 'a-z')
++            WANT=$(printf '%s' "$CERT_SHA256" | tr -d ':' | tr 'A-Z' 'a-z')
++            if [ "$GOT" != "$WANT" ]; then
++              echo "::error::密钥库证书指纹不符，期望 $WANT 实际 $GOT"
++              exit 1
++            fi
++            echo "证书指纹校验通过：$GOT"
++          else
++            echo "::warning::未配置 AERIAL_CERT_SHA256，跳过指纹校验"
++          fi
+ 
+-      - name: Build signed release
++      - name: 编译电视包
+         if: steps.apply.outputs.ok == 'true'
+         env:
+-          ORG_GRADLE_PROJECT_KEYSTORE_FILE: neri.jks
+-          ORG_GRADLE_PROJECT_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+-          ORG_GRADLE_PROJECT_KEY_ALIAS: key0
+-          ORG_GRADLE_PROJECT_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
++          ORG_GRADLE_PROJECT_KEYSTORE_FILE: aerial.keystore
++          ORG_GRADLE_PROJECT_KEYSTORE_PASSWORD: ${{ secrets.AERIAL_STORE_PASSWORD }}
++          ORG_GRADLE_PROJECT_KEY_ALIAS: aerial
++          ORG_GRADLE_PROJECT_KEY_PASSWORD: ${{ secrets.AERIAL_KEY_PASSWORD }}
+         run: |
+           set -euo pipefail
+-          ./gradlew :app:assembleRelease -PbuildAllReleaseAbis=true \
+-            --warning-mode all --stacktrace
++          ./gradlew :app:assembleTvrelease --warning-mode all --stacktrace
+ 
+-      - name: Remove temporary keystore
++      - name: 删掉临时密钥
+         if: always()
+-        run: rm -f app/neri.jks
++        run: rm -f app/aerial.keystore
+ 
+-      - name: Write release notes
++      - name: 整理产物并写发版说明
+         id: meta
+         if: steps.apply.outputs.ok == 'true'
+         env:
+           UPSTREAM_SHA: ${{ steps.up.outputs.new }}
+         run: |
+           set -euo pipefail
++          APK=$(ls app/build/outputs/apk/tvrelease/*.apk | head -1)
++          test -n "$APK" || { echo "::error::没找到 tvrelease 的 APK"; exit 1; }
++          cp "$APK" "$APK_OUT"
++          VERSION=$(basename "$APK" | sed 's/^NeriPlayer-//; s/-armeabi-v7a.*//; s/\.apk$//')
++          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+           echo "sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+           echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+           echo "upstream_short=$(git rev-parse --short=7 "$UPSTREAM_SHA")" >> "$GITHUB_OUTPUT"
+           cat > release-notes.md <<EOF
+-          ## 本版本
++          ## 这是什么
++
++          **电视适配版** NeriPlayer（本 fork 的唯一用途），基于上游 \`${UPSTREAM_SHA}\` 构建。
+ 
+-          基于上游 cwuom/NeriPlayer \`${UPSTREAM_SHA}\` 构建。
++          - 包名 \`moe.ouom.neriplayer.debug\`（沿用调试包名，可直接覆盖安装，设置和登录态不丢）
++          - 签名：aerial
++          - 只含 armeabi-v7a（这台电视是 32 位）
++          - versionName \`${VERSION}\`
+ 
+           ## 与上游的差异
+ 
+-          本构建是**电视适配 fork**，修改日期 $(date -u +%Y-%m-%d)。
+-          完整改动见仓库内 \`patches/tv-fork.diff\`。主要改动：
++          修改日期 $(date -u +%Y-%m-%d)。完整改动见仓库内 \`patches/tv-fork.diff\`。主要改动：
+ 
+           - TV 侧栏导航与遥控器焦点体系
+           - 关闭部分动效 / 模糊 / 着色器，降低电视端负载
+@@ -148,34 +197,39 @@ jobs:
+           ## 源码
+ 
+           与本次 APK 完全对应的源码：**本仓库 tag \`$(git rev-parse --short=7 HEAD)\`**
+-          （GitHub 已自动提供 Source code 压缩包）。
++          （GitHub 已自动为该 tag 提供 Source code 压缩包）。
+           上游项目：https://github.com/cwuom/NeriPlayer
+ 
+           ## 许可
+ 
+           本程序为自由软件，按 **GNU General Public License v3.0 或更高版本**发布，
+-          不提供任何担保。许可证全文见仓库根目录 LICENSE。
++          不提供任何担保。许可证全文见仓库根目录 LICENSE，修改声明见 NOTICE。
++          本构建不是上游官方发布，也不代表上游作者的观点。
+           EOF
+ 
+-      - name: Tag and publish release
++      - name: 打 tag 并发布 Release
+         if: steps.apply.outputs.ok == 'true'
+         env:
+           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+         run: |
+           set -euo pipefail
+           TAG="tv-${{ steps.meta.outputs.date }}-${{ steps.meta.outputs.upstream_short }}"
++          # 重跑保护：同一天同一个上游 commit 只会有一个 tag
++          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
++            echo "tag $TAG 已存在，跳过发布"
++            exit 0
++          fi
+           git tag -a "$TAG" -m "基于上游 ${{ steps.up.outputs.new }} 的电视适配构建"
+           git push origin "$TAG"
+-          gh release create "$TAG" \
+-            app/build/outputs/apk/release/*.apk \
+-            --title "TV fork $TAG" \
++          gh release create "$TAG" "$APK_OUT" \
++            --title "TV 版 $TAG" \
+             --notes-file release-notes.md
+ 
+-      - name: Push synced branch
++      - name: 把同步结果推回 main
+         if: steps.apply.outputs.ok == 'true'
+-        run: git push --force-with-lease origin "HEAD:our-changes"
++        run: git push --force-with-lease origin "HEAD:main"
+ 
+-      - name: Open issue on conflict
++      - name: 冲突时开 issue 提醒
+         if: failure() && steps.up.outputs.changed == 'true'
+         env:
+           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+diff --git a/.gitignore b/.gitignore
+index d5a9de77..a636a321 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -51,3 +51,9 @@ AGENTS.md
+ /app/src/androidTest/assets/metadata/synthetic-fixture-provenance.txt
+ /app/src/androidTest/assets/metadata/synthetic-free-first-8-provenance.json
+ /hidden-api/build/
++
++# 签名材料绝不入库（CI 用 secret 现写，本地用 -P 传入）
++*.jks
++*.keystore
++*.b64
++/local/
+diff --git a/FORK.md b/FORK.md
+index 1d7c07b5..74f0020b 100644
+--- a/FORK.md
++++ b/FORK.md
+@@ -1,57 +1,158 @@
+ # 这个 fork 怎么维护
+ 
+ 上游：[cwuom/NeriPlayer](https://github.com/cwuom/NeriPlayer)（Android 音乐播放器，手机版 UI）。
+-本 fork 的唯一目的：**给电视做适配**（侧栏导航、遥控器焦点、去动效、TV 布局、TV release 变体）。
++本 fork：**<https://github.com/tushoning/NeriPlayer>**，唯一目的是**给电视做适配**
++（侧栏导航、遥控焦点、去动效、电视布局）。
+ 
+ ---
+ 
+-## 1. 分支约定
++## 0. 第一次上传：照着点就行
+ 
+-| 分支 | 内容 | 规则 |
+-| --- | --- | --- |
+-| `master` | 上游原样镜像 | 只 `git fetch` + 快进，永不提交 |
+-| `our-changes` | 上游 + 我方改动 | **必须线性**（不含 merge commit） |
+-| `archive/*` | 历史存档 | 只读，出问题回这里翻 |
++### 0.1 在 GitHub 上建 fork
++
++1. 浏览器打开 <https://github.com/cwuom/NeriPlayer>
++2. 右上角 **Fork** → **Create fork**
++3. 得到 `https://github.com/tushoning/NeriPlayer`（名字保持 `NeriPlayer`）
++
++### 0.2 把本机代码推上去
++
++在这台机器上、仓库目录里执行（Git Bash）：
++
++```bash
++cd C:/Users/Tushon/WorkBuddy/2026-10-24-00-27-15/work/neri-fork
++git push -f fork main:main
++```
++
++- `fork` 这个远端已经配好，指向 `https://github.com/tushoning/NeriPlayer.git`
++- `-f` 是强推：fork 出来的仓库带的是上游原版，我们要用本机这份覆盖掉
++- 首次 push 会弹浏览器登录 GitHub，授权一次就好
++
++### 0.3 把默认分支改成 main
++
++刚 fork 出来的仓库默认分支是 `master`（上游原样）。**改掉它，否则定时任务不会跑。**
++
++网页路径：
++`仓库主页` → **Settings**（设置，顶部菜单最右）→ 左侧 **General** →
++**Default branch** → 点 `master` 右边的双向箭头图标 → 选 `main` → **Update**
++
++> 为什么必须改：GitHub Actions 的定时任务（schedule）只在**默认分支**上生效。
++
++### 0.4 填 4 个签名 Secret
++
++网页路径：`仓库主页` → **Settings** → 左侧 **Secrets and variables** → **Actions** →
++右上 **New repository secret**，一个一个加：
++
++| Name（必须一模一样） | Value 从哪来 |
++| --- | --- |
++| `AERIAL_KEYSTORE_B64` | 见下面 0.4.1 |
++| `AERIAL_STORE_PASSWORD` | `C:/Users/Tushon/keystores/aerial/README.md` 里的 `storePassword` |
++| `AERIAL_KEY_PASSWORD` | 同一个文件里的 `keyPassword` |
++| `AERIAL_CERT_SHA256`（可选但强烈建议） | `4ca292129ad97359a262d5f5269e7fd7ef0287b33cd19f6e761dd671946581b5` |
++
++#### 0.4.1 把密钥库转成 base64 文本
++
++在 Git Bash 里跑：
++
++```bash
++cd /c/Users/Tushon/keystores/aerial
++base64 -w0 aerial.keystore > aerial.b64
++cat aerial.b64
++```
++
++终端会吐出一长串字符（约 3.6 KB，一整行，没有换行）。**全选复制**，
++粘贴到 `AERIAL_KEYSTORE_B64` 的 Value 里。粘完可以删掉 `aerial.b64`。
++
++> 注意：`.gitignore` 已经把 `*.keystore` / `*.b64` 挡住，这些文件不会被提交上去。
++
++### 0.5 打开 Actions 的写权限
++
++网页路径：**Settings** → 左侧 **Actions** → **General** → 拉到最下面
++**Workflow permissions** → 选 **Read and write permissions** → **Save**。
++
++> 不开这一步，最后创建 Release 会报 403（没权限）。
++
++### 0.6 手动跑一次
++
++网页路径：仓库顶部 **Actions** → 左侧 **「同步上游并发布 TV 版」** →
++右边 **Run workflow** → 绿色 **Run workflow** 按钮。
++
++等 15～25 分钟（第一次要下依赖、编 native），跑完去 **Releases** 看，应该有一个
++`NeriPlayer-TV.apk`。
++
++### 0.7 电视上装
++
++**第一次必须卸载重装**：以前电视上那个包是 debug 签名，现在换成 aerial 签名，
++签名不一样不能覆盖安装。
+ 
+-「必须线性」不是洁癖：`patches/series/` 是靠逐个 `git am` 重放的，历史里一旦有 merge，
+-merge 之后的提交其 diff 基准是合并结果而不是上游基线，拆出来的补丁就装不回去。
+-2026-11-06 之前的 `our-changes` 就有一次 merge（`bb54fb58`），已经用等价的线性链替换，
+-旧历史存在 `archive/our-changes-20261106` 和标签 `pre-linear-20261106`。
++```bash
++adb uninstall moe.ouom.neriplayer.debug
++adb install -r NeriPlayer-TV.apk
++```
++
++卸载会清掉应用数据（歌单缓存、登录态要重来）。之后就都是 aerial 签名了，
++以后可以直接覆盖安装。
++
++---
++
++## 1. 分支和目录
++
++| 分支 / 目录 | 是什么 |
++| --- | --- |
++| `main` | **我方完整代码**（上游 + TV 改动 + 补丁快照 + 脚本），仓库默认分支 |
++| `master` | 上游原样镜像，只 `git fetch` + 快进，永不提交（本地才有，不用推） |
++| `archive/*` | 历史存档，只读 |
++| `patches/` | 上游补丁快照，自动生成，**不要手改** |
++| `fork-tools/` | 同步与生成补丁的脚本 |
++| `.github/workflows/fork-sync.yml` | CI：定时同步上游 → 编译 → 发 Release |
++
++**`main` 必须保持线性**（不含 merge commit）。`patches/series/` 是靠逐个 `git am`
++重放的，历史里一旦有 merge，merge 之后的提交其 diff 基准是合并结果而不是上游，
++拆出来的补丁就装不回去。
++
++> 2026-11-06 之前的历史里有一次 merge（`bb54fb58`），已经用等价线性链替换，
++> 旧历史存在 `archive/our-changes-20261106` 和标签 `pre-linear-20261106`。
+ 
+ ---
+ 
+ ## 2. 改了代码之后
+ 
+ ```bash
+-git add -A && git commit            # 正常提交到 our-changes
+-bash fork-tools/make-patches.sh          # 重新生成 patches/ 快照
++git add -A && git commit            # 正常提交到 main
++bash fork-tools/make-patches.sh     # 重新生成 patches/ 快照
++git push origin main
+ ```
+ 
+-`make-patches.sh` 会做三件事：
++`make-patches.sh` 做三件事：
+ 
+ 1. 生成 `patches/tv-fork.diff`（单个合并补丁）
+ 2. 生成 `patches/series/NNNN-<sha>.patch`（按提交拆分的补丁链）
+-3. **在一个临时 worktree 里把两种补丁各重放一遍，比对 tree 哈希是否与当前代码完全一致**
++3. **在临时 worktree 里把两种补丁各重放一遍，比对 tree 哈希是否与当前代码完全一致**
+ 
+-第 3 步没通过就直接报错退出，不会让你拿着坏补丁去同步。生成失败基本都是因为
+-`patches/` 被算进了补丁内容 —— 脚本已经用 pathspec 排除，别手动改那一行。
++第 3 步没通过就报错退出，不会让你拿着坏补丁去同步。
+ 
+ ---
+ 
+-## 3. 上游更新了，怎么合
++## 3. 上游更新了怎么办
++
++**正常情况下什么都不用做** —— CI 每 6 小时看一次上游，有新提交就自动叠补丁、
++编译、发 Release、把结果推回 `main`。你只要去 Releases 下载。
++
++**CI 红了（打不开 / 报错）** 说明上游动到了我们改过的地方，会在 Issues 里开一条记录，
++列出冲突文件。本地这样处理：
+ 
+ ```bash
+ bash fork-tools/sync-upstream.sh --build
+ ```
+ 
+-脚本做的事：`git fetch origin master` → 在新上游上开 `sync/<日期>` 分支 →
+-`git am -3 --keep-cr patches/series/*.patch` → 编译。
++- **没冲突**：分支变成「新上游 + 我方补丁」，然后
++
++  ```bash
++  bash fork-tools/make-patches.sh
++  git checkout main && git reset --hard sync/<日期>
++  git push -f origin main
++  ```
+ 
+-- **没冲突**：分支直接变成「新上游 + 我方补丁」，`git diff` 复核后
+-  `git checkout our-changes && git reset --hard sync/<日期>` 接受，
+-  再跑一次 `make-patches.sh` 把基线更新成新上游。
+-- **有冲突**：脚本会停下并保留冲突标记，工作区里能看到 `<<<<<<<`。
+-  按老规矩处理：
++- **有冲突**：脚本停下并保留 `<<<<<<<` 标记，按这个表处理
+ 
+   | 冲突类型 | 处理 |
+   | --- | --- |
+@@ -63,196 +164,87 @@ bash fork-tools/sync-upstream.sh --build
+ 
+ 只想一次解决完冲突、不要分提交：`bash fork-tools/sync-upstream.sh --squash`。
+ 
+-> Windows 上 `core.autocrlf=true` 会让补丁的 LF 上下文行失配。
+-> 仓库根的 `.gitattributes` 已经把 `*.patch` / `*.diff` 标记成 `-text`，别删。
+-
+----
+-
+-## 4. 许可证：GPL-3.0-or-later，以及发布 Release 要做什么
+-
+-**不是 MIT，是 GPL。** 根目录 `LICENSE` 是 GPL-3.0 全文，源码文件头写的是
+-「either version 3 of the License, or (at your option) any later version」，
+-所以整个项目是 **GPL-3.0-or-later**。`THIRD_PARTY_LICENSES.md` 里还有
+-Capsulyric（GPL-3.0-or-later）、InstallerX Revived（GPL-3.0-only）、libusb（LGPL-2.1-or-later）
+-等第三方代码，这些跟着各自的许可证走，不能被我方改动覆盖。
+-
+-### fork + 自动打包发 Release，闭环要满足这几条
+-
+-| GPLv3 条款 | 要求 | 在 GitHub 上怎么落地 |
+-| --- | --- | --- |
+-| §5a | 修改版必须有**醒目的改动声明 + 修改日期** | 见下方 `NOTICE` 模板 + Release 说明 |
+-| §5c | 整个作品（含你的修改）**整体继续按 GPL 授权**，不能只给补丁 | 仓库根保留 `LICENSE`，不要改 |
+-| §6 | 分发 APK（object code）时必须让接收者拿到**对应源码**（指编译这个 APK 的确切版本，含构建脚本） | Release 的 tag 必须就是编译用的那个 commit；GitHub 会自动为 tag 附 `Source code (zip/tar.gz)` —— 这就是"同一地点取得源码" |
+-| §5d | 保留原有的版权声明与无担保声明 | 不改文件头，不动 `LICENSE` |
+-| §10 | 不得对接收者追加额外限制 | 别加「禁止商用」「禁止二次分发」之类条款 |
+-| §7 | 保留上游作者署名 | README 里写清楚 fork 自谁 |
+-
+-**具体做法（这套已经能直接用于自动发布）：**
+-
+-1. **每个 Release 的 tag 就是源码版本**。CI 只用「已打 tag 的 commit」编译，
+-   绝不从工作区随手打包。这样 §6 自动满足，因为 GitHub 给 tag 附源码。
+-2. **Release 说明里写清 fork 关系与改动**：
+-
+-   ```markdown
+-   ## 本版本
+-   基于上游 cwuom/NeriPlayer <上游sha> 构建。
+-
+-   ## 与上游的差异
+-   本构建是电视适配 fork，修改内容见仓库 `patches/tv-fork.diff`，
+-   修改日期 2026-11-06。主要改动：TV 侧栏导航、遥控器焦点、
+-   去除部分动效、TV release 变体。
+-
+-   ## 源码
+-   与本次 APK 完全对应的源码：本仓库 tag `<tag>`（GPL-3.0-or-later）。
+-   上游项目：https://github.com/cwuom/NeriPlayer
+-
+-   ## 许可
+-   本程序为自由软件，按 GNU General Public License v3.0 或更高版本发布，
+-   无任何担保。LICENSE 全文见仓库根目录。
+-   ```
+-
+-3. **加一个 `NOTICE` 文件**（§5a 的「醒目声明」）：
+-
+-   ```
+-   This is a modified version of NeriPlayer.
+-   本程序是 NeriPlayer 的修改版（电视适配 fork）。
+-
+-   Upstream: https://github.com/cwuom/NeriPlayer
+-   Modifications: TV (television) UI adaptation — sidebar navigation,
+-   D-pad focus handling, reduced animations, TV release build variant.
+-   Modified: 2026-11-06
+-   Full diff: patches/tv-fork.diff
+-   License: GPL-3.0-or-later (see LICENSE)
+-   ```
+-
+-4. **不要做的事**：
+-   - 不要改成 MIT / Apache 发布，哪怕只发 APK。
+-   - 不要在 Release 里写「本软件版权归我，禁止转载」之类的附加限制。
+-   - 不要宣称是官方版本、不要用上游作者名义发版（商标不在 GPL 授权范围）。
+-     应用内标题建议带个 fork 标记，避免和官方版混淆。
+-   - 不要只发 APK 不给源码链接（§6 违规）。
+-
+-5. **`applicationId` 保持 `moe.ouom.neriplayer`**：GPL 不要求改包名，
+-   改了反而装不上、丢数据。合规义务在「源码可得 + 改动声明」，不在包名。
+-
+-> 一句话记：**发布 APK 的同时，让任何人能从这个仓库的这个 tag 拿到一模一样的源码。
+-> 做到这一点，剩下的就是把 LICENSE 留着、把改动说清楚。**
+-
+ ---
+ 
+-## 5. GitHub Actions 签名：一套 key 怎么给所有仓库用
+-
+-### 先明确：一把 key 签所有 app 是可行的
++## 4. 许可证：GPL-3.0-or-later
+ 
+-Android 签名只校验「同一个包名的两次安装是否同一把 key」，不同包名之间互不影响。
+-所以一把个人发布 key 签你所有 app 技术上完全没问题。代价是**单点风险**：
+-key 泄露 = 所有 app 都能被人伪造升级；一把 key 用在 Google Play 还会互相牵连
+-（Play 上架要每个应用独立的上传密钥）。个人 sideload 分发的话，一把就够。
++根目录 `LICENSE` 是 GPLv3 全文，源码文件头写的是「either version 3 … or any later
++version」，所以整个项目是 **GPL-3.0-or-later**。`THIRD_PARTY_LICENSES.md` 里还有
++Capsulyric（GPL-3.0-or-later）、InstallerX Revived（GPL-3.0-only）、libusb（LGPL-2.1-or-later），
++跟着各自的许可证走。
+ 
+-### 关键限制：GitHub 的 Secrets 分三级，只有一级是「配一次全仓库可用」
++发布 APK 要守的几条：
+ 
+-| 级别 | 配置位置 | 能否跨仓库 |
++| GPLv3 条款 | 要求 | 本仓库怎么做的 |
+ | --- | --- | --- |
+-| Repository secrets | 每个仓库 Settings → Secrets | ❌ 要一个仓库一个仓库配 |
+-| Environment secrets | 每个仓库 Settings → Environments | ❌ 同上 |
+-| **Organization secrets** | 组织 Settings → Secrets and variables → Actions | ✅ **配一次，组织内所有仓库可用** |
+-
+-**免费（GitHub Free）计划下，组织级 secret 只能给 public 仓库用**；
+-私有仓库要用，得升 Team（$4/人/月）。你这个 fork 本来就是 public（GPL 发布也要 public 最省事），
+-所以免费方案就够。
+-
+-### 操作步骤
++| §5a | 修改版要有醒目改动声明 + 日期 | 根目录 `NOTICE`，README 顶部那段，Release 说明 |
++| §5c | 整个作品整体继续按 GPL 授权 | 保留 `LICENSE`，不加任何额外限制 |
++| §6 | 发二进制要给**对应源码** | Release 的 tag 打在编译的那个 commit 上，GitHub 自动给 tag 附源码包 |
++| §5d | 保留原版权声明与无担保声明 | 文件头不动 |
++| §10 | 不得追加额外限制 | 不写「禁止商用/转载」之类 |
++| §7 | 保留上游署名 | README、NOTICE 都指向上游 |
+ 
+-1. **把仓库放进一个组织**（个人账号下没有组织级 secrets）：
+-   `Settings → Transfer ownership` 转到一个你自己建的 Organization。
++**不要做的事**：改成 MIT 发布；只发 APK 不给源码；宣称是官方版；
++用「本软件版权归我，禁止转载」这类话。
+ 
+-2. **准备 key**（如果还没统一）：
+-
+-   ```bash
+-   keytool -genkeypair -v -keystore release.jks -alias key0 \
+-     -keyalg RSA -keysize 4096 -validity 36500 \
+-     -storetype JKS
+-   # 记下 store password / key password，存进密码管理器，别只留在某一台机器上
+-   ```
++---
+ 
+-3. **base64 编码后存成组织 secret**（上游 CI 期望的名字就是这四个，直接照用）：
++## 5. 签名
+ 
+-   ```bash
+-   # Windows git-bash
+-   base64 -w0 release.jks > release.jks.b64
+-   ```
++所有自建应用统一用这一把 key：
+ 
+-   组织页面：`Organization → Settings → Secrets and variables → Actions → New organization secret`
++| 项 | 值 |
++| --- | --- |
++| 密钥库 | `C:/Users/Tushon/keystores/aerial/aerial.keystore`（PKCS12）|
++| alias | `aerial` |
++| 证书 SHA-256 | `4ca292129ad97359a262d5f5269e7fd7ef0287b33cd19f6e761dd671946581b5` |
++| 有效期 | 到 2056-10-16 |
+ 
+-   | Name | Value |
+-   | --- | --- |
+-   | `KEYSTORE_B64` | `release.jks.b64` 的内容 |
+-   | `KEYSTORE_PASSWORD` | store 密码 |
+-   | `KEY_PASSWORD` | key 密码 |
+-   | `KEY_ALIAS`（可选，上游写死 `key0`） | 别名 |
++密码在同目录 `README.md` 里，**不要写进本仓库**（仓库是公开的）。
+ 
+-   Repository access 选 **All repositories**（私有仓库在免费计划下会拿到空值，不影响 public 的）。
++### 本地出带签名的包
+ 
+-   命令行等价写法：
++```bash
++./gradlew :app:assembleTvrelease \
++  -PKEYSTORE_FILE=C:/Users/Tushon/keystores/aerial/aerial.keystore \
++  -PKEYSTORE_PASSWORD=<store 密码> \
++  -PKEY_ALIAS=aerial \
++  -PKEY_PASSWORD=<key 密码>
++```
+ 
+-   ```bash
+-   gh secret set KEYSTORE_B64 --org <你的组织> --visibility all < release.jks.b64
+-   gh secret set KEYSTORE_PASSWORD --org <你的组织> --visibility all
+-   gh secret set KEY_PASSWORD --org <你的组织> --visibility all
+-   ```
++不传 `-P` 时会退回 debug 签名（本地随便跑跑够用，但发出去的包必须用上面的）。
+ 
+-4. **workflow 里照常引用**，不用改任何东西：
++### 想让所有仓库都不用重复配 secret
+ 
+-   ```yaml
+-   env:
+-     ORG_GRADLE_PROJECT_KEYSTORE_FILE: neri.jks
+-     ORG_GRADLE_PROJECT_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+-     ORG_GRADLE_PROJECT_KEY_ALIAS: key0
+-     ORG_GRADLE_PROJECT_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+-   run: |
+-     printf '%s' "$KEYSTORE_B64" | base64 -d > app/neri.jks
+-   ```
++GitHub 的 Secret 分三级，**只有 Organization secrets 是「配一次全仓库可用」**：
+ 
+-   本项目 `app/build.gradle.kts` 读的就是 `KEYSTORE_FILE` / `KEYSTORE_PASSWORD` /
+-   `KEY_ALIAS` / `KEY_PASSWORD` 这四个 Gradle 属性，所以 `ORG_GRADLE_PROJECT_` 前缀一套即可。
++- Repository secrets / Environment secrets：每个仓库各配一遍
++- **Organization secrets**：组织里所有仓库都能引用
+ 
+-### 备选（如果你不想建组织）
++前提：仓库要放在一个 **Organization** 下（个人账号没有组织级 secret），
++而且免费计划下组织级 secret **只能给 public 仓库用**（私有仓库要 Team）。
+ 
+-- **中心仓库 + reusable workflow**：把「解码 key → 编译 → 发布」写在一个仓库的
+-  `workflow_call` 工作流里，其他仓库 `uses: you/ci/.github/workflows/android-release.yml@v1`。
+-  但**传 secrets 仍然要调用方仓库自己持有**（`secrets: inherit` 只传调用方已有的），
+-  所以这条路省不掉逐个配置 —— 除非那些 secret 本身放在组织级。
+-- **私有「钥匙库」仓库**：key 放私有仓库，workflow 用 GitHub App token 拉下来。
+-  这样每个仓库只需要一个 token secret，仍然比四个少，但复杂度和泄密面都更大，不推荐。
++配置路径：`组织主页` → **Settings** → **Secrets and variables** → **Actions** →
++**New organization secret** → Name 填 `AERIAL_KEYSTORE_B64` → Repository access 选
++**All repositories**。
+ 
+-**结论：建组织 → 配一次 Organization secrets → 所有仓库直接引用。**
++名字保持 `AERIAL_*` 不变，其他仓库的 workflow 直接 `${{ secrets.AERIAL_KEYSTORE_B64 }}` 就能用。
+ 
+ ---
+ 
+-## 6. 自动同步 + 自动发 Release
++## 6. 常见问题
+ 
+-`.github/workflows/fork-sync.yml` 已配好，逻辑是：
++**Q：Release 里的包和电视上装的对不上 / 装不上**
++A：先确认签名。`AERIAL_CERT_SHA256` 配了的话 CI 会在编译前校验，签名不对直接失败。
+ 
+-```
+-每天定时 / 手动触发
+-  → fetch 上游
+-  → 新提交？没有就退出
+-  → git am -3 --keep-cr patches/series/*.patch
+-      失败 → 开 issue 列出冲突文件，停止（等人处理）
+-      成功 → 编译 :app:assembleRelease -PbuildAllReleaseAbis=true（组织 secret 签名）
+-           → 打 tag tv-<日期>-<上游sha前7位>
+-           → 建 Release，附 APK + Release notes（含 §4 的改动声明与源码指引）
+-           → push our-changes
+-```
++**Q：定时任务没跑**
++A：① 默认分支是不是 `main`；② 仓库 60 天没提交会被暂停 schedule，
++去 Actions 页点 **Enable workflow**；③ schedule 是「尽力而为」，高峰会延后 1～2 小时。
++
++**Q：想让电视上的 app 自动检查更新**
++A：那是另一套东西（应用内更新指向本仓库 Release）。本 fork 目前没做，
++要做得在 `app` 里加更新检查逻辑指向 `tushoning/NeriPlayer/releases/latest`。
+ 
+-> 为什么是 `assembleRelease` 而不是 `assembleTvrelease`：后者是给本地迭代用的
+-> ——`.debug` 包名后缀 + 调试签名，方便覆盖安装不丢数据。对外发布的包必须用
+-> 正式包名 + 正式签名，否则别人装不上，你自己的升级链也断在这里。
+->
+-> 为什么必须 `--keep-cr`：上游有两个文件（`SongEncyclopediaContent.kt`、
+-> `SongEncyclopediaArtistSection.kt`）的内容本身就是 CRLF。`git am` 默认会把补丁行
+-> 末尾的 `\r` 剥掉，导致这两段 hunk 对不上，报 "patch does not apply"。
+-> 这不是补丁坏了，是 `git am` 的默认行为，加 `--keep-cr` 即可。
+-
+-注意：Release 的 tag 一定要由 CI 打在**刚编译成功的那个 commit** 上，
+-GitHub 会自动给这个 tag 附源码包，这就是 §6 的合规闭环。
++**Q：`git push` 提示 rejected**
++A：CI 会用 `--force-with-lease` 推 `main`，你本地落后了。先 `git pull --rebase`，
++或者从 CI 那个 commit 重新开始。
+diff --git a/README.md b/README.md
+index 23236112..26b163f8 100644
+--- a/README.md
++++ b/README.md
+@@ -1,5 +1,19 @@
+ [English](./README_EN.md) | [中文](./README.md)
+ 
++> ## 📺 这是电视适配 fork，不是上游官方仓库
++>
++> 上游：[cwuom/NeriPlayer](https://github.com/cwuom/NeriPlayer)
++>
++> 本仓库在官方代码基础上做了**电视（Android TV / 遥控器）适配**：侧栏导航、遥控焦点体系、
++> 精简动效与模糊、电视版布局。修改日期 **2026-11-06**，全部改动见
++> [`patches/tv-fork.diff`](patches/tv-fork.diff)，维护说明见 [`FORK.md`](FORK.md)。
++>
++> 只发布电视包（`armeabi-v7a`，包名 `moe.ouom.neriplayer.debug`），**不提供手机版**。
++> 手机版请去[上游仓库](https://github.com/cwuom/NeriPlayer/releases)。
++>
++> 许可证仍是 **GPL-3.0-or-later**（见 [LICENSE](LICENSE)），修改声明见 [NOTICE](NOTICE)。
++> 本仓库的构建不代表上游作者的观点。
++
+ <h1 align="center">NeriPlayer (音理音理!)</h1>
+ 
+ <div align="center">
+diff --git a/app/build.gradle.kts b/app/build.gradle.kts
+index abab0b48..3c6580e0 100644
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -45,10 +45,10 @@ val allowUnsignedRelease =
+     (project.findProperty("allowUnsignedRelease") as String?)?.toBoolean() == true ||
+         isGithubPullRequest ||
+         isIdeBuild
+-val releaseKeystorePath = project.findProperty("KEYSTORE_FILE") as String? ?: "neri.jks"
++val releaseKeystorePath = project.findProperty("KEYSTORE_FILE") as String? ?: "aerial.keystore"
+ val releaseKeystoreFile = project.file(releaseKeystorePath)
+ val releaseStorePassword = project.findProperty("KEYSTORE_PASSWORD") as String?
+-val releaseKeyAlias = project.findProperty("KEY_ALIAS") as String? ?: "key0"
++val releaseKeyAlias = project.findProperty("KEY_ALIAS") as String? ?: "aerial"
+ val releaseKeyPassword = project.findProperty("KEY_PASSWORD") as String?
+ val releaseSigningReady = releaseKeystoreFile.exists() &&
+     !releaseStorePassword.isNullOrBlank() &&
+@@ -149,13 +149,16 @@ android {
+         }
+ 
+         // 电视端专用：和 release 一样走 R8 + debuggable=false（安装时 ART 会做 AOT 编译），
+-        // 冷启动比 debug 包快一个档。但沿用调试签名、包名后缀仍是 .debug，
+-        // 可以直接覆盖安装已有的调试包，设置/登录态不丢。
++        // 冷启动比 debug 包快一个档。包名后缀仍是 .debug，可以直接覆盖安装已有的调试包，
++        // 设置/登录态不丢 —— 这是回退链的基础，别改。
++        // 签名：有正式密钥就用正式密钥。以前固定用 debug 签名，导致 CI 出的包（debug keystore
++        // 每次随机生成）和本地包签名不同，电视上根本覆盖安装不了。
+         create("tvrelease") {
+             initWith(getByName("release"))
+             applicationIdSuffix = ".debug"
+             isDebuggable = false
+-            signingConfig = signingConfigs.getByName("debug")
++            signingConfig =
++                if (releaseSigningReady) releaseSigningConfig else signingConfigs.getByName("debug")
+             matchingFallbacks += listOf("release", "debug")
+             val inviteScheme = "neriplayer-debug"
+             manifestPlaceholders["listenTogetherInviteScheme"] = inviteScheme
+diff --git a/fork-tools/make-patches.sh b/fork-tools/make-patches.sh
+index 5e5fdfbd..f7553207 100644
+--- a/fork-tools/make-patches.sh
++++ b/fork-tools/make-patches.sh
+@@ -19,7 +19,25 @@ set -euo pipefail
+ REPO_ROOT=$(git rev-parse --show-toplevel)
+ cd "$REPO_ROOT"
+ 
+-BASE=${1:-$(git merge-base origin/master HEAD)}
++# 上游分支自动识别：
++#   fork 仓库里 upstream = cwuom/NeriPlayer，origin = 自己
++#   老的工作副本里 origin 直接就是上游
++if [ -z "${1:-}" ]; then
++  UPSTREAM_REF=""
++  for cand in upstream/master origin/master; do
++    if git rev-parse --verify --quiet "$cand" >/dev/null 2>&1; then
++      UPSTREAM_REF=$cand
++      break
++    fi
++  done
++  if [ -z "$UPSTREAM_REF" ]; then
++    echo "找不到上游分支。先执行：" >&2
++    echo "  git remote add upstream https://github.com/cwuom/NeriPlayer.git" >&2
++    echo "  git fetch upstream master" >&2
++    exit 1
++  fi
++fi
++BASE=${1:-$(git merge-base "$UPSTREAM_REF" HEAD)}
+ BASE_FULL=$(git rev-parse "$BASE")
+ BASE_SHA=$(git rev-parse --short "$BASE")
+ BASE_SUBJECT=$(git log -1 --format=%s "$BASE")
+diff --git a/fork-tools/sync-upstream.sh b/fork-tools/sync-upstream.sh
+index 44098bbd..bed4bf2e 100644
+--- a/fork-tools/sync-upstream.sh
++++ b/fork-tools/sync-upstream.sh
+@@ -2,12 +2,12 @@
+ # ---------------------------------------------------------------------------
+ # 上游更新后，把我方改动重新落到新上游上
+ #
+-#   bash fork-tools/sync-upstream.sh       # 用补丁链（git am -3 --keep-cr），保留提交信息
+-#   bash fork-tools/sync-upstream.sh --squash   # 用单个合并补丁（冲突一次解决）
+-#   bash fork-tools/sync-upstream.sh --build    # 同步完顺便编译 TV release
++#   bash fork-tools/sync-upstream.sh              # 用补丁链（保留每个提交）
++#   bash fork-tools/sync-upstream.sh --squash     # 用单个合并补丁（冲突一次解决）
++#   bash fork-tools/sync-upstream.sh --build      # 同步完顺便编译电视包
+ #
+-# 成功 → 当前分支变成「新上游 + 我方补丁」，直接 push 即可。
+-# 冲突 → 停下来，工作区保留冲突标记，按提示手工解决后 git am --continue。
++# 成功 → 当前分支变成「新上游 + 我方补丁」。
++# 冲突 → 停下来，工作区保留 <<<<<<< 标记，手工改完 git add + git am --continue。
+ # ---------------------------------------------------------------------------
+ set -euo pipefail
+ 
+@@ -24,32 +24,40 @@ for arg in "$@"; do
+   esac
+ done
+ 
+-[ -f patches/tv-fork.diff ] || { echo "找不到 patches/tv-fork.diff，先跑 tools/make-patches.sh" >&2; exit 1; }
++[ -f patches/tv-fork.diff ] || { echo "找不到 patches/tv-fork.diff，先跑 fork-tools/make-patches.sh" >&2; exit 1; }
+ if [ -n "$(git status --porcelain)" ]; then
+   echo "工作区不干净，先提交或 stash：" >&2
+   git status --short >&2
+   exit 1
+ fi
+ 
+-echo "== 拉取上游 =="
+-git fetch origin master
+-NEW_UPSTREAM=$(git rev-parse origin/master)
+-OLD_BASE=$(git rev-parse patch-base 2>/dev/null || sed -n 's/^base_full_sha=//p' patches/BASE)
++# 上游远端自动识别
++UPSTREAM_REMOTE=""
++for r in upstream origin; do
++  url=$(git remote get-url "$r" 2>/dev/null || true)
++  case "$url" in
++    *cwuom/NeriPlayer*) UPSTREAM_REMOTE=$r; break ;;
++  esac
++done
++if [ -z "$UPSTREAM_REMOTE" ]; then
++  echo "找不到上游远端。先执行：" >&2
++  echo "  git remote add upstream https://github.com/cwuom/NeriPlayer.git" >&2
++  exit 1
++fi
++
++echo "== 拉取上游（$UPSTREAM_REMOTE）=="
++git fetch --quiet "$UPSTREAM_REMOTE" master
++NEW_UPSTREAM=$(git rev-parse "$UPSTREAM_REMOTE/master")
++OLD_BASE=$(sed -n 's/^base_full_sha=//p' patches/BASE)
+ echo "补丁基线: $(git rev-parse --short "$OLD_BASE")"
+ echo "新上游  : $(git rev-parse --short "$NEW_UPSTREAM")  $(git log -1 --format=%s "$NEW_UPSTREAM")"
+ 
+-if [ "$OLD_BASE" = "$NEW_UPSTREAM" ]; then
+-  echo "上游没有新提交，无需同步。"
+-  exit 0
+-fi
+-
+ if git merge-base --is-ancestor "$NEW_UPSTREAM" "$OLD_BASE"; then
+-  echo "上游没有新提交（本地基线更新），无需同步。"
++  echo "上游没有新提交，无需同步。"
+   exit 0
+ fi
+ 
+ BRANCH="sync/$(date +%Y%m%d-%H%M)"
+-git branch -f "$BRANCH" "$NEW_UPSTREAM" 2>/dev/null || true
+ git checkout -B "$BRANCH" "$NEW_UPSTREAM"
+ 
+ echo
+@@ -78,7 +86,7 @@ if [ "$RC" -ne 0 ]; then
+ 
+ 想全部放弃重来：
+   git am --abort              # （--squash 模式：git checkout -- . && git clean -fd）
+-  git checkout our-changes
++  git checkout main
+ 
+ 常见冲突点的处理原则：
+   1. import 冲突      → 取并集
+@@ -91,28 +99,24 @@ fi
+ 
+ if [ "$MODE" = squash ]; then
+   git add -A
+-  git -c user.name="$(git log -1 --format=%an our-changes)" \
+-      -c user.email="$(git log -1 --format=%ae our-changes)" \
+-      commit -qm "feat(tv): 同步上游 $(git rev-parse --short "$NEW_UPSTREAM") 并叠加 TV 改动"
++  git commit -qm "feat(tv): 同步上游 $(git rev-parse --short "$NEW_UPSTREAM") 并叠加 TV 改动"
+ fi
+ 
+ echo
+ echo "== 同步完成 =="
+-git log --oneline "$NEW_UPSTREAM"..HEAD | head -20
+-echo
+-echo "下一步："
+-echo "  git diff $OLD_BASE HEAD --stat        # 复核改动没被吃掉"
+-echo "  bash tools/make-patches.sh            # 重新生成补丁快照（基线变成新上游）"
+-echo "  git checkout our-changes && git reset --hard $BRANCH   # 接受这次同步"
++git log --oneline "$NEW_UPSTREAM"..HEAD | head -10
+ 
+ if [ "$DO_BUILD" = 1 ]; then
+   echo
+-  echo "== 编译 TV release =="
+-  export JAVA_HOME="${JAVA_HOME:-$REPO_ROOT/../toolchain/jdk/jdk-17.0.20.1+1}"
+-  export PATH="$JAVA_HOME/bin:$PATH"
++  echo "== 编译电视包 =="
+   export TMPDIR="$REPO_ROOT/build/tmp"
+-  export TEMP="$REPO_ROOT/build/tmp"
+-  export TMP="$REPO_ROOT/build/tmp"
++  export TEMP="$TMPDIR"
++  export TMP="$TMPDIR"
+   mkdir -p "$TMPDIR"
+-  ./gradlew :app:assembleTvrelease -g "$REPO_ROOT/../toolchain/gradle-home"
++  ./gradlew :app:assembleTvrelease
+ fi
++
++echo
++echo "下一步："
++echo "  bash fork-tools/make-patches.sh        # 把基线更新成新上游"
++echo "  git checkout main && git reset --hard $BRANCH && git push -f origin main"

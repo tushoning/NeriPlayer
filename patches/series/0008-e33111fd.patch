@@ -1,0 +1,130 @@
+From e33111fd2fd66d815adc7d272da9749dbf5ff3c7 Mon Sep 17 00:00:00 2001
+From: local <local@work>
+Date: Mon, 2 Nov 2026 10:21:59 +0800
+Subject: [PATCH] perf(tv): skip the hardcoded 300ms dual-scene host transition
+ on television
+
+---
+ .../ui/screen/host/ExploreHostScreen.kt       |  9 ++++++++-
+ .../ui/screen/host/HomeHostScreen.kt          |  9 ++++++++-
+ .../ui/screen/host/LibraryHostScreen.kt       |  9 ++++++++-
+ .../ui/screen/host/SettingsHostScreen.kt      | 20 ++++++++++++++-----
+ 4 files changed, 39 insertions(+), 8 deletions(-)
+
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/ExploreHostScreen.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/ExploreHostScreen.kt
+index 51711205..cdd718fe 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/ExploreHostScreen.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/ExploreHostScreen.kt
+@@ -286,6 +286,9 @@ fun ExploreHostScreen(
+         )
+ 
+     Surface(modifier = Modifier.fillMaxSize(), color = Color.Transparent) {
++    // 电视：整页转场（300ms、双场景、reveal 裁剪 + 缩放重测）在弱 GPU/弱 CPU 上是
++    // 「切页面卡一下」的主要来源，且没人要求电视上有这个动效。
++    val tvSkipSceneMotion = moe.ouom.neriplayer.ui.tv.LocalIsTelevision.current
+         navigationTransition.AnimatedContent(
+             modifier = Modifier.fillMaxSize(),
+             contentKey = { item ->
+@@ -296,7 +299,11 @@ fun ExploreHostScreen(
+                 }
+             },
+             transitionSpec = {
+-                if (
++                if (tvSkipSceneMotion) {
++
++                    EnterTransition.None togetherWith ExitTransition.None
++
++                } else if (
+                     shouldSuppressRestoredMainTabHostEntry(
+                         restoredEntry = suppressRestoredSceneEntry,
+                         initialDepth = initialState.navigationDepth,
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/HomeHostScreen.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/HomeHostScreen.kt
+index a62700e3..8ab1b38b 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/HomeHostScreen.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/HomeHostScreen.kt
+@@ -361,10 +361,17 @@ fun HomeHostScreen(
+         )
+ 
+     Surface(modifier = Modifier.fillMaxSize(), color = Color.Transparent) {
++    // 电视：整页转场（300ms、双场景、reveal 裁剪 + 缩放重测）在弱 GPU/弱 CPU 上是
++    // 「切页面卡一下」的主要来源，且没人要求电视上有这个动效。
++    val tvSkipSceneMotion = moe.ouom.neriplayer.ui.tv.LocalIsTelevision.current
+         navigationTransition.AnimatedContent(
+             modifier = Modifier.fillMaxSize(),
+             transitionSpec = {
+-                if (
++                if (tvSkipSceneMotion) {
++
++                    EnterTransition.None togetherWith ExitTransition.None
++
++                } else if (
+                     shouldSuppressRestoredMainTabHostEntry(
+                         restoredEntry = suppressRestoredSceneEntry,
+                         initialDepth = initialState.navigationDepth,
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/LibraryHostScreen.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/LibraryHostScreen.kt
+index 6b81190b..3aca0fda 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/LibraryHostScreen.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/LibraryHostScreen.kt
+@@ -521,6 +521,9 @@ fun LibraryHostScreen(
+         )
+ 
+     Surface(modifier = Modifier.fillMaxSize(), color = Color.Transparent) {
++    // 电视：整页转场（300ms、双场景、reveal 裁剪 + 缩放重测）在弱 GPU/弱 CPU 上是
++    // 「切页面卡一下」的主要来源，且没人要求电视上有这个动效。
++    val tvSkipSceneMotion = moe.ouom.neriplayer.ui.tv.LocalIsTelevision.current
+         navigationTransition.AnimatedContent(
+             modifier = Modifier.fillMaxSize(),
+             contentKey = { scene ->
+@@ -533,7 +536,11 @@ fun LibraryHostScreen(
+                 }
+             },
+             transitionSpec = {
+-                if (
++                if (tvSkipSceneMotion) {
++
++                    EnterTransition.None togetherWith ExitTransition.None
++
++                } else if (
+                     shouldSuppressRestoredMainTabHostEntry(
+                         restoredEntry = suppressRestoredSceneEntry,
+                         initialDepth = initialState.navigationDepth,
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/SettingsHostScreen.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/SettingsHostScreen.kt
+index c4560aea..aa88f6b4 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/SettingsHostScreen.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/host/SettingsHostScreen.kt
+@@ -23,6 +23,9 @@ package moe.ouom.neriplayer.ui.screen.host
+  * Created: 2025/1/17
+  */
+ 
++import androidx.compose.animation.EnterTransition
++import androidx.compose.animation.ExitTransition
++import androidx.compose.animation.togetherWith
+ import androidx.compose.animation.AnimatedContent
+ import androidx.compose.animation.SizeTransform
+ import androidx.compose.foundation.lazy.LazyListState
+@@ -212,13 +215,20 @@ internal fun SettingsHostScreen(
+     }
+ 
+     Surface(color = Color.Transparent) {
++    // 电视：整页转场（300ms、双场景、reveal 裁剪 + 缩放重测）在弱 GPU/弱 CPU 上是
++    // 「切页面卡一下」的主要来源，且没人要求电视上有这个动效。
++    val tvSkipSceneMotion = moe.ouom.neriplayer.ui.tv.LocalIsTelevision.current
+         navigationTransition.AnimatedContent(
+             transitionSpec = {
+-                advancedGlassHostNavigationTransition(
+-                    forward = targetState.navigationDepth > initialState.navigationDepth,
+-                    coherentFeedbackEnabled = coherentFeedbackEnabled,
+-                    targetContentZIndex = targetState.navigationDepth.toFloat()
+-                ).using(SizeTransform(clip = true))
++                if (tvSkipSceneMotion) {
++                    EnterTransition.None togetherWith ExitTransition.None
++                } else {
++                    advancedGlassHostNavigationTransition(
++                        forward = targetState.navigationDepth > initialState.navigationDepth,
++                        coherentFeedbackEnabled = coherentFeedbackEnabled,
++                        targetContentZIndex = targetState.navigationDepth.toFloat()
++                    ).using(SizeTransform(clip = true))
++                }
+             }
+         ) { state ->
+             DisposableEffect(state) {
