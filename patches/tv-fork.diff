@@ -1,6 +1,6 @@
 # NeriPlayer TV fork — 相对上游的完整改动（单个合并补丁）
 # 基线 upstream commit : 1ce32a4b  (fix(settings): 修复设置默认启动页后启动应用时需要从首页跳转到启动页 (#641))
-# 我方 tip             : bf04da18  (feat(tv): 包名后缀 .debug → .tv（moe.ouom.neriplayer.tv）)
+# 我方 tip             : 5396f76d  (docs: README 去掉固定的修改日期（改由 NOTICE + 每次 Release 说明承载）)
 # 生成命令             : bash fork-tools/make-patches.sh 1ce32a4b
 # 应用                 : git apply -3 patches/tv-fork.diff
 
@@ -673,10 +673,10 @@ index 00000000..3a859344
 +或者从 CI 那个 commit 重新开始。
 diff --git a/NOTICE b/NOTICE
 new file mode 100644
-index 00000000..8475f0bd
+index 00000000..4921337e
 --- /dev/null
 +++ b/NOTICE
-@@ -0,0 +1,35 @@
+@@ -0,0 +1,36 @@
 +NeriPlayer — modified version / 修改版声明
 +==========================================
 +
@@ -697,7 +697,8 @@ index 00000000..8475f0bd
 +      patches/tv-fork.diff
 +
 +Modified on / 修改日期:
-+    2026-11-06
++    2026-10-24 (first) / 2026-11-07 (latest)
++    首次修改 / 最近修改。每次发布的精确构建日期见对应 Release 说明。
 +
 +License / 许可证:
 +    GNU General Public License, version 3 or (at your option) any later
@@ -713,7 +714,7 @@ index 00000000..8475f0bd
 +    endorsed by its authors.
 +    本构建不是上游项目的官方发布，也不代表上游作者的观点。
 diff --git a/README.md b/README.md
-index 23236112..cc89a737 100644
+index 23236112..a3f28352 100644
 --- a/README.md
 +++ b/README.md
 @@ -1,5 +1,19 @@
@@ -724,7 +725,7 @@ index 23236112..cc89a737 100644
 +> 上游：[cwuom/NeriPlayer](https://github.com/cwuom/NeriPlayer)
 +>
 +> 本仓库在官方代码基础上做了**电视（Android TV / 遥控器）适配**：侧栏导航、遥控焦点体系、
-+> 精简动效与模糊、电视版布局。修改日期 **2026-11-06**，全部改动见
++> 精简动效与模糊、电视版布局。全部改动见
 +> [`patches/tv-fork.diff`](patches/tv-fork.diff)，维护说明见 [`FORK.md`](FORK.md)。
 +>
 +> 只发布电视包（`armeabi-v7a`，包名 `moe.ouom.neriplayer.tv`），**不提供手机版**。

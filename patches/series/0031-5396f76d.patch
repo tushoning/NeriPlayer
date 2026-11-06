@@ -1,0 +1,43 @@
+From 5396f76df0be9e16ec4d8d3f327bff23dd6f9c08 Mon Sep 17 00:00:00 2001
+From: neri-fork <local@neriplayer.fork>
+Date: Sat, 7 Nov 2026 02:24:40 +0800
+Subject: [PATCH] =?UTF-8?q?docs:=20README=20=E5=8E=BB=E6=8E=89=E5=9B=BA?=
+ =?UTF-8?q?=E5=AE=9A=E7=9A=84=E4=BF=AE=E6=94=B9=E6=97=A5=E6=9C=9F=EF=BC=88?=
+ =?UTF-8?q?=E6=94=B9=E7=94=B1=20NOTICE=20+=20=E6=AF=8F=E6=AC=A1=20Release?=
+ =?UTF-8?q?=20=E8=AF=B4=E6=98=8E=E6=89=BF=E8=BD=BD=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ NOTICE    | 3 ++-
+ README.md | 2 +-
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/NOTICE b/NOTICE
+index 8475f0bd..4921337e 100644
+--- a/NOTICE
++++ b/NOTICE
+@@ -18,7 +18,8 @@ Modifications / 修改内容:
+       patches/tv-fork.diff
+ 
+ Modified on / 修改日期:
+-    2026-11-06
++    2026-10-24 (first) / 2026-11-07 (latest)
++    首次修改 / 最近修改。每次发布的精确构建日期见对应 Release 说明。
+ 
+ License / 许可证:
+     GNU General Public License, version 3 or (at your option) any later
+diff --git a/README.md b/README.md
+index cc89a737..a3f28352 100644
+--- a/README.md
++++ b/README.md
+@@ -5,7 +5,7 @@
+ > 上游：[cwuom/NeriPlayer](https://github.com/cwuom/NeriPlayer)
+ >
+ > 本仓库在官方代码基础上做了**电视（Android TV / 遥控器）适配**：侧栏导航、遥控焦点体系、
+-> 精简动效与模糊、电视版布局。修改日期 **2026-11-06**，全部改动见
++> 精简动效与模糊、电视版布局。全部改动见
+ > [`patches/tv-fork.diff`](patches/tv-fork.diff)，维护说明见 [`FORK.md`](FORK.md)。
+ >
+ > 只发布电视包（`armeabi-v7a`，包名 `moe.ouom.neriplayer.tv`），**不提供手机版**。
