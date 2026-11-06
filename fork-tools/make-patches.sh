@@ -2,11 +2,11 @@
 # ---------------------------------------------------------------------------
 # 生成「我方改动 vs 上游」补丁快照
 #
-#   bash tools/make-patches.sh [上游基线]
+#   bash fork-tools/make-patches.sh [上游基线]
 #
 # 不传基线时默认取 origin/master 与 HEAD 的 merge-base。
 #
-# 前置约定：our-changes 分支必须是「线性」的（没有 merge commit），
+# 前置约定：main 分支必须是「线性」的（没有 merge commit），
 # 否则拆分出的补丁链无法逐个 git am。见 FORK.md「为什么分支必须线性」。
 #
 # 产物：
