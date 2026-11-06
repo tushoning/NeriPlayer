@@ -1,0 +1,32 @@
+From 09c4c7ba40952c8709a4bc407595f202cd603d95 Mon Sep 17 00:00:00 2001
+From: neri-fork <local@neriplayer.fork>
+Date: Sat, 7 Nov 2026 03:44:23 +0800
+Subject: [PATCH] =?UTF-8?q?fix(ci):=20gh=20release=20create=20=E6=98=BE?=
+ =?UTF-8?q?=E5=BC=8F=E5=B8=A6=20--repo?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+日志：
+  tag tv-20261106-1931-1ce32a4 exists locally but has not been pushed to cwuom/NeriPlayer
+仓库里多了 upstream remote（指向 cwuom/NeriPlayer），gh 推断默认仓库时挑错了，
+去上游找 tag 当然找不到。加 --repo ${{ github.repository }} 钉死。
+---
+ .github/workflows/fork-sync.yml | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/.github/workflows/fork-sync.yml b/.github/workflows/fork-sync.yml
+index b1ba3273..9b11ff3f 100644
+--- a/.github/workflows/fork-sync.yml
++++ b/.github/workflows/fork-sync.yml
+@@ -299,7 +299,10 @@ jobs:
+           fi
+           git tag -a "$TAG" -m "基于上游 ${{ steps.up.outputs.new }} 的电视适配构建"
+           git push origin "$TAG"
++          # --repo 必须显式指定：仓库里多了一个 upstream remote（指向上游 cwuom/NeriPlayer），
++          # gh 推断默认仓库时会挑错，报「tag exists locally but has not been pushed to cwuom/...」
+           gh release create "$TAG" "$APK_OUT" \
++            --repo "${{ github.repository }}" \
+             --title "TV 版 $TAG" \
+             --notes-file release-notes.md
+ 
