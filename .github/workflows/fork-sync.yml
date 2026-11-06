@@ -34,6 +34,7 @@ env:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 60 # 卡死时早失败，而不是拖到 GitHub 默认的 6 小时
     # 显式声明 token 权限，不依赖仓库的默认设置（否则推分支/建 Release 会 403）
     permissions:
       contents: write # 推 main、打 tag、建 Release
