@@ -33,8 +33,18 @@ if [ -n "$(git rev-list --merges "$BASE..HEAD")" ]; then
   echo "      执行 git rebase $BASE_SHA 把它变线性后再跑本脚本。" >&2
 fi
 
+# 代码 tip：最后一个不是「只动 patches/」的提交。
+# 用 HEAD 会导致每次刷新快照后 BASE 里的 tip_sha 都变，产生无意义的 diff。
+mapfile -t COMMITS < <(git rev-list --reverse --no-merges --topo-order "$BASE_FULL..HEAD" "${FILTER[@]}")
+if [ "${#COMMITS[@]}" -eq 0 ]; then
+  echo "补丁为空：当前分支和 $BASE_SHA 没有差异。" >&2
+  exit 1
+fi
+CODE_TIP=$(git rev-parse --short "${COMMITS[${#COMMITS[@]}-1]}")
+CODE_TIP_SUBJECT=$(git log -1 --format=%s "${COMMITS[${#COMMITS[@]}-1]}")
+
 echo "基线: $BASE_SHA  $BASE_SUBJECT"
-echo "tip : $HEAD_SHA  $(git log -1 --format=%s HEAD)"
+echo "tip : $CODE_TIP  $CODE_TIP_SUBJECT（共 ${#COMMITS[@]} 个提交）"
 
 # patches/ 会整个重建，但里面的说明文档要保留
 KEEP_README=""
@@ -49,7 +59,7 @@ mkdir -p patches/series
   printf '%s\n' \
     "# NeriPlayer TV fork — 相对上游的完整改动（单个合并补丁）" \
     "# 基线 upstream commit : $BASE_SHA  ($BASE_SUBJECT)" \
-    "# 我方 tip             : $HEAD_SHA  ($(git log -1 --format=%s HEAD))" \
+    "# 我方 tip             : $CODE_TIP  ($CODE_TIP_SUBJECT)" \
     "# 生成命令             : bash fork-tools/make-patches.sh $BASE_SHA" \
     "# 应用                 : git apply -3 patches/tv-fork.diff" \
     ""
@@ -57,8 +67,6 @@ mkdir -p patches/series
 } > patches/tv-fork.diff
 
 # ---- 2. 按提交拆分的补丁链 ------------------------------------------------
-mapfile -t COMMITS < <(git rev-list --reverse --no-merges --topo-order "$BASE_FULL..HEAD" "${FILTER[@]}")
-
 i=1
 for c in "${COMMITS[@]}"; do
   sha=$(git rev-parse --short "$c")
@@ -70,7 +78,7 @@ cat > patches/BASE <<EOF
 base_sha=$BASE_SHA
 base_full_sha=$BASE_FULL
 base_subject=$BASE_SUBJECT
-tip_sha=$HEAD_SHA
+tip_sha=$CODE_TIP
 commits=${#COMMITS[@]}
 EOF
 
