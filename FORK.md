@@ -37,7 +37,7 @@ git push -f fork main:main
 
 > 为什么必须改：GitHub Actions 的定时任务（schedule）只在**默认分支**上生效。
 
-### 0.4 填 4 个签名 Secret
+### 0.4 填 3 个签名 Secret
 
 网页路径：`仓库主页` → **Settings** → 左侧 **Secrets and variables** → **Actions** →
 右上 **New repository secret**，一个一个加：
@@ -47,7 +47,9 @@ git push -f fork main:main
 | `AERIAL_KEYSTORE_B64` | 见下面 0.4.1 |
 | `AERIAL_STORE_PASSWORD` | `C:/Users/Tushon/keystores/aerial/README.md` 里的 `storePassword` |
 | `AERIAL_KEY_PASSWORD` | 同一个文件里的 `keyPassword` |
-| `AERIAL_CERT_SHA256`（可选但强烈建议） | `4ca292129ad97359a262d5f5269e7fd7ef0287b33cd19f6e761dd671946581b5` |
+
+只需要这 3 个。证书指纹（`4ca2921…581b5`）是公开信息、不是密钥，
+已经写死在 workflow 的 `CERT_SHA256` 里，不用再配。
 
 #### 0.4.1 把密钥库转成 base64 文本
 
@@ -227,6 +229,23 @@ Capsulyric（GPL-3.0-or-later）、InstallerX Revived（GPL-3.0-only）、libusb
 
 密码在同目录 `README.md` 里，**不要写进本仓库**（仓库是公开的）。
 
+### 和上游 `CONTRIBUTING.md`「构建发布版」的关系
+
+上游文档那一段是写给**自己编 release 的贡献者**看的，作用有三个：
+
+1. 说清楚签名参数怎么传（`KEYSTORE_FILE` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`
+   四个 Gradle 属性，`KEYSTORE_FILE` 写相对路径时按 `app/` 模块目录解析）；
+2. 说清楚产物在哪（`app/build/outputs/apk/release/`，命名 `NeriPlayer-<短哈希>.<MMddHHmm>.apk`）；
+3. 隐含一条规矩：**上游不会给你签名密钥**，官方发布包的签名只有上游自己有，
+   任何人自编的包都不可能覆盖安装官方版。
+
+我们的做法和它一致（属性名、相对路径规则、产物命名全对齐）。
+
+唯一分歧：上游的 `release` 变体「不会回退到 debug signing config，没密钥就直接报错」，
+而本 fork 的 `tvrelease` 变体在**没有正式密钥时回退 debug 签名**——这是为了本地没密钥也能快速迭代。
+发出去的包不受影响：CI 里「密钥库指纹」和「APK 签名指纹」两道校验都过硬才允许发 Release，
+哪一步不对都会直接失败，不会出现「用 debug 签名发出去、电视装不上」的情况。
+
 ### 本地出带签名的包
 
 ```bash
@@ -260,7 +279,8 @@ GitHub 的 Secret 分三级，**只有 Organization secrets 是「配一次全�
 ## 6. 常见问题
 
 **Q：Release 里的包和电视上装的对不上 / 装不上**
-A：先确认签名。`AERIAL_CERT_SHA256` 配了的话 CI 会在编译前校验，签名不对直接失败。
+A：CI 有两道校验——密钥库指纹（编译前）和 APK 签名指纹（发布前），
+签名不对会直接失败，不会发出装不上的包。
 
 **Q：定时任务没跑**
 A：① 默认分支是不是 `main`；② 仓库 60 天没提交会被暂停 schedule，
