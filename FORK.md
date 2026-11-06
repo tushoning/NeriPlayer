@@ -71,19 +71,22 @@ cat aerial.b64
 网页路径：**Settings** → 左侧 **Actions** → **General** → 拉到最下面
 **Workflow permissions** → 选 **Read and write permissions** → **Save**。
 
-> 工作流文件里已经写了 `permissions: contents: write / issues: write`，正常情况下不开也能跑。
+> 工作流文件里已经写了 `permissions: contents: write`，正常情况下不开也能跑。
 > 但这里开一下更保险——万一 GitHub 那边策略优先级不同，不开会卡在推分支 / 建 Release（403）。
 >
 > 这一项只影响我写的那个工作流能不能动仓库，不会让上游那些 CI 跑起来（它们只认 `master`）。
 
 ### 0.6 手动跑一次
-### 0.6 手动跑一次
 
 网页路径：仓库顶部 **Actions** → 左侧 **「同步上游并发布 TV 版」** →
 右边 **Run workflow** → 绿色 **Run workflow** 按钮。
 
+**手动触发总是出包**：不管上游有没有更新，都会用当前 `main` 的代码编一遍并发 Release。
+定时触发才是「上游没更新就跳过」。
+
 等 15～25 分钟（第一次要下依赖、编 native），跑完去 **Releases** 看，应该有一个
-`NeriPlayer-TV.apk`。
+`NeriPlayer-TV.apk`。tag 形如 `tv-20261107-0205-1ce32a4`（日期-时分-上游短哈希），
+同一个 tag 只对应一次构建，想重编就再点一次，会生成新 tag。
 
 ### 0.7 电视上装
 
@@ -140,11 +143,12 @@ git push origin main
 
 ## 3. 上游更新了怎么办
 
-**正常情况下什么都不用做** —— CI 每 6 小时看一次上游，有新提交就自动叠补丁、
+**正常情况下什么都不用做** —— CI 每小时看一次上游，有新提交就自动叠补丁、
 编译、发 Release、把结果推回 `main`。你只要去 Releases 下载。
 
-**CI 红了（打不开 / 报错）** 说明上游动到了我们改过的地方，会在 Issues 里开一条记录，
-列出冲突文件。本地这样处理：
+**CI 红了（打不开 / 报错）** 说明上游动到了我们改过的地方。GitHub 会给仓库 owner
+发一封「workflow 运行失败」的通知（手机 App 的 Inbox 也能收到），点进去那次运行，
+**最上方的 Summary 区**会列出冲突文件。本地这样处理：
 
 ```bash
 bash fork-tools/sync-upstream.sh --build
@@ -314,16 +318,16 @@ A：建议改。fork 出来的 About 默认抄的上游描述，别人搜到会�
 不改也不影响任何功能，纯粹是别让人误会。
 
 上游更新交给两样东西就够了：
-- 平时：CI 每 6 小时自动做（`fork-sync.yml`）
+- 平时：CI 每小时自动做（`fork-sync.yml`）
 - 本地手动：`bash fork-tools/sync-upstream.sh`
 
-**Q：Actions 里那个「冲突时开 issue 提醒」是干什么的？我的 Issues 页是空的**
-A：`fork-sync.yml` 最后一步。**它只在自动合并失败时才尝试执行**，成功了根本不会触发，
-所以平时 Issues 一直是空的，这是正常的。
-上游改到我们动过的代码 → `git am` 冲突 → 它把冲突文件清单写成一条 Issue 方便你看见，
-同时也会贴到那次运行的 **Summary** 页（`Run` 页面最上方）。
-Issue 开不出来（token 没写权限、Issues 功能关了）也不影响同步本身，
-只是少一个通知渠道——GitHub 另外还会给仓库 owner 发一封「workflow 运行失败」的邮件。
+**Q：为什么手动跑的时候上游没更新就不出包？**
+A：已经改了。现在**手动触发（Run workflow）总是出包**，不管上游有没有新提交，
+都会用当前 `main` 的代码编一遍并发 Release；只有定时触发才遵守「没更新就跳过」。
+
+**Q：CI 失败怎么通知我？会往 Issues 里发东西吗？**
+A：**不会开 Issue**，仓库里一个 Issue 都不会有。失败通知只走 GitHub 自己的渠道
+（邮件 + 手机 App 的 Inbox），点进那次运行，最上方 **Summary** 区就是冲突详情。
 
 **Q：Release 里的包和电视上装的对不上 / 装不上**
 A：CI 有两道校验——密钥库指纹（编译前）和 APK 签名指纹（发布前），
