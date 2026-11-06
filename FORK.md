@@ -24,7 +24,7 @@ merge 之后的提交其 diff 基准是合并结果而不是上游基线，拆�
 
 ```bash
 git add -A && git commit            # 正常提交到 our-changes
-bash tools/make-patches.sh          # 重新生成 patches/ 快照
+bash fork-tools/make-patches.sh          # 重新生成 patches/ 快照
 ```
 
 `make-patches.sh` 会做三件事：
@@ -41,7 +41,7 @@ bash tools/make-patches.sh          # 重新生成 patches/ 快照
 ## 3. 上游更新了，怎么合
 
 ```bash
-bash tools/sync-upstream.sh --build
+bash fork-tools/sync-upstream.sh --build
 ```
 
 脚本做的事：`git fetch origin master` → 在新上游上开 `sync/<日期>` 分支 →
@@ -61,7 +61,7 @@ bash tools/sync-upstream.sh --build
 
   改完 `git add <文件>` → `git am --continue`。想全放弃：`git am --abort`。
 
-只想一次解决完冲突、不要分提交：`bash tools/sync-upstream.sh --squash`。
+只想一次解决完冲突、不要分提交：`bash fork-tools/sync-upstream.sh --squash`。
 
 > Windows 上 `core.autocrlf=true` 会让补丁的 LF 上下文行失配。
 > 仓库根的 `.gitattributes` 已经把 `*.patch` / `*.diff` 标记成 `-text`，别删。
