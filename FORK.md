@@ -331,6 +331,20 @@ A：已经改了。现在**手动触发（Run workflow）总是出包**，不管
 A：**不会开 Issue**，仓库里一个 Issue 都不会有。失败通知只走 GitHub 自己的渠道
 （邮件 + 手机 App 的 Inbox），点进那次运行，最上方 **Summary** 区就是冲突详情。
 
+**Q：`np-submodule/` 里头模块的改动提交到哪了？**
+A：**没有提交到任何地方**——那是上游别人的仓库，我们推不上去。本地那几份文件一直是「工作区裸文件」状态。
+主仓库在 `patches/submodule/` 存了一份改后的整文件，CI 编译前会覆盖回子模块目录
+（否则 app 里调用 `linesInteractive` 参数会报「No parameter with name ... found」）。
+
+本地如果执行过 `git submodule update --init --recursive`，把改动冲掉了，跑这条恢复：
+
+```bash
+cp -r patches/submodule/accompanist-lyrics-ui/. np-submodule/accompanist-lyrics-ui/
+```
+
+> 目前只有 `accompanist-lyrics-ui/…/KaraokeLyricsView.kt` 一个文件有改动
+> （加 `linesInteractive` 参数 + 亚像素滚动容差）。其余三个子模块与上游一致。
+
 **Q：Release 里的包和电视上装的对不上 / 装不上**
 A：CI 有两道校验——密钥库指纹（编译前）和 APK 签名指纹（发布前），
 签名不对会直接失败，不会发出装不上的包。
