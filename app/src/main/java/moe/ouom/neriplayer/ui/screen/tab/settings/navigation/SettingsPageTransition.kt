@@ -3,6 +3,8 @@ package moe.ouom.neriplayer.ui.screen.tab.settings.navigation
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animateFloat
@@ -38,6 +40,7 @@ import moe.ouom.neriplayer.ui.effect.glass.isolatedAdvancedGlassHorizontalTransi
 import moe.ouom.neriplayer.ui.screen.tab.settings.page.SettingsPage
 import moe.ouom.neriplayer.ui.screen.host.rememberHostPredictiveBackTransition
 import moe.ouom.neriplayer.ui.screen.tab.settings.page.backTargetPage
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 
 internal const val SETTINGS_PAGE_ENTER_DURATION_MS = 300
 // 旧页稍慢退场，让新页接上时画面和模糊遮罩保持连续
@@ -170,12 +173,23 @@ internal fun PhoneSettingsPageTransitionHost(
         onBack = { onBack() },
         label = "settings_page_switch"
     )
+    // transitionSpec 不是 @Composable，电视判断必须在外面读
+    val tvSkipMotion = LocalIsTelevision.current
     pageTransition.AnimatedContent(
         modifier = Modifier.fillMaxSize(),
         transitionSpec = {
-            isolatedAdvancedGlassHorizontalTransition(
-                forward = isForwardSettingsPageTransition(initialState, targetState)
-            ).using(SizeTransform(clip = true))
+            if (tvSkipMotion) {
+                // 电视：切设置子页不做横向滑动。
+                // 滑动的那 200~300ms 里，**正在滑出的上一页仍然可以拿焦点**，而它此刻
+                // 在几何上位于左侧 —— 按「左」的焦点搜索会钻进那一层，等它退场时
+                // 焦点又被丢回本页第一个可聚焦元素（返回按钮），表现就是
+                // 「返回键闪一下、光标没进侧栏」。用户反馈只在刚进页面时出现，正好是这段窗口。
+                EnterTransition.None togetherWith ExitTransition.None
+            } else {
+                isolatedAdvancedGlassHorizontalTransition(
+                    forward = isForwardSettingsPageTransition(initialState, targetState)
+                ).using(SizeTransform(clip = true))
+            }
         }
     ) { page ->
         Box(Modifier.fillMaxSize().testTag(settingsPageTransitionSceneTag(page))) {
