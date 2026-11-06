@@ -541,7 +541,7 @@ fun LibraryHostScreen(
     // 详情态下 LibraryScreen 不在组合里，刷新总线没人收，所以先在这里把「回根」
     // 翻译成「退出详情 + 清掉残留的滚动恢复标记 + 回顶」；根态才走原来的刷新逻辑。
     LaunchedEffect(Unit) {
-        TvTabRootBus.requests.collect { route ->
+        TvTabRootBus.events.collect { route ->
             if (route != Destinations.Library.route) return@collect
             if (selected != null) {
                 cancelPendingNeteaseCoverWarmup()

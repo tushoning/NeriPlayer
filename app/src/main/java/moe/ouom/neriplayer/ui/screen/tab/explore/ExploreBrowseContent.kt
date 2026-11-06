@@ -4,7 +4,6 @@ import moe.ouom.neriplayer.ui.tv.tvReturnFocus
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
-import moe.ouom.neriplayer.ui.tv.tvStripItemFocus
 import moe.ouom.neriplayer.ui.tv.tvStripClamp
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -169,7 +168,6 @@ internal fun NeteaseDefaultContent(
                             modifier = Modifier
                                 // 电视：焦点走到哪滚到哪，且走到尽头不再往右跑
                                 // （不夹住的话会翻到分页器的下一页，画面整块左移）
-                                .tvStripItemFocus(tagListState, index)
                                 .tvStripClamp(tagListState, index, displayKeys.lastIndex)
                         )
                     }

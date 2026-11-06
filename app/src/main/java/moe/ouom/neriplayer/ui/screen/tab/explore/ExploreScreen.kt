@@ -37,7 +37,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.foundation.shape.CircleShape
 import moe.ouom.neriplayer.ui.component.common.CleanSegmentedTabs
 import moe.ouom.neriplayer.ui.theme.NeriDesign
-import moe.ouom.neriplayer.ui.tv.tvStripItemFocus
 import moe.ouom.neriplayer.ui.tv.tvStripClamp
 import moe.ouom.neriplayer.ui.tv.TvTabConfirmBus
 import moe.ouom.neriplayer.ui.screen.tab.library.LibraryPrimaryTabShape
@@ -1899,7 +1898,6 @@ internal fun ExploreSearchTypeBar(
                             // 电视不需要 48dp 最小触控尺寸，不关掉这一行压不到 26dp
                             enforceMinInteractiveSize = !isTelevision,
                             modifier = Modifier
-                                .tvStripItemFocus(neteaseTypeState, index)
                                 // 左端不夹：左边就是搜索框，光标要能走过去
                                 .tvStripClamp(
                                     neteaseTypeState,
@@ -1941,7 +1939,6 @@ internal fun ExploreSearchTypeBar(
                             // 电视不需要 48dp 最小触控尺寸，不关掉这一行压不到 26dp
                             enforceMinInteractiveSize = !isTelevision,
                             modifier = Modifier
-                                .tvStripItemFocus(youtubeTypeState, index)
                                 .tvStripClamp(
                                     youtubeTypeState,
                                     index,
