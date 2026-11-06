@@ -1,5 +1,19 @@
 [English](./README_EN.md) | [中文](./README.md)
 
+> ## 📺 这是电视适配 fork，不是上游官方仓库
+>
+> 上游：[cwuom/NeriPlayer](https://github.com/cwuom/NeriPlayer)
+>
+> 本仓库在官方代码基础上做了**电视（Android TV / 遥控器）适配**：侧栏导航、遥控焦点体系、
+> 精简动效与模糊、电视版布局。修改日期 **2026-11-06**，全部改动见
+> [`patches/tv-fork.diff`](patches/tv-fork.diff)，维护说明见 [`FORK.md`](FORK.md)。
+>
+> 只发布电视包（`armeabi-v7a`，包名 `moe.ouom.neriplayer.debug`），**不提供手机版**。
+> 手机版请去[上游仓库](https://github.com/cwuom/NeriPlayer/releases)。
+>
+> 许可证仍是 **GPL-3.0-or-later**（见 [LICENSE](LICENSE)），修改声明见 [NOTICE](NOTICE)。
+> 本仓库的构建不代表上游作者的观点。
+
 <h1 align="center">NeriPlayer (音理音理!)</h1>
 
 <div align="center">

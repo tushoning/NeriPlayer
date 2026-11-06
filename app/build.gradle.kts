@@ -45,10 +45,10 @@ val allowUnsignedRelease =
     (project.findProperty("allowUnsignedRelease") as String?)?.toBoolean() == true ||
         isGithubPullRequest ||
         isIdeBuild
-val releaseKeystorePath = project.findProperty("KEYSTORE_FILE") as String? ?: "neri.jks"
+val releaseKeystorePath = project.findProperty("KEYSTORE_FILE") as String? ?: "aerial.keystore"
 val releaseKeystoreFile = project.file(releaseKeystorePath)
 val releaseStorePassword = project.findProperty("KEYSTORE_PASSWORD") as String?
-val releaseKeyAlias = project.findProperty("KEY_ALIAS") as String? ?: "key0"
+val releaseKeyAlias = project.findProperty("KEY_ALIAS") as String? ?: "aerial"
 val releaseKeyPassword = project.findProperty("KEY_PASSWORD") as String?
 val releaseSigningReady = releaseKeystoreFile.exists() &&
     !releaseStorePassword.isNullOrBlank() &&
@@ -149,13 +149,16 @@ android {
         }
 
         // 电视端专用：和 release 一样走 R8 + debuggable=false（安装时 ART 会做 AOT 编译），
-        // 冷启动比 debug 包快一个档。但沿用调试签名、包名后缀仍是 .debug，
-        // 可以直接覆盖安装已有的调试包，设置/登录态不丢。
+        // 冷启动比 debug 包快一个档。包名后缀仍是 .debug，可以直接覆盖安装已有的调试包，
+        // 设置/登录态不丢 —— 这是回退链的基础，别改。
+        // 签名：有正式密钥就用正式密钥。以前固定用 debug 签名，导致 CI 出的包（debug keystore
+        // 每次随机生成）和本地包签名不同，电视上根本覆盖安装不了。
         create("tvrelease") {
             initWith(getByName("release"))
             applicationIdSuffix = ".debug"
             isDebuggable = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig =
+                if (releaseSigningReady) releaseSigningConfig else signingConfigs.getByName("debug")
             matchingFallbacks += listOf("release", "debug")
             val inviteScheme = "neriplayer-debug"
             manifestPlaceholders["listenTogetherInviteScheme"] = inviteScheme

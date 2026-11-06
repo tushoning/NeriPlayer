@@ -1,18 +1,20 @@
-name: Fork sync upstream & release
+name: 同步上游并发布 TV 版
 
-# 用途：上游有新提交时，自动把 patches/series/ 叠到新上游上，
-#       编译正式签名的 Release APK，打 tag 发 Release。
-# 合规要点：tag 打在「实际编译的那个 commit」上，GitHub 会自动为该 tag
-#          附上源码包，满足 GPLv3 §6「对应源码可得」。
+# 干什么：
+#   定时去上游 cwuom/NeriPlayer 看 master 有没有新提交。
+#   有 → 把我方补丁叠上去 → 编译电视包（aerial 签名）→ 发 Release → 把结果推回 main。
+#   没有 → 直接退出，不编译。
+#
+# 合规：Release 的 tag 打在「实际编译的那个 commit」上，GitHub 自动给 tag 附源码包，
+#       满足 GPLv3 §6「分发二进制必须能拿到对应源码」。
 
 on:
   schedule:
-    - cron: '0 18 * * *' # UTC 18:00 = 北京时间 02:00
+    - cron: '23 */6 * * *' # 每 6 小时检查一次（UTC 分钟 23，避开整点高峰）
   workflow_dispatch:
 
 permissions:
-  contents: write
-  issues: write
+  contents: write # 打 tag、发 Release、push 分支都要写权限
 
 concurrency:
   group: fork-sync
@@ -20,23 +22,25 @@ concurrency:
 
 env:
   UPSTREAM_REPO: https://github.com/cwuom/NeriPlayer.git
+  KEY_ALIAS: aerial
+  APK_OUT: NeriPlayer-TV.apk
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout fork
+      - name: 拉取本仓库
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # 需要完整历史：git am -3 要用到补丁原始 blob
+          fetch-depth: 0 # 需要完整历史：git am -3 要用到补丁的原始 blob
           submodules: recursive
 
-      - name: Configure git identity
+      - name: 配置 git 身份
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Fetch upstream and detect new commits
+      - name: 检查上游有没有新提交
         id: up
         run: |
           set -euo pipefail
@@ -46,15 +50,19 @@ jobs:
           BASE=$(sed -n 's/^base_full_sha=//p' patches/BASE)
           echo "new=$NEW" >> "$GITHUB_OUTPUT"
           echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          if [ -z "$BASE" ]; then
+            echo "::error::patches/BASE 里读不到 base_full_sha"
+            exit 1
+          fi
           if git merge-base --is-ancestor "$NEW" "$BASE"; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "上游没有新提交（$(git rev-parse --short "$NEW") 已在基线内），跳过。"
+            echo "上游没有新提交（当前基线 $(git rev-parse --short "$BASE")），跳过。"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            echo "上游有新提交：$(git rev-parse --short "$BASE") -> $(git rev-parse --short "$NEW")"
+            echo "上游有新提交：$(git rev-parse --short "$BASE") → $(git rev-parse --short "$NEW")"
           fi
 
-      - name: Apply our patch series onto new upstream
+      - name: 把补丁叠到新上游
         id: apply
         if: steps.up.outputs.changed == 'true'
         run: |
@@ -68,77 +76,118 @@ jobs:
           else
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
-              echo "上游 \`${{ steps.up.outputs.new }}\` 的改动和我方补丁冲突。"
+              echo "上游 \`${{ steps.up.outputs.new }}\` 动到了我方补丁改过的代码，自动合并失败。"
               echo ""
-              echo "冲突文件："
+              echo "**冲突文件：**"
               git diff --name-only --diff-filter=U | sed 's/^/- `/;s/$/`/'
               echo ""
-              echo "本地处理："
+              echo "**在本地怎么修：**"
               echo '```bash'
-              echo 'bash fork-tools/sync-upstream.sh        # 按提示解决冲突'
-              echo 'bash fork-tools/make-patches.sh         # 重新生成补丁快照'
+              echo 'git fetch upstream master'
+              echo 'bash fork-tools/sync-upstream.sh'
+              echo 'bash fork-tools/make-patches.sh   # 修好后重新生成补丁'
               echo '```'
+              echo ""
+              echo "处理原则：import 冲突取并集；上游只是改名就取我方再批量改名；"
+              echo "上游真重构了就取上游，再把 TV 逻辑补回去。"
             } > conflict-report.md
             git am --abort || true
             exit 1
           fi
 
-      - name: Set up JDK 21
+      - name: 刷新补丁快照（基线指向新上游）
+        if: steps.apply.outputs.ok == 'true'
+        run: |
+          set -euo pipefail
+          bash fork-tools/make-patches.sh
+          git add -A patches/
+          if ! git diff --cached --quiet; then
+            git commit -qm "chore: 同步上游 $(git rev-parse --short '${{ steps.up.outputs.new }}')，刷新补丁快照"
+          fi
+
+      - name: 安装 JDK 21
         if: steps.apply.outputs.ok == 'true'
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
 
-      - name: Set up Gradle cache
+      - name: Gradle 缓存
         if: steps.apply.outputs.ok == 'true'
         uses: gradle/actions/setup-gradle@v5
 
-      # 组织级 secret：配一次，组织内所有仓库都能引用
-      - name: Decode keystore
+      - name: 安装 NDK
+        if: steps.apply.outputs.ok == 'true'
+        uses: ./.github/actions/android-ndk
+
+      - name: 写入签名密钥
         if: steps.apply.outputs.ok == 'true'
         env:
-          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEYSTORE_B64: ${{ secrets.AERIAL_KEYSTORE_B64 }}
+          STORE_PASS: ${{ secrets.AERIAL_STORE_PASSWORD }}
+          CERT_SHA256: ${{ secrets.AERIAL_CERT_SHA256 }}
         run: |
           set -euo pipefail
-          test -n "$KEYSTORE_B64" || { echo "缺少 KEYSTORE_B64 secret" >&2; exit 1; }
-          printf '%s' "$KEYSTORE_B64" | base64 -d > app/neri.jks
+          test -n "$KEYSTORE_B64" || { echo "::error::缺少 secret AERIAL_KEYSTORE_B64"; exit 1; }
+          printf '%s' "$KEYSTORE_B64" | base64 -d > app/aerial.keystore
+          # 密钥传错的话，包发出去也装不上（签名不一致），这里先验一遍
+          if [ -n "${CERT_SHA256:-}" ]; then
+            GOT=$(keytool -list -v -keystore app/aerial.keystore -storepass "$STORE_PASS" \
+                    -alias "$KEY_ALIAS" 2>/dev/null \
+                  | sed -n 's/^[[:space:]]*SHA256: //p' | tr -d ':' | tr 'A-Z' 'a-z')
+            WANT=$(printf '%s' "$CERT_SHA256" | tr -d ':' | tr 'A-Z' 'a-z')
+            if [ "$GOT" != "$WANT" ]; then
+              echo "::error::密钥库证书指纹不符，期望 $WANT 实际 $GOT"
+              exit 1
+            fi
+            echo "证书指纹校验通过：$GOT"
+          else
+            echo "::warning::未配置 AERIAL_CERT_SHA256，跳过指纹校验"
+          fi
 
-      - name: Build signed release
+      - name: 编译电视包
         if: steps.apply.outputs.ok == 'true'
         env:
-          ORG_GRADLE_PROJECT_KEYSTORE_FILE: neri.jks
-          ORG_GRADLE_PROJECT_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          ORG_GRADLE_PROJECT_KEY_ALIAS: key0
-          ORG_GRADLE_PROJECT_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          ORG_GRADLE_PROJECT_KEYSTORE_FILE: aerial.keystore
+          ORG_GRADLE_PROJECT_KEYSTORE_PASSWORD: ${{ secrets.AERIAL_STORE_PASSWORD }}
+          ORG_GRADLE_PROJECT_KEY_ALIAS: aerial
+          ORG_GRADLE_PROJECT_KEY_PASSWORD: ${{ secrets.AERIAL_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          ./gradlew :app:assembleRelease -PbuildAllReleaseAbis=true \
-            --warning-mode all --stacktrace
+          ./gradlew :app:assembleTvrelease --warning-mode all --stacktrace
 
-      - name: Remove temporary keystore
+      - name: 删掉临时密钥
         if: always()
-        run: rm -f app/neri.jks
+        run: rm -f app/aerial.keystore
 
-      - name: Write release notes
+      - name: 整理产物并写发版说明
         id: meta
         if: steps.apply.outputs.ok == 'true'
         env:
           UPSTREAM_SHA: ${{ steps.up.outputs.new }}
         run: |
           set -euo pipefail
+          APK=$(ls app/build/outputs/apk/tvrelease/*.apk | head -1)
+          test -n "$APK" || { echo "::error::没找到 tvrelease 的 APK"; exit 1; }
+          cp "$APK" "$APK_OUT"
+          VERSION=$(basename "$APK" | sed 's/^NeriPlayer-//; s/-armeabi-v7a.*//; s/\.apk$//')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
           echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
           echo "upstream_short=$(git rev-parse --short=7 "$UPSTREAM_SHA")" >> "$GITHUB_OUTPUT"
           cat > release-notes.md <<EOF
-          ## 本版本
+          ## 这是什么
 
-          基于上游 cwuom/NeriPlayer \`${UPSTREAM_SHA}\` 构建。
+          **电视适配版** NeriPlayer（本 fork 的唯一用途），基于上游 \`${UPSTREAM_SHA}\` 构建。
+
+          - 包名 \`moe.ouom.neriplayer.debug\`（沿用调试包名，可直接覆盖安装，设置和登录态不丢）
+          - 签名：aerial
+          - 只含 armeabi-v7a（这台电视是 32 位）
+          - versionName \`${VERSION}\`
 
           ## 与上游的差异
 
-          本构建是**电视适配 fork**，修改日期 $(date -u +%Y-%m-%d)。
-          完整改动见仓库内 \`patches/tv-fork.diff\`。主要改动：
+          修改日期 $(date -u +%Y-%m-%d)。完整改动见仓库内 \`patches/tv-fork.diff\`。主要改动：
 
           - TV 侧栏导航与遥控器焦点体系
           - 关闭部分动效 / 模糊 / 着色器，降低电视端负载
@@ -148,34 +197,39 @@ jobs:
           ## 源码
 
           与本次 APK 完全对应的源码：**本仓库 tag \`$(git rev-parse --short=7 HEAD)\`**
-          （GitHub 已自动提供 Source code 压缩包）。
+          （GitHub 已自动为该 tag 提供 Source code 压缩包）。
           上游项目：https://github.com/cwuom/NeriPlayer
 
           ## 许可
 
           本程序为自由软件，按 **GNU General Public License v3.0 或更高版本**发布，
-          不提供任何担保。许可证全文见仓库根目录 LICENSE。
+          不提供任何担保。许可证全文见仓库根目录 LICENSE，修改声明见 NOTICE。
+          本构建不是上游官方发布，也不代表上游作者的观点。
           EOF
 
-      - name: Tag and publish release
+      - name: 打 tag 并发布 Release
         if: steps.apply.outputs.ok == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           TAG="tv-${{ steps.meta.outputs.date }}-${{ steps.meta.outputs.upstream_short }}"
+          # 重跑保护：同一天同一个上游 commit 只会有一个 tag
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
+            echo "tag $TAG 已存在，跳过发布"
+            exit 0
+          fi
           git tag -a "$TAG" -m "基于上游 ${{ steps.up.outputs.new }} 的电视适配构建"
           git push origin "$TAG"
-          gh release create "$TAG" \
-            app/build/outputs/apk/release/*.apk \
-            --title "TV fork $TAG" \
+          gh release create "$TAG" "$APK_OUT" \
+            --title "TV 版 $TAG" \
             --notes-file release-notes.md
 
-      - name: Push synced branch
+      - name: 把同步结果推回 main
         if: steps.apply.outputs.ok == 'true'
-        run: git push --force-with-lease origin "HEAD:our-changes"
+        run: git push --force-with-lease origin "HEAD:main"
 
-      - name: Open issue on conflict
+      - name: 冲突时开 issue 提醒
         if: failure() && steps.up.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
