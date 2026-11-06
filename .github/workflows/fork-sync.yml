@@ -299,7 +299,10 @@ jobs:
           fi
           git tag -a "$TAG" -m "基于上游 ${{ steps.up.outputs.new }} 的电视适配构建"
           git push origin "$TAG"
+          # --repo 必须显式指定：仓库里多了一个 upstream remote（指向上游 cwuom/NeriPlayer），
+          # gh 推断默认仓库时会挑错，报「tag exists locally but has not been pushed to cwuom/...」
           gh release create "$TAG" "$APK_OUT" \
+            --repo "${{ github.repository }}" \
             --title "TV 版 $TAG" \
             --notes-file release-notes.md
 
