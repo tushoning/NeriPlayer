@@ -28,10 +28,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -89,39 +92,57 @@ internal fun HomeFeaturedArtwork(
     model: Any?,
     title: String,
     subtitle: String?,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** 封面加载成功的回执：电视用它记「这张已经加载过，滚动期间可以继续显示」 */
+    onImageLoaded: () -> Unit = {}
 ) {
     // 高度必须**显式**算出来：之前靠 Column 里 Spacer(aspectRatio(1f)) 撑，
     // 从别的页面返回时 item 会按尚未落定的宽度测量一次，于是一部分卡片被压成
-    // 「54dp 文字条」那么高（探索页出现高高低低的瀑布流）。这里直接量父给的宽度。
-    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
-        val cardWidth = if (maxWidth != Dp.Infinity && maxWidth > 0.dp) maxWidth else 200.dp
+    // 「54dp 文字条」那么高（探索页出现高高低低的瀑布流）。这里直接用父给的宽度算。
+    //
+    // 注意这里**不能**用 BoxWithConstraints：它是 SubcomposeLayout 的实现，会为每一张卡片
+    // 建一份独立的子组合。这个组件在列表项里使用，成本要乘以可见卡片数，滚动和焦点变化
+    // 时都要重新走子组合 → 用一次普通测量（Modifier.layout）拿到同样的高度，效果一致。
+    val labelHeightPx = with(LocalDensity.current) { FeaturedLabelHeight.roundToPx() }
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .layout { measurable, constraints ->
+                val cardWidth = if (constraints.hasBoundedWidth) {
+                    constraints.maxWidth
+                } else {
+                    constraints.minWidth.coerceAtLeast(labelHeightPx)
+                }
+                val cardHeight = cardWidth + labelHeightPx
+                val placeable = measurable.measure(Constraints.fixed(cardWidth, cardHeight))
+                layout(cardWidth, cardHeight) { placeable.place(0, 0) }
+            }
+    ) {
         Box(
+            // 圆角**不在这里裁**：外层 PlaylistCard 的 `Modifier.clip(cardShape)` 已经会裁剪
+            // 整棵子树的绘制（包括这张封面）。原来这里再裁一次，同一张卡片就叠了两层离屏裁剪。
+            //
+            // 冷启动实测首屏两帧的 `Record View#draw()` 合计约 1.2 秒（逐节点录制，无子区间），
+            // 而一屏只有十来张卡片 —— 每张卡每少一层裁剪/绘制节点，首屏就少十几层。
             modifier = Modifier
-                .fillMaxWidth()
-                .height(cardWidth + FeaturedLabelHeight)
-                .clip(NeriDesign.tokens.cardShape)
+                .fillMaxSize()
                 .background(Color(0xFF2A2A2E))
         ) {
             AsyncImage(
                 model = model,
                 contentDescription = title,
                 contentScale = ContentScale.Crop,
+                onSuccess = { onImageLoaded() },
                 modifier = Modifier.fillMaxSize()
             )
-            // 文字下方一条半透明蒙版（黑条，不做渐变）
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .height(FeaturedLabelHeight)
-                    .background(Color.Black.copy(alpha = FeaturedLabelScrimAlpha))
-            )
+            // 文字栏：半透明黑条直接作为这一栏的**背景**画（原来是叠加在上面的第二个 Box，
+            // 等于每张卡片多一个绘制节点）。背景画在 padding 之前，覆盖范围与原来一致。
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
                     .height(FeaturedLabelHeight)
+                    .background(Color.Black.copy(alpha = FeaturedLabelScrimAlpha))
                     .padding(start = 10.dp, end = 10.dp),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally

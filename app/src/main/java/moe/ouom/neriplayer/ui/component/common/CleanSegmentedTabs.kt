@@ -30,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import moe.ouom.neriplayer.ui.tv.tvClampRowEnds
+import moe.ouom.neriplayer.ui.tv.tvRowStart
 import moe.ouom.neriplayer.ui.tv.tvFocusRing
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -164,7 +165,8 @@ private fun FixedSegmentedTabs(
                         // 电视：这一行走到两端就停住，不要跳到上面的标签栏（调用方可关闭）
                         .then(
                             if (clampRowEnds) {
-                                Modifier.tvClampRowEnds(index, labels.lastIndex)
+                                Modifier.tvRowStart(index == 0)
+                                    .tvClampRowEnds(index, labels.lastIndex)
                             } else {
                                 Modifier
                             }

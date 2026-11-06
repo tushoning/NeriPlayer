@@ -235,7 +235,9 @@ private fun NowPlayingPopulatedCoverLyrics(
     onSeekTo: (Long) -> Unit
 ) {
     if (presentation.coverMode == NowPlayingWideLyricsMode.ADVANCED) {
-        NowPlayingAdvancedWideLyrics(content, preferences, presentation, viewport, playback, actions, onSeekTo)
+        NowPlayingAdvancedWideLyrics(
+            content, preferences, presentation, viewport, playback, actions, onSeekTo
+        )
     } else {
         NowPlayingLyricsPane(
             content = content.synced,
@@ -287,6 +289,8 @@ private fun NowPlayingAdvancedWideLyrics(
         lyricBlurEnabled = preferences.blurEnabled,
         lyricBlurAmount = preferences.blurAmount,
         isPlaying = shouldAdvanceNowPlayingLyrics(playback.isPlaying, playback.previewPositionMs),
+        // 只有拖动进度条预览时才用平滑滚动；正常播放逐行跟随、以及进页面的首次落位
+        // 都不该有可感知的滚动（首次落位靠 AdvancedLyricsView 的初始 index 直接落在位上）。
         animateViewportScroll = playback.previewPositionMs != null,
         offset = viewport.offset,
         keepAliveZone = 128.dp,

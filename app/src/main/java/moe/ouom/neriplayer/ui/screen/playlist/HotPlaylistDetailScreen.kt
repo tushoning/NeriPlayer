@@ -32,6 +32,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
+import moe.ouom.neriplayer.ui.tv.rememberTvInitialFocus
+import moe.ouom.neriplayer.ui.tv.tvInitialFocus
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -71,7 +73,10 @@ fun HotPlaylistDetailScreen(
     val context = LocalContext.current
     val title = stringResource(period.hotPlaylistTitleResId())
 
+    // 电视：进这一页时没人抢焦点，光标会被系统兜给左侧导航栏、再被补偿钉到标签上
+    val tvInitialFocus = rememberTvInitialFocus()
     Scaffold(
+        modifier = Modifier.tvInitialFocus(tvInitialFocus),
         containerColor = Color.Transparent,
         contentWindowInsets = WindowInsets.statusBars,
         topBar = {

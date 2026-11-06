@@ -26,6 +26,20 @@ internal fun AdvancedGlassSceneLayer(
     background: @Composable BoxScope.() -> Unit,
     content: @Composable BoxScope.() -> Unit
 ) {
+    // 电视：整层对我们是纯开销，直接挂内容。
+    // 这一层原本负责：给每个场景画一份全屏背景、用 movableContent 把页面搬来搬去、
+    // 用 clipSceneReveal 做揭示裁剪、用 graphicsLayer 做场景位移/缩放，外加两套玻璃 backdrop 采集。
+    // 但电视上没有转场动画、玻璃在 API 28 上本来就不生效，这些每帧都在做却没有产出。
+    // 更糟的是每个场景各自 new 一个 movableContent，跨场景没有复用，
+    // 每次切页反而要把整棵子树重新组合一遍（实测 insertMovableContent 单次 1000ms）。
+    if (moe.ouom.neriplayer.ui.tv.LocalIsTelevision.current) {
+        Box(modifier = modifier.fillMaxSize()) {
+            if (!fixedBackground) background()
+            content()
+        }
+        return
+    }
+
     // toggling a custom background flips the branch below; moving the page keeps its state
     // (and the NavHost's saved destinations) instead of remounting it with a flash
     val latestContent by rememberUpdatedState(content)

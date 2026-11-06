@@ -1,5 +1,6 @@
 package moe.ouom.neriplayer.ui.screen.tab.explore
 
+import moe.ouom.neriplayer.ui.tv.tvReturnFocus
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -400,6 +401,8 @@ private fun YtMusicExploreCard(
         modifier = modifier
             .clip(neriRoundedShape(12.dp))
             .tvBringIntoViewOnFocus()
+            // 电视「返回来源」：进这个 YT 播放列表，退出时光标回到这张卡
+            .tvReturnFocus("yt:${playlist.playlistId}:${playlist.browseId}")
             .clickable(onClick = onClick)
     ) {
         AsyncImage(

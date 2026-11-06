@@ -23,6 +23,7 @@ package moe.ouom.neriplayer.ui.screen.tab.library
  * Created: 2025/8/8
  */
 
+import moe.ouom.neriplayer.ui.tv.tvReturnFocus
 import moe.ouom.neriplayer.ui.component.common.NeriSearchFieldGlass
 import moe.ouom.neriplayer.ui.component.common.rememberTvTextFieldIme
 import moe.ouom.neriplayer.ui.theme.neriSearchFieldColors
@@ -73,7 +74,7 @@ import moe.ouom.neriplayer.common.R as CoreCommonR
 import moe.ouom.neriplayer.ui.navigation.LocalMiniPlayerHeight
 import moe.ouom.neriplayer.ui.viewmodel.tab.AlbumSummary
 import moe.ouom.neriplayer.ui.viewmodel.tab.PlaylistSummary
-import moe.ouom.neriplayer.ui.tv.tvClampLeft
+import moe.ouom.neriplayer.ui.tv.tvRowStart
 import moe.ouom.neriplayer.ui.tv.tvBringIntoViewOnFocus
 import moe.ouom.neriplayer.util.format.formatPlayCount
 import moe.ouom.neriplayer.util.media.offlineCachedImageRequest
@@ -292,9 +293,10 @@ internal fun NeteasePlaylistRow(
         modifier = Modifier
             .padding(horizontal = 8.dp, vertical = 4.dp)
             .clip(cardShape)
-            // 整行占满宽度：按左会一路跑到上面的「最近播放/本地」标签上
-            .tvClampLeft()
+            // 整行占满宽度 = 本行的第 0 列：按左直接交回侧栏「归集」
+            .tvRowStart()
             .tvBringIntoViewOnFocus()
+            .tvReturnFocus("neteasePlaylist:${playlist.id}")
             .clickable(onClick = onClick)
     ) {
         ListItem(
@@ -345,9 +347,10 @@ internal fun NeteaseAlbumRow(
         modifier = Modifier
             .padding(horizontal = 8.dp, vertical = 4.dp)
             .clip(cardShape)
-            // 整行占满宽度：按左会一路跑到上面的「最近播放/本地」标签上
-            .tvClampLeft()
+            // 整行占满宽度 = 本行的第 0 列：按左直接交回侧栏「归集」
+            .tvRowStart()
             .tvBringIntoViewOnFocus()
+            .tvReturnFocus("neteaseAlbum:${album.id}")
             .clickable(onClick = onClick)
     ) {
         ListItem(

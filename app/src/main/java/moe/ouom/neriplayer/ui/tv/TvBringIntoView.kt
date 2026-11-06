@@ -23,6 +23,10 @@ package moe.ouom.neriplayer.ui.tv
  * Created: 2026/10/31
  */
 
+import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 
 /**
@@ -57,7 +61,18 @@ internal class TvMinimalBringIntoViewSpec(
      * 会被滚动容器直接裁掉一条。留出这段边距后，最后一行/第一行会被推进屏幕内部
      * 一段距离，环能完整看见。
      */
-    private val marginPx: Float = 0f
+    private val marginPx: Float = 0f,
+    /**
+     * 一次焦点滚动的动画时长（毫秒）。`<= 0` 表示瞬时。
+     *
+     * 运行时可调（`neri_tv_scroll_ms`），方便现场试手感：
+     * ```
+     * adb shell settings put global neri_tv_scroll_ms 0     # 瞬时，最跟手
+     * adb shell settings put global neri_tv_scroll_ms 32    # 默认
+     * adb shell settings put global neri_tv_scroll_ms 100   # 系统默认长度
+     * ```
+     */
+    private val durationMs: Int = 32
 ) : BringIntoViewSpec {
 
     override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
@@ -74,4 +89,30 @@ internal class TvMinimalBringIntoViewSpec(
             else -> 0f
         }
     }
+
+    /**
+     * 焦点滚动的动画规格：**短时长 + 匀速**。
+     *
+     * 系统默认是一段 ~100ms 的缓动动画。快速连按方向键时它有三个问题：
+     *
+     * 1. **每次新请求都会打断上一段动画**，从「当前位置」重新起算。按得越快，
+     *    每段动画走得越少 —— 表现就是「焦点框跑出好远，页面却几乎不动」；
+     *    一停手，最后那段动画才慢慢把页面补下去（看起来像「边掉帧边往下走」）。
+     * 2. 焦点项往往嵌在**多层滚动容器**里（卡片 → 区块的 Pager → 整页的 LazyColumn）。
+     *    bring-into-view 会沿祖先链逐层请求，每层各起一段动画，串起来就是
+     *    「停顿一下 → 往上窜一下 → 再停顿 → 再窜一下」。
+     * 3. 缓动曲线在 100ms 这种短时长下，起步那一段几乎不动，主观上就是「按了没反应」。
+     *
+     * 所以这里改成 **60ms 匀速**：
+     * - 时长足够短 —— 人手连按的间隔基本都在 80ms 以上，上一段动画已经走完，
+     *   于是「按一下 = 滚一段」，连续按就是连续滚，不再分段顿挫；
+     * - 仍然有动画 —— 不是瞬间跳，位移是连续可见的，观感顺滑；
+     * - 匀速 —— 没有「起步慢」的迟滞感，按下即在动，最接近手机上直接拖动的跟手感。
+     *
+     * 注：`scrollAnimationSpec` 在新版 foundation 上被标了弃用（不推荐定制），
+     * 但它仍是 bring-into-view 取动画规格的唯一入口，覆盖后照常生效。
+     */
+    @Suppress("DEPRECATION")
+    override val scrollAnimationSpec: AnimationSpec<Float> =
+        if (durationMs <= 0) snap() else tween(durationMillis = durationMs, easing = LinearEasing)
 }

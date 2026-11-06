@@ -80,8 +80,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
 import moe.ouom.neriplayer.ui.tv.tvClampRowEnds
+import moe.ouom.neriplayer.ui.tv.tvRowStart
 import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
-import moe.ouom.neriplayer.ui.tv.tvFocusGate
 import moe.ouom.neriplayer.ui.tv.TvChipHeight
 import moe.ouom.neriplayer.ui.tv.TvChipHorizontalPadding
 import moe.ouom.neriplayer.ui.tv.tvChipLabelStyle
@@ -133,8 +133,6 @@ internal fun LibraryMainTabs(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            // 内容区按左/右键时不许跳到这一栏上来
-            .tvFocusGate()
             .padding(horizontal = pageSidePaddingOr(16.dp))
     ) {
         // 整栏按内容宽度排布。
@@ -155,7 +153,8 @@ internal fun LibraryMainTabs(
                     label = stringResource(CoreCommonR.string.library_recent_played),
                     selected = false,
                     onClick = onOpenRecent,
-                    modifier = Modifier.tvClampRowEnds(0, lastLabelIndex)
+                    // 行首：按左直接交回侧栏「归集」，不再往左上跳
+                    modifier = Modifier.tvRowStart().tvClampRowEnds(0, lastLabelIndex)
                 )
                 tabs.forEachIndexed { index, tab ->
                     LibraryTabLabel(
@@ -354,6 +353,7 @@ internal fun YouTubeMusicPlaylistList(
                     .animateItem()
                     .clip(cardShape)
                     .tvBringIntoViewOnFocus()
+                    .tvRowStart()
                     .tvRowMenuKeyPress(menuKeyState)
                     .combinedClickable(
                         onClick = { onClick(playlist) },
@@ -644,6 +644,7 @@ internal fun BiliPlaylistList(
                     .animateItem()
                     .clip(cardShape)
                     .tvBringIntoViewOnFocus()
+                    .tvRowStart()
                     .clickable { onClick(pl) }
             ) {
                 ListItem(

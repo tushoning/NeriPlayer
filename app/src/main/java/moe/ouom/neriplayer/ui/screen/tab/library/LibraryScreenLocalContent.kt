@@ -23,6 +23,8 @@ package moe.ouom.neriplayer.ui.screen.tab.library
  * Created: 2025/8/8
  */
 
+import moe.ouom.neriplayer.ui.tv.tvReturnFocus
+import moe.ouom.neriplayer.ui.tv.tvRowStart
 import moe.ouom.neriplayer.ui.component.common.NeriSearchFieldGlass
 import moe.ouom.neriplayer.ui.component.common.rememberTvTextFieldIme
 import moe.ouom.neriplayer.ui.component.common.CleanSearchField
@@ -340,6 +342,11 @@ internal fun LocalPlaylistList(
     // 列数用同一个公式反算，单格宽度自然和继续播放卡片完全相等。
     val localGridSidePadding = pageSidePaddingOr(8.dp) +
         (if (isTelevision) ContinueStyleHorizontalInsetDp else 0.dp)
+    // 电视：这 8dp 不能进 LazyColumn 的 contentPadding —— 那会把「歌单/歌手」二级标签栏
+    // （fillMaxWidth）一起缩窄 16dp，和网易云等分页对不上。改成只加在网格行上，
+    // 卡片左缘、列数、单格宽度全部不变。
+    val localListSidePadding = if (isTelevision) 0.dp else localGridSidePadding
+    val localGridRowSidePadding = if (isTelevision) ContinueStyleHorizontalInsetDp else 0.dp
     val localGridSpacing = if (isTelevision) ContinueStyleCardSpacingDp else 10.dp
     val localArtistColumnCount = remember(windowWidthDp, isTelevision, localGridSidePadding) {
         if (isTelevision) {
@@ -357,8 +364,8 @@ internal fun LocalPlaylistList(
     LazyColumn(
         state = reorderState.listState,
         contentPadding = PaddingValues(
-            start = localGridSidePadding,
-            end = localGridSidePadding,
+            start = localListSidePadding,
+            end = localListSidePadding,
             top = 8.dp,
             bottom = 8.dp + miniPlayerHeight
         ),
@@ -419,14 +426,15 @@ internal fun LocalPlaylistList(
                     horizontalArrangement = Arrangement.spacedBy(localGridSpacing),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 5.dp)
+                        .padding(horizontal = localGridRowSidePadding, vertical = 5.dp)
                 ) {
-                    rowArtists.forEach { artist ->
+                    rowArtists.forEachIndexed { column, artist ->
                         Box(modifier = Modifier.weight(1f)) {
                             LocalArtistGridCard(
                                 artist = artist,
                                 onClick = { onArtistClick(artist) },
-                                offlineMode = offlineMode
+                                offlineMode = offlineMode,
+                                atRowStart = column == 0
                             )
                         }
                     }
@@ -517,6 +525,7 @@ internal fun LocalPlaylistList(
                     .padding(horizontal = 8.dp, vertical = 4.dp)
                     .animateItem()
                     .clip(cardShape)
+                    .tvRowStart()
                     .clickable(enabled = !selectionMode) { showDialog = true }
             ) {
                 ListItem(
@@ -628,21 +637,24 @@ internal fun LocalPlaylistList(
                     addAll(displayedPlaylists)
                 }
                 Column(Modifier.fillMaxWidth()) {
+                    // 注意：chunked 的 index 是**行号**，不是列号。只有每行的第 0 个卡片才是「行首」，
+                    // 写成 `column == 0` 会把整行都标成行首 —— 表现是行内按左直接跳到侧栏、走不到左边那张。
                     tvCards.chunked(localArtistColumnCount).forEach { rowCards ->
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(localGridSpacing),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 5.dp)
+                                .padding(horizontal = localGridRowSidePadding, vertical = 5.dp)
                         ) {
-                            rowCards.forEach { pl ->
+                            rowCards.forEachIndexed { column, pl ->
                                 Box(modifier = Modifier.weight(1f)) {
                                     LocalPlaylistGridCard(
                                         playlist = pl,
                                         onClick = { if (!selectionMode) onClick(pl) },
                                         onRename = { name -> onRename(pl.id, name) },
                                         onDelete = { onDelete(listOf(pl.id)) },
-                                        offlineMode = offlineMode
+                                        offlineMode = offlineMode,
+                                        atRowStart = column == 0
                                     )
                                 }
                             }
@@ -1046,7 +1058,9 @@ private fun LocalPlaylistGridCard(
     onClick: () -> Unit,
     onRename: (String) -> Unit,
     onDelete: () -> Unit,
-    offlineMode: Boolean
+    offlineMode: Boolean,
+    /** 是否本行第 0 列：按左直接交回侧栏，不往左上跑 */
+    atRowStart: Boolean = false
 ) {
     val context = LocalContext.current
     val systemPlaylist = SystemLocalPlaylists.resolve(playlist.id, playlist.name, context)
@@ -1068,7 +1082,10 @@ private fun LocalPlaylistGridCard(
     Column(
         modifier = Modifier
             .tvBringIntoViewOnFocus()
+            .tvRowStart(atRowStart)
             .tvRowMenuKeyPress(menuKeyState)
+            // 电视「返回来源」：进这个歌单，退出时光标回到这张卡
+            .tvReturnFocus("local:${playlist.id}")
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = tvRingIndication,

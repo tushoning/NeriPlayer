@@ -1,7 +1,9 @@
 package moe.ouom.neriplayer.ui.screen.tab.home
 
+import moe.ouom.neriplayer.ui.tv.tvReturnFocus
 import moe.ouom.neriplayer.ui.theme.NeriDesign
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
+import moe.ouom.neriplayer.ui.tv.rememberTvDeferredImage
 import moe.ouom.neriplayer.data.identity.sameIdentityAs
 import android.app.Application
 import android.content.ClipData
@@ -158,8 +160,20 @@ internal fun YtMusicPlaylistCard(
     val unfavoritedText = stringResource(CoreCommonR.string.home_unfavorited)
     val favoriteSuccessText = stringResource(CoreCommonR.string.favorite_success)
 
+    // 电视：遥控器连续操作期间先不发起新加载（见 rememberTvDeferredImage）
+    val deferredCover = rememberTvDeferredImage(key = playlist.coverUrl) {
+        fastScrollableImageRequest(
+            context = context,
+            data = playlist.coverUrl,
+            sizePx = 384,
+            offlineMode = offlineMode
+        )
+    }
+
     Column(
         modifier = Modifier
+            // 电视「返回来源」：进这个 YT 播放列表，退出时光标回到这张卡
+            .tvReturnFocus("yt:${playlist.playlistId}:${playlist.browseId}")
             .clip(neriRoundedShape(8.dp))
             .combinedClickable(
                 onClick = onClick,
@@ -168,25 +182,17 @@ internal fun YtMusicPlaylistCard(
     ) {
         if (NeriDesign.isClean) {
             HomeFeaturedArtwork(
-                model = fastScrollableImageRequest(
-                    context = context,
-                    data = playlist.coverUrl,
-                    sizePx = 384,
-                    offlineMode = offlineMode
-                ),
+                model = deferredCover.model,
                 title = playlist.title,
-                subtitle = playlist.subtitle
+                subtitle = playlist.subtitle,
+                onImageLoaded = { deferredCover.markLoaded() }
             )
         } else {
             AsyncImage(
-                model = fastScrollableImageRequest(
-                    context = context,
-                    data = playlist.coverUrl,
-                    sizePx = 384,
-                    offlineMode = offlineMode
-                ),
+                model = deferredCover.model,
                 contentDescription = playlist.title,
                 contentScale = ContentScale.Crop,
+                onSuccess = { deferredCover.markLoaded() },
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(1f)
@@ -281,6 +287,16 @@ internal fun YtMusicHomeItemCard(
     val unfavoritedText = stringResource(CoreCommonR.string.home_unfavorited)
     val favoriteSuccessText = stringResource(CoreCommonR.string.favorite_success)
 
+    // 电视：遥控器连续操作期间先不发起新加载（见 rememberTvDeferredImage）
+    val deferredCover = rememberTvDeferredImage(key = item.coverUrl) {
+        fastScrollableImageRequest(
+            context = context,
+            data = item.coverUrl,
+            sizePx = 384,
+            offlineMode = offlineMode
+        )
+    }
+
     Column(
         modifier = Modifier
             .clip(neriRoundedShape(8.dp))
@@ -294,14 +310,10 @@ internal fun YtMusicHomeItemCard(
             )
     ) {
         AsyncImage(
-            model = fastScrollableImageRequest(
-                context = context,
-                data = item.coverUrl,
-                sizePx = 384,
-                offlineMode = offlineMode
-            ),
+            model = deferredCover.model,
             contentDescription = item.title,
             contentScale = ContentScale.Crop,
+            onSuccess = { deferredCover.markLoaded() },
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)

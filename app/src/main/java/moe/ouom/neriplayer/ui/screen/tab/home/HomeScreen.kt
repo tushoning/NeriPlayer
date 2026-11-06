@@ -184,15 +184,19 @@ import kotlin.math.ceil
 import kotlin.math.min
 import java.util.Locale
 import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.tvBringGridToTopOnUp
 import moe.ouom.neriplayer.ui.tv.pageSidePaddingOuterOr
 import moe.ouom.neriplayer.ui.tv.LocalTvRowMenuKeyState
 import moe.ouom.neriplayer.ui.tv.TvRowMenuKeyEffect
 import moe.ouom.neriplayer.ui.tv.rememberTvMenuFirstItemFocus
+import moe.ouom.neriplayer.ui.tv.rememberTvDeferredImage
 import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
 import moe.ouom.neriplayer.ui.tv.rememberTvRowMenuKeyState
 import moe.ouom.neriplayer.ui.tv.tvStripItemFocus
+import moe.ouom.neriplayer.ui.tv.tvReturnFocus
 import moe.ouom.neriplayer.ui.tv.tvStripClamp
 import moe.ouom.neriplayer.ui.tv.tvBringIntoViewOnFocus
+import moe.ouom.neriplayer.ui.tv.TvTuning
 import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import moe.ouom.neriplayer.ui.tv.tvRowMenuKeyPress
 
@@ -525,14 +529,17 @@ fun HomeScreen(
                     state = gridState,
                     columns = gridColumns,
                     contentPadding = PaddingValues(
-                        start = if (isTelevision) 8.dp else gridContentPadding,
-                        end = if (isTelevision) 8.dp else gridContentPadding,
+                        // 电视的左右边距由侧栏宽度 + 内容区右侧留白负责，这里不能再加，
+                        // 否则内容会比其它页面多推 8dp
+                        start = if (isTelevision) 0.dp else gridContentPadding,
+                        end = if (isTelevision) 0.dp else gridContentPadding,
                         top = gridContentPadding,
                         bottom = gridContentPadding + miniPlayerHeight
                     ),
                     verticalArrangement = Arrangement.spacedBy(gridSpacing),
                     horizontalArrangement = Arrangement.spacedBy(gridSpacing),
-                    modifier = Modifier.fillMaxSize()
+                    // 电视：顶部的「继续播放」表头是纯文字、拿不到焦点，只能靠上键把网格拉回顶部
+                    modifier = Modifier.fillMaxSize().tvBringGridToTopOnUp(gridState)
                 ) {
                     if (showContinue) {
                         item(
@@ -1013,6 +1020,7 @@ private fun LazyGridScope.addNeteasePlaylistSection(
                 span = { GridItemSpan(maxLineSpan) }
             ) {
                 PlaylistSectionStrip(
+                    sectionKey = sectionKey,
                     playlists = sectionState.section.items,
                     favoriteKeys = favoriteKeys,
                     onItemClick = onItemClick,
@@ -1054,15 +1062,40 @@ private fun neteaseSongSectionIcon(source: NeteaseHomeSongSource): ImageVector {
 
 @Composable
 private fun SectionLoadingState(text: String) {
-    Column(
+    // 加载中画「与真实卡片行等高」的骨架，而不是一个 20dp 的转圈。
+    //
+    // 原来的转圈整体只有约 60dp 高，而它代表的真实内容是「一排 172dp 的卡片」，
+    // 高约 226dp。数据一到，这个 item 的高度从 60dp 跳到 226dp —— LazyVerticalGrid
+    // 会把**所有 item** 重新测量一遍、重新定位焦点。冷启动时好几个区块同时从
+    // 「加载中」变成「有数据」，于是整页重排，按键全部排队，表现就是
+    // 「进去要等一会才能动」。
+    //
+    // 改成等高骨架后，数据到达前后高度一致，只换内容、不触发整页重排。
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val cardWidth = if (screenWidthDp >= 600) 172.dp else 148.dp
+    // 与 HomeCleanComponents 的 FeaturedLabelHeight 保持一致（封面下方那条文字栏）
+    val rowHeight = cardWidth + 54.dp
+    val horizontalPadding = 8.dp
+    val spacing = 12.dp
+    val available = screenWidthDp.dp - horizontalPadding * 2
+    val perRow = (((available + spacing) / (cardWidth + spacing)).toInt()).coerceIn(1, 8)
+    val placeholderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(horizontal = horizontalPadding),
+        horizontalArrangement = Arrangement.spacedBy(spacing)
     ) {
-        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-        Text(text = text, style = MaterialTheme.typography.bodyMedium)
+        repeat(perRow) {
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(rowHeight)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(placeholderColor)
+            )
+        }
     }
 }
 
@@ -1115,6 +1148,8 @@ private fun SongRowMini(
             .fillMaxWidth()
             .clip(neriRoundedShape(8.dp))
             .tvRowMenuKeyPress(tvRowMenuState, enabled = isTelevision)
+            // 电视「返回来源」：从这首歌进播放页，退出时光标要回到这一行
+            .tvReturnFocus("song:${song.channelId.orEmpty()}:${song.id}")
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = tvRingIndication
@@ -1135,15 +1170,22 @@ private fun SongRowMini(
         )
 
         if (!coverUrl.isNullOrBlank()) {
-            AsyncImage(
-                model = fastScrollableImageRequest(
+            // 电视：遥控器连续操作期间先不发起新加载（见 rememberTvDeferredImage）。
+            // 歌曲行和卡片走的是同一套 —— 之前只给卡片接了，歌曲分区（每日推荐/热歌/日推…）
+            // 还在滚动时现场解码封面，所以那一屏一直卡。
+            val deferredCover = rememberTvDeferredImage(key = coverUrl) {
+                fastScrollableImageRequest(
                     context = context,
                     data = coverUrl,
                     sizePx = 128,
                     offlineMode = offlineMode
-                ),
+                )
+            }
+            AsyncImage(
+                model = deferredCover.model,
                 contentDescription = song.displayName(),
                 contentScale = ContentScale.Crop,
+                onSuccess = { deferredCover.markLoaded() },
                 modifier = Modifier
                     .width(44.dp)
                     .aspectRatio(1f)
@@ -1292,17 +1334,32 @@ private fun PagedCardStrip(
     content: @Composable (index: Int, cardModifier: Modifier) -> Unit
 ) {
     if (itemCount <= 0) return
+    // 分帧组合：首帧只建前两张卡片，下一帧补满。
+    //
+    // 冷启动那一帧实测 1435ms（组合 556ms + 测量 878ms）—— 因为首屏同时有三四个
+    // 区块、每个区块的 Pager 一次把整排（含预取的相邻页）七八张卡片全建出来。
+    // 这一秒多里主线程被填满，按键只能排队，表现就是「进去要等一会才能动」。
+    //
+    // 摊到两帧之后，单帧工作量大约减半，帧与帧之间主线程有空隙，按键能被及时处理，
+    // 焦点就能在内容还没加载完的时候正常移动。卡片位置不变，只是晚一帧出现。
+    var stagedLimit by remember { mutableStateOf(2) }
+    LaunchedEffect(itemCount) {
+        withFrameNanos { }
+        stagedLimit = Int.MAX_VALUE
+    }
+    val shownCount = if (stagedLimit < itemCount) stagedLimit else itemCount
     val spacing = 12.dp
     val horizontalPadding = 8.dp
-    if (!LocalIsTelevision.current) {
+    if (!LocalIsTelevision.current || TvTuning.useLazyRow) {
         // 手机/平板保持原来的自由滚动
+        // 诊断：neri_tv_pager=0 时电视也退回 LazyRow，用来量化 Pager 结构的帧成本
         LazyRow(
             modifier = modifier.fillMaxWidth(),
             // vertical 4dp 是给焦点环留的：环外扩在卡片外侧 4dp，不留空间会被滚动容器裁掉
             contentPadding = PaddingValues(horizontal = horizontalPadding, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(spacing)
         ) {
-            items(itemCount) { index ->
+            items(shownCount) { index ->
                 content(index, Modifier.width(targetCardWidth))
             }
         }
@@ -1315,7 +1372,7 @@ private fun PagedCardStrip(
             .coerceAtLeast(80.dp)
         // 用户要求卡片整体缩小 10%：槽位不变，卡片画小一点并居中，行距布局不动
         val cardWidth = slotWidth * 0.9f
-        val pageCount = ceil(itemCount / perPage.toFloat()).toInt().coerceAtLeast(1)
+        val pageCount = ceil(shownCount / perPage.toFloat()).toInt().coerceAtLeast(1)
         val pagerState = rememberPagerState(pageCount = { pageCount })
         val focus = remember { TvPagerFocus() }
         HorizontalPager(
@@ -1333,7 +1390,7 @@ private fun PagedCardStrip(
             ) {
                 repeat(perPage) { slot ->
                     val index = page * perPage + slot
-                    if (index < itemCount) {
+                    if (index < shownCount) {
                         Box(
                             modifier = Modifier.width(slotWidth),
                             contentAlignment = Alignment.Center
@@ -1436,6 +1493,7 @@ private class TvPagerFocus {
  */
 @Composable
 private fun PlaylistSectionStrip(
+    sectionKey: String,
     playlists: List<PlaylistSummary>,
     favoriteKeys: Set<String>,
     onItemClick: (PlaylistSummary) -> Unit,
@@ -1456,6 +1514,8 @@ private fun PlaylistSectionStrip(
             onShowSnackbar = onShowSnackbar,
             offlineMode = offlineMode,
             bringIntoViewOnFocus = false,
+            // 带区块前缀：不同分区的同名歌单不能共用同一个焦点 key
+            returnFocusKey = "$sectionKey:${playlist.id}",
             modifier = cardModifier
         )
     }
@@ -1515,6 +1575,8 @@ private fun RadarPlaylistCard(
     ) ?: LocalIndication.current
     Column(
         modifier = modifier
+            // 电视「返回来源」：进这个歌单详情，退出时光标回到这张卡
+            .tvReturnFocus("radar:${playlist.id}")
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = tvRingIndication,
@@ -1524,23 +1586,30 @@ private fun RadarPlaylistCard(
             .clip(neriRoundedShape(8.dp))
     ) {
         Box(
+            // 文字在图片外面，外层 Column 的 clip 只圆整卡四角，图片下边缘是卡片内部的直角，
+            // 所以这里单独把封面裁一次（同 shape 同半径，和卡片边同心）
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
-                .clip(neriRoundedShape(8.dp))
-                .background(MaterialTheme.colorScheme.secondaryContainer),
+                .background(MaterialTheme.colorScheme.secondaryContainer)
+                .clip(neriRoundedShape(8.dp)),
             contentAlignment = Alignment.Center
         ) {
             if (playlist.picUrl.isNotBlank()) {
-                AsyncImage(
-                    model = fastScrollableImageRequest(
+                // 电视：遥控器连续操作期间先不发起新加载
+                val deferredCover = rememberTvDeferredImage(key = playlist.picUrl) {
+                    fastScrollableImageRequest(
                         context = context,
                         data = playlist.picUrl,
                         sizePx = 384,
                         offlineMode = offlineMode
-                    ),
+                    )
+                }
+                AsyncImage(
+                    model = deferredCover.model,
                     contentDescription = playlist.name,
                     contentScale = ContentScale.Crop,
+                    onSuccess = { deferredCover.markLoaded() },
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
@@ -1556,8 +1625,12 @@ private fun RadarPlaylistCard(
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(8.dp)
-                    .clip(neriRoundedShape(8.dp))
-                    .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.86f))
+                    // clip + background 合成一个绘制操作：背景直接按圆角形状画，
+                    // 不再先建一层裁剪再画矩形
+                    .background(
+                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.86f),
+                        shape = neriRoundedShape(8.dp)
+                    )
                     .padding(horizontal = 8.dp, vertical = 4.dp),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSecondaryContainer,
@@ -1644,6 +1717,14 @@ fun PlaylistCard(
     offlineMode: Boolean = false,
     /** 横条里的卡片要关掉：bringIntoView 会把卡片滚到屏幕正中 */
     bringIntoViewOnFocus: Boolean = true,
+    /**
+     * 电视「返回来源」的焦点 key。
+     *
+     * 同一个歌单会同时出现在「为你推荐」和下面的「每日推荐歌单」里，若两处共用
+     * `playlist:$id`，两张卡就争同一个 FocusRequester，返回时光标会落到下面那张。
+     * 所以每个区块必须带自己的前缀（「为你推荐」/「每日推荐歌单」分别传）。
+     */
+    returnFocusKey: String = "playlist:${playlist.id}",
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -1653,6 +1734,16 @@ fun PlaylistCard(
 
     val unfavoritedText = stringResource(CoreCommonR.string.home_unfavorited)
     val favoriteSuccessText = stringResource(CoreCommonR.string.favorite_success)
+
+    // 电视：遥控器连续操作期间先不发起新加载（见 rememberTvDeferredImage）
+    val deferredCover = rememberTvDeferredImage(key = playlist.picUrl) {
+        fastScrollableImageRequest(
+            context = context,
+            data = playlist.picUrl,
+            sizePx = 384,
+            offlineMode = offlineMode
+        )
+    }
 
     // 卡片圆角 8dp；环外扩 4dp 画在卡片外侧 —— 卡片尺寸一点不变，环也不压封面
     // 简洁风格是苹果那种大圆角：卡片 20dp，焦点环跟着卡片圆角走（不再额外放大）
@@ -1667,6 +1758,8 @@ fun PlaylistCard(
     Column(
         modifier = modifier
             .then(if (bringIntoViewOnFocus) Modifier.tvBringIntoViewOnFocus() else Modifier)
+            // 电视「返回来源」：进这个歌单详情，退出时光标回到这张卡
+            .tvReturnFocus(returnFocusKey)
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = tvRingIndication,
@@ -1678,33 +1771,26 @@ fun PlaylistCard(
     ) {
         if (NeriDesign.isClean) {
             HomeFeaturedArtwork(
-                model = fastScrollableImageRequest(
-                    context = context,
-                    data = playlist.picUrl,
-                    sizePx = 384,
-                    offlineMode = offlineMode
-                ),
+                model = deferredCover.model,
                 title = playlist.name,
                 subtitle = stringResource(
                     CoreCommonR.string.home_play_count_format,
                     formatPlayCount(context, playlist.playCount),
                     playlist.trackCount
-                )
+                ),
+                onImageLoaded = { deferredCover.markLoaded() }
             )
         } else {
             AsyncImage(
-                model = fastScrollableImageRequest(
-                    context = context,
-                    data = playlist.picUrl,
-                    sizePx = 384,
-                    offlineMode = offlineMode
-                ),
+                model = deferredCover.model,
                 contentDescription = playlist.name,
                 contentScale = ContentScale.Crop,
+                onSuccess = { deferredCover.markLoaded() },
+                // 这里不再单独 clip：外层的 Modifier.clip(cardShape) 已经会裁剪子节点绘制，
+                // 重复裁一层只是多一个离屏图层（首屏十几张卡就是十几层）。
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(1f)
-                    .clip(neriRoundedShape(8.dp))
             )
             Column(modifier = Modifier.padding(top = 6.dp, start = 4.dp, end = 4.dp, bottom = 4.dp)) {
                 Text(

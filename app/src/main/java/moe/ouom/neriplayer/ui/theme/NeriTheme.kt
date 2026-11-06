@@ -49,6 +49,7 @@ import moe.ouom.neriplayer.ui.tv.DefaultTvRingRadius
 import moe.ouom.neriplayer.ui.tv.TvFocusIndication
 import moe.ouom.neriplayer.ui.tv.TvMinimalBringIntoViewSpec
 import moe.ouom.neriplayer.ui.tv.TvPerf
+import moe.ouom.neriplayer.ui.tv.TvTuning
 import moe.ouom.neriplayer.ui.tv.rememberIsTelevision
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
@@ -182,7 +183,9 @@ fun NeriTheme(
             }
             CompositionLocalProvider(
                 LocalIndication provides when {
-                    isTelevision -> tvIndication
+                    // 诊断：neri_tv_ring=0 时电视也不挂焦点环，退回普通 indication，
+                    // 用来量化「每个可聚焦项一个焦点环节点」到底占多少绘制成本
+                    isTelevision && TvTuning.focusRing -> tvIndication
                     uiStyle == UiStyle.Clean -> cleanIndication
                     else -> materialIndication
                 },
@@ -193,9 +196,13 @@ fun NeriTheme(
                 // 那正是「焦点框钉在第三格 / 卡片往回挪」的根源。
                 LocalBringIntoViewSpec provides if (isTelevision) {
                     // 多留 12dp：卡片滚动停住时会被推进屏幕内部一段，
-                    // 外扩的焦点环不再贴着视口边缘被裁掉
-                    remember(density) {
-                        TvMinimalBringIntoViewSpec(with(density) { TvFocusScrollMargin.toPx() })
+                    // 外扩的焦点环不再贴着视口边缘被裁掉。
+                    // 动画时长走 TvTuning.scrollAnimMs（adb 可调，见该字段注释）。
+                    remember(density, TvTuning.scrollAnimMs) {
+                        TvMinimalBringIntoViewSpec(
+                            marginPx = with(density) { TvFocusScrollMargin.toPx() },
+                            durationMs = TvTuning.scrollAnimMs
+                        )
                     }
                 } else {
                     LocalBringIntoViewSpec.current

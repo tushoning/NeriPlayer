@@ -12,9 +12,11 @@ import moe.ouom.neriplayer.lyrics.parser.withoutLyricCredits
 
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.BlendMode
@@ -122,7 +124,6 @@ fun AdvancedLyricsView(
             lineHeight = (translationFontSize.value * 1.12f).sp
         )
     }
-    val listState = rememberLazyListState()
     val blurDelta = (lyricBlurAmount * 0.45f).coerceIn(0f, 4f)
     val safeCurrentPosition = (currentTimeMs + lyricOffsetMs)
         .coerceAtLeast(0L)
@@ -138,6 +139,12 @@ fun AdvancedLyricsView(
         }
     )
 
+    // 播放位置还没送到时先不组合列表：进页面首帧的 position 常常还是 0，
+    // 这时候把列表建出来只能落在第一行，等真实位置到了再校正 —— 那就是「跳一下」。
+    if (isPlaying && safeCurrentPosition <= 0L) {
+        return
+    }
+
     BoxWithConstraints(modifier = modifier) {
         val density = LocalDensity.current
         val focusedLineVisualCompensation = with(density) {
@@ -151,6 +158,35 @@ fun AdvancedLyricsView(
             focusedLineVisualCompensation = focusedLineVisualCompensation,
             topFadeLength = topFadeLength
         )
+        // 列表一开始就落在「当前唱到的那一句」上。
+        //
+        // 两个坑：
+        // 1) 不能用 rememberLazyListState 的 initialFirstVisibleItemScrollOffset 定位 ——
+        //    那个参数在首次测量时会被当成「往上回填上一项」，负值落不到目标位置。
+        // 2) 更隐蔽的是 rememberLazyListState 本身：它是 rememberSaveable，同一进程里
+        //    再次进入播放页时会从注册表把上一次（甚至上一首）的滚动位置恢复回来 ——
+        //    落点就成了「歌词里某个说不清的地方」。
+        // 所以这里按歌词实例新建一个干净的 state，落点交给 requestScrollToItem：
+        // 它在 SideEffect 里调用，早于布局，首次测量就带着正确位置。
+        val listState = remember(syncedLyrics) { LazyListState() }
+        val initialAlignmentState = remember(syncedLyrics) { mutableStateOf(false) }
+        SideEffect {
+            if (!initialAlignmentState.value && syncedLyrics.lines.isNotEmpty()) {
+                val targetIndex = syncedLyrics
+                    .getCurrentFirstHighlightLineIndexByTime(safeCurrentPosition.toInt())
+                    .coerceIn(0, syncedLyrics.lines.lastIndex)
+                // 落点 = 把当前行对到 content 起点。
+                //
+                // 不要传 -(effectiveOffset + keepAliveZone)（那是 KaraokeLyricsView 内部
+                // targetScrollOffset 的写法，但它自己也要靠 realign 事后纠正）：
+                // LazyColumn 的 contentPadding.top 已经等于 offset + keepAliveZone，
+                // 再传这个负偏移会让当前行落在 content 起点**下方**整整 496px，
+                // 首帧画出去之后 KaraokeLyricsView 才发现差了 496px、一把 scrollBy 拉回去
+                // —— 肉眼看到的就是「进页面歌词跳一下」。
+                listState.requestScrollToItem(targetIndex, 0)
+                initialAlignmentState.value = true
+            }
+        }
 
         CompositionLocalProvider(LocalTextStyle provides translationTextStyle) {
             KaraokeLyricsView(

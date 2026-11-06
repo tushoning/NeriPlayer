@@ -34,6 +34,7 @@ import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -139,6 +140,19 @@ internal fun PlaylistModernDetailFrame(
     val headerSearchFocused = search.headerFocused
     val dockedSearchFocused = search.dockedFocused
     val selectionMode = selectionCount != null
+    // ---- 分帧组合（进页面峰值减半）----
+    // 进歌单页时，「组合页头（封面/渐变/标题/操作条）」和「组合首屏那些歌曲行」原本
+    // 挤在同一帧里完成。实测那一帧要 99ms 重组 + 110ms 测量，而帧预算只有 16.7ms，
+    // 于是观感就是「页面已经切过去了，但要卡一下才出内容」。
+    // 这里把歌曲列表推迟约一帧再填进 LazyColumn：第一帧只组合页头（页面先出现），
+    // 第二帧再把行组合进去，单帧峰值直接减半。
+    // 用 delay 而不是 withFrameNanos：如果页面恰好没有新帧（完全静止），等帧会永远等下去，
+    // 列表就永远不出现了；delay 按时间放行，最坏也只是提前一帧合并，绝不会卡死。
+    val listRevealed = remember(header.headerKey) { mutableStateOf(false) }
+    LaunchedEffect(header.headerKey) {
+        delay(24L)
+        listRevealed.value = true
+    }
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     PlaylistModernVisualColorsProvider(
@@ -474,7 +488,10 @@ internal fun PlaylistModernDetailFrame(
                                     }
                                 }
 
-                                content()
+                                // 分帧组合：首帧只出页头，下一帧再填歌曲行（见 listRevealed）
+                                if (listRevealed.value) {
+                                    content()
+                                }
                             }
                         }
                     }

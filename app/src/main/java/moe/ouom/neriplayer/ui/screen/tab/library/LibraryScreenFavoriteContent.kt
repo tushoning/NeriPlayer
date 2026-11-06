@@ -108,7 +108,7 @@ import moe.ouom.neriplayer.ui.viewmodel.tab.PlaylistSummary
 import moe.ouom.neriplayer.ui.viewmodel.tab.YouTubeMusicPlaylist
 import moe.ouom.neriplayer.ui.haptic.HapticIconButton
 import moe.ouom.neriplayer.ui.haptic.HapticTextButton
-import moe.ouom.neriplayer.ui.tv.tvClampLeft
+import moe.ouom.neriplayer.ui.tv.tvRowStart
 import moe.ouom.neriplayer.ui.tv.tvBringIntoViewOnFocus
 import moe.ouom.neriplayer.util.format.formatPlayCount
 import moe.ouom.neriplayer.util.media.offlineCachedImageRequest
@@ -402,7 +402,7 @@ internal fun FavoritePlaylistList(
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                             .animateItem()
                             .clip(cardShape)
-                            .tvClampLeft()
+                            .tvRowStart()
                             .tvBringIntoViewOnFocus()
                             .clickable { onHotPlaylistClick(playlist.period) }
                     ) {
@@ -515,7 +515,7 @@ internal fun FavoritePlaylistList(
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                             .animateItem()
                         .clip(cardShape)
-                        .tvClampLeft()
+                        .tvRowStart()
                         .tvBringIntoViewOnFocus()
                         .combinedClickable(
                             onClick = {

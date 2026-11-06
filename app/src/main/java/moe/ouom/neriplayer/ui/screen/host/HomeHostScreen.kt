@@ -36,6 +36,7 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.material3.TopAppBarState
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -93,6 +94,12 @@ import moe.ouom.neriplayer.ui.util.savedMap
 import moe.ouom.neriplayer.ui.util.savedNonBlankString
 import moe.ouom.neriplayer.ui.util.savedNumber
 import moe.ouom.neriplayer.ui.util.toSaveMap
+import moe.ouom.neriplayer.navigation.Destinations
+import moe.ouom.neriplayer.ui.tv.LocalTvReturnDepth
+import moe.ouom.neriplayer.ui.tv.LocalTvReturnScope
+import moe.ouom.neriplayer.ui.tv.TvReturnFocusPageBridge
+import moe.ouom.neriplayer.ui.tv.TvTabRootBus
+import moe.ouom.neriplayer.ui.screen.tab.home.HomeRefreshBus
 import moe.ouom.neriplayer.util.media.CoverArtColorCache
 
 // 用密封类承载四种目标
@@ -155,6 +162,30 @@ class HomeHostRuntimeState {
     var pendingRadarPlaylistRestoreOffset by mutableIntStateOf(0)
     var homeScrollAnchorIndexes by mutableStateOf<Map<String, Int>>(emptyMap())
     var continuePagerPage by mutableIntStateOf(0)
+
+    /**
+     * 点标签栏回到首页根时复位。
+     *
+     * 这个对象建在 `SaveableStateHolder` 之外（`NeriApp` 的 remember），
+     * `removeState("home")` 清不掉它，所以滚动位置和"待恢复"标记要单独抹掉。
+     *
+     * 调用时机必须是**首页还没进组合**的时候：`requestScrollToItem` 只是记下
+     * "下次布局落在第 0 项"，不会让正在淡出的画面跳顶。
+     */
+    fun resetForTabBarClick() {
+        pendingGridRestoreIndex = null
+        pendingGridRestoreOffset = 0
+        pendingGridRestoreKey = null
+        pendingGridRestoreArmed = false
+        pendingRadarPlaylistRestoreIndex = null
+        pendingRadarPlaylistRestoreOffset = 0
+        homeScrollAnchorIndexes = emptyMap()
+        continuePagerPage = 0
+        topAppBarState.heightOffset = 0f
+        topAppBarState.contentOffset = 0f
+        gridState.requestScrollToItem(0)
+        radarPlaylistListState.requestScrollToItem(0)
+    }
 }
 
 @Composable
@@ -353,6 +384,28 @@ fun HomeHostScreen(
         }
         clearPendingHomeScrollRestore()
     }
+    // 电视「返回来源」：进详情前记住是哪张卡，退出时把光标送回去。
+    // 必须放在上面那个「恢复滚动位置」的 effect 之后 —— 先让卡片滚回视口，再请求焦点，
+    // 否则 lazy 列表里没组合的节点 requestFocus 会一直失败。
+    val homeReturnDepth = selected.navigationDepth
+    TvReturnFocusPageBridge("home", depth = homeReturnDepth)
+    // 电视：侧栏再按一次「首页」= 回到首页根。
+    // 详情态下 HomeScreen 根本不在组合里，刷新总线没人收，所以先在这里把「回根」
+    // 翻译成「退出详情 + 清掉残留的滚动恢复标记 + 回顶」；根态才走原来的刷新逻辑。
+    LaunchedEffect(Unit) {
+        TvTabRootBus.requests.collect { route ->
+            if (route != Destinations.Home.route) return@collect
+            if (selected != null) {
+                cancelPendingNeteaseCoverWarmup()
+                skipDetailCloseAnimation = false
+                // 先清恢复标记：否则退出详情后会被 pending 的位置又拉回去
+                runtimeState.resetForTabBarClick()
+                selected = null
+            } else {
+                HomeRefreshBus.request()
+            }
+        }
+    }
     val suppressRestoredSceneEntry = rememberMainTabSceneRestoredEntry()
     val detailCloseRootRevealFraction =
         navigationTransition.animateMainTabDetailCloseRootRevealFraction(
@@ -395,7 +448,9 @@ fun HomeHostScreen(
                 initialDepth = navigationTransition.currentState.navigationDepth,
                 targetDepth = navigationTransition.targetState.navigationDepth
             )
-            val sceneMotion = if (suppressRestoredSceneMotion) {
+            // 电视上场景动效一个像素都不画（AdvancedGlassSceneLayer 直接挂内容），
+            // 但每帧仍会产出新的 SceneMotion 让整棵场景子树重组，和详情页首帧撞在一起。
+            val sceneMotion = if (suppressRestoredSceneMotion || tvSkipSceneMotion) {
                 AdvancedGlassSceneMotion.None
             } else {
                 navigationTransition.animateAdvancedGlassSceneMotion(
@@ -411,6 +466,13 @@ fun HomeHostScreen(
                 sceneMotion.contentScale,
                 current.navigationDepth
             ) {
+                // 电视「返回来源」：卡片只传稳定 key，宿主 + 层级由这里下发，
+                // 这样首页和详情页里的同一套行组件不会被记成同一个 scope。
+                CompositionLocalProvider(
+                    LocalTvReturnScope provides
+                        if (moe.ouom.neriplayer.ui.tv.LocalIsTelevision.current) "home" else null,
+                    LocalTvReturnDepth provides current.navigationDepth
+                ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     if (current == null) {
                         Box(
@@ -629,6 +691,7 @@ fun HomeHostScreen(
                             }
                         }
                     }
+                }
                 }
             }
         }

@@ -119,6 +119,7 @@ import moe.ouom.neriplayer.platform.comments.repository.CommentRepository
 import moe.ouom.neriplayer.platform.comments.repository.BiliCommentRepository
 import moe.ouom.neriplayer.platform.comments.repository.NeteaseCommentRepository
 import moe.ouom.neriplayer.network.proxy.DynamicProxySelector
+import moe.ouom.neriplayer.ui.tv.isTelevisionDevice
 import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -594,14 +595,37 @@ object AppContainer {
             moe.ouom.neriplayer.core.startup.LegacyJsonCleanupScheduler::schedule
         )
         AudioDownloadManager.initialize(app)
-        warmLocalPlaylistRepository()
-        warmBiliVideoSkipRepository()
-        warmCoverUrlMapper()
+        deferWarmupsUntilMainThreadIdle()
         primeProxySetting()
         startCookieObserver()
         startYouTubeAuthObserver()
         startSettingsObserver()
-        warmYouTubePlaybackOnAppStart()
+    }
+
+    /**
+     * 把「预热」类初始化推迟到首帧之后的主线程空闲期。
+     *
+     * 这几项（读盘预热仓库、预热封面映射、预热 YouTube 播放链路）都只为「之后不要卡」
+     * 服务，和首屏能不能画出来毫无关系。但以前它们和首帧抢同一个主线程：
+     * 实测冷启动 `bindApplication` 要 2098ms（占总 5.5 秒的四成），其中就包含这些读盘；
+     * `warmYouTubePlaybackOnAppStart()` 还会顺带把 Chromium/WebView 的原生库拉起来
+     * （日志里的 `cr_BrowserStartup: Initializing chromium process`），再吃掉几百毫秒。
+     *
+     * `addIdleHandler` 的语义正好是「等这条消息队列空下来再说」——首帧画完、用户还没
+     * 有动作的那一刻。推迟到这里，既不影响首屏，也比原来更早于用户的第一次操作。
+     *
+     * 注意：`primeProxySetting()` / 观察者注册没有推迟，因为它们会影响首屏之后的
+     * 网络请求和设置读取，必须保持原来的时机。
+     */
+    private fun deferWarmupsUntilMainThreadIdle() {
+        android.os.Looper.myQueue().addIdleHandler {
+            warmLocalPlaylistRepository()
+            warmBiliVideoSkipRepository()
+            warmCoverUrlMapper()
+            warmYouTubePlaybackOnAppStart()
+            // false = 只跑一次，之后从空闲队列里摘掉
+            false
+        }
     }
 
     private fun warmLocalPlaylistRepository() {
@@ -760,6 +784,15 @@ object AppContainer {
             youtubeMusicPlaybackRepository::warmBootstrapAsync
         }
     ) {
+        // 电视上彻底不预热 YouTube。
+        //
+        // 这个预热会顺带把 Chromium / WebView 的原生库整个拉起来（日志里的
+        // `cr_BrowserStartup: Initializing chromium process`）。而这台电视的 WebView 是
+        // Chrome 66（2018 年），加载一次要几百毫秒，实测启动后仍会丢 35 帧；
+        // 电视端又不用 YouTube，这笔开销纯亏。
+        if (application.isTelevisionDevice()) {
+            return
+        }
         if (!YouTubeFeatureGate.isEnabled()) {
             return
         }

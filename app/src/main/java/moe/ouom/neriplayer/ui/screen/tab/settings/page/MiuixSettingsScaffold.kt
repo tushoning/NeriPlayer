@@ -380,6 +380,16 @@ internal object SettingsEntryFocus {
         requesters.getOrPut(page) { FocusRequester() }
     }
 
+    /**
+     * 切标签回根：清掉「上次聚焦哪一行」。
+     *
+     * `requesters` 不能清 —— 已经组合出来的行仍拿着旧请求器，清表会让它们对不上。
+     * 只把落点置空，`request(null)` 就会返回 false，调用方会退到「光标回标签栏」。
+     */
+    fun clearLastFocused() {
+        lastFocusedPage = null
+    }
+
     fun request(page: SettingsPage?): Boolean {
         if (page == null) return false
         return runCatching { requesterFor(page).requestFocus() }.getOrDefault(false)

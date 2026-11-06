@@ -60,9 +60,11 @@ import moe.ouom.neriplayer.data.model.stats.UsageEntry
 import moe.ouom.neriplayer.ui.util.rememberPlaylistDisplayCoverUrl
 import moe.ouom.neriplayer.ui.theme.NeriDesign
 import moe.ouom.neriplayer.ui.theme.cleanCornerRadiusFor
+import moe.ouom.neriplayer.ui.tv.rememberTvDeferredImage
 import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
 import moe.ouom.neriplayer.ui.tv.tvClampLeft
 import moe.ouom.neriplayer.ui.tv.tvClampRight
+import moe.ouom.neriplayer.ui.tv.tvReturnFocus
 import moe.ouom.neriplayer.util.media.fastScrollableImageRequest
 import kotlin.math.ceil
 import moe.ouom.neriplayer.R as AppR
@@ -417,6 +419,8 @@ private fun ContinueCardSurface(
     ) ?: LocalIndication.current
     Column(
         modifier = modifier
+            // 电视「返回来源」：从「继续播放」进详情，退出时光标回到这张卡
+            .tvReturnFocus("continue:${entry.source}:${entry.id}")
             .combinedClickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = tvRingIndication,
@@ -444,15 +448,24 @@ private fun ContinueCardSurface(
 
 @Composable
 private fun ContinueCover(displayName: String, coverUrl: String?, offlineMode: Boolean) {
-    AsyncImage(
-        model = fastScrollableImageRequest(
-            context = LocalContext.current,
+    val context = LocalContext.current
+    // 电视：遥控器连续操作期间先不发起新加载（见 rememberTvDeferredImage）
+    val deferredCover = rememberTvDeferredImage(key = coverUrl) {
+        fastScrollableImageRequest(
+            context = context,
             data = coverUrl,
             sizePx = 384,
             offlineMode = offlineMode
-        ),
+        )
+    }
+    AsyncImage(
+        model = deferredCover.model,
         contentDescription = displayName,
         contentScale = ContentScale.Crop,
+        onSuccess = { deferredCover.markLoaded() },
+        // 这张卡的文字在图片**外面**：外层 ContinueCardSurface 的 clip 只圆了整张卡的四角，
+        // 图片下边缘落在卡片内部，所以那一条是直角。这里把图片自己也裁一次，
+        // 同 shape 同半径，和卡片边完全同心。
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(1f)

@@ -40,6 +40,8 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -84,7 +86,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
+import moe.ouom.neriplayer.ui.tv.rememberTvInitialFocus
+import moe.ouom.neriplayer.ui.tv.tvInitialFocus
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
@@ -418,17 +423,28 @@ fun LocalPlaylistDetailScreen(
     }
 
     val detailVisibilityState = rememberMainTabDetailVisibilityState(playlistId)
+    // 电视：进这一页时没人抢焦点，光标会被系统兜给左侧导航栏再被补偿钉到标签上
+    val tvInitialFocus = rememberTvInitialFocus()
     AnimatedVisibility(
         visibleState = detailVisibilityState,
-        enter = slideInVertically(
-            tween(300, easing = FastOutSlowInEasing),
-            initialOffsetY = { it }
-        ) + fadeIn(tween(150)),
-        exit = slideOutVertically(
-            tween(250, easing = FastOutSlowInEasing),
-            targetOffsetY = { it }) + fadeOut(tween(150))
+        // 电视不要上滑动画，直接出现；手机保留整页位移
+        enter = if (LocalIsTelevision.current) {
+            EnterTransition.None
+        } else {
+            slideInVertically(
+                tween(300, easing = FastOutSlowInEasing),
+                initialOffsetY = { it }
+            ) + fadeIn(tween(150))
+        },
+        exit = if (LocalIsTelevision.current) {
+            ExitTransition.None
+        } else {
+            slideOutVertically(
+                tween(250, easing = FastOutSlowInEasing),
+                targetOffsetY = { it }) + fadeOut(tween(150))
+        }
     ) {
-        Surface(Modifier.fillMaxSize(), color = Color.Transparent) {
+        Surface(Modifier.fillMaxSize().tvInitialFocus(tvInitialFocus), color = Color.Transparent) {
             if (playlist == null) {
                 if (isResolved && !initializationFailed) {
                     return@Surface

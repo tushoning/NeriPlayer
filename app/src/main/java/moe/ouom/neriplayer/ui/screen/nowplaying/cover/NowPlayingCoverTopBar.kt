@@ -197,37 +197,65 @@ internal fun NowPlayingCoverTopActions(
                 onClick = onComment,
                 requester = commentRequester
             )
-            HapticIconButton(
-                onClick = onMoreOptions,
-                modifier = Modifier.size(buttonSize)
-                    .then(
-                        if (moreOptionsRequester != null) {
-                            Modifier.focusRequester(moreOptionsRequester)
-                        } else {
-                            Modifier
-                        }
-                    )
-                    .sharedBounds(
-                        rememberSharedContentState(key = "btn_more"),
-                        boundsTransform = LocalNowPlayingLyricsBoundsTransform.current,
-                        animatedVisibilityScope = animatedVisibilityScope,
-                        enter = EnterTransition.None,
-                        exit = ExitTransition.None
-                    ).zIndex(1f)
-            ) {
-                Icon(
-                    Icons.Filled.MoreVert,
-                    contentDescription = stringResource(CoreCommonR.string.nowplaying_more_options),
-                    modifier = Modifier.size(iconSize)
+            NowPlayingCoverMoreButton(
+                buttonSize = buttonSize,
+                iconSize = iconSize,
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
+                onMoreOptions = onMoreOptions,
+                requester = moreOptionsRequester
+            )
+        }
+    }
+}
+
+/**
+ * 「更多」按钮。
+ *
+ * 电视版播放页把收藏和评论挪进了底部工具栏，顶部只剩返回和这一个，
+ * 所以它需要能被单独拿出来用，不能再依赖整排 [NowPlayingCoverTopActions]。
+ */
+@OptIn(ExperimentalSharedTransitionApi::class)
+@Composable
+internal fun NowPlayingCoverMoreButton(
+    buttonSize: Dp,
+    iconSize: Dp,
+    sharedTransitionScope: SharedTransitionScope,
+    animatedVisibilityScope: AnimatedVisibilityScope,
+    onMoreOptions: () -> Unit,
+    requester: FocusRequester? = null
+) {
+    with(sharedTransitionScope) {
+        HapticIconButton(
+            onClick = onMoreOptions,
+            modifier = Modifier.size(buttonSize)
+                .then(
+                    if (requester != null) {
+                        Modifier.focusRequester(requester)
+                    } else {
+                        Modifier
+                    }
                 )
-            }
+                .sharedBounds(
+                    rememberSharedContentState(key = "btn_more"),
+                    boundsTransform = LocalNowPlayingLyricsBoundsTransform.current,
+                    animatedVisibilityScope = animatedVisibilityScope,
+                    enter = EnterTransition.None,
+                    exit = ExitTransition.None
+                ).zIndex(1f)
+        ) {
+            Icon(
+                Icons.Filled.MoreVert,
+                contentDescription = stringResource(CoreCommonR.string.nowplaying_more_options),
+                modifier = Modifier.size(iconSize)
+            )
         }
     }
 }
 
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
-private fun NowPlayingFavoriteButton(
+internal fun NowPlayingFavoriteButton(
     isFavorite: Boolean,
     enabled: Boolean,
     buttonSize: Dp,
@@ -267,7 +295,7 @@ private fun NowPlayingFavoriteButton(
 
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
-private fun NowPlayingCommentButton(
+internal fun NowPlayingCommentButton(
     available: Boolean,
     buttonSize: Dp,
     iconSize: Dp,

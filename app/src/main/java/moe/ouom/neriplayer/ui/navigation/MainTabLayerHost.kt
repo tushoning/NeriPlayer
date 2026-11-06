@@ -25,6 +25,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.SaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -32,7 +33,12 @@ import androidx.compose.runtime.structuralEqualityPolicy
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
+import moe.ouom.neriplayer.ui.component.navigation.TvTopBarFocus
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 import moe.ouom.neriplayer.ui.tv.tvKeepFocusHorizontally
+import moe.ouom.neriplayer.ui.tv.tvLeftEdgeToNavigation
+import moe.ouom.neriplayer.ui.tv.tvSealVerticalEdges
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -210,9 +216,16 @@ internal fun rememberMainTabLayerTransitionState(
     initialRoute: String
 ): MainTabLayerTransitionState {
     val scope = rememberCoroutineScope()
-    val transitionState = remember(scope) {
+    // 电视不做切标签的左右滑动：这段转场要等新场景组合完、再插两帧、再跑约 300ms 动画，
+    // 一前一后两次重活就表现为「先顿一下 → 才开始滑 → 结尾再顿一下」。手机上保持原样。
+    val instantSwitch = LocalIsTelevision.current
+    val transitionState = remember(scope, instantSwitch) {
         MainTabLayerTransitionState(
-            controller = MainTabLayerTransitionController(scope, initialRoute),
+            controller = MainTabLayerTransitionController(
+                scope = scope,
+                initialRoute = initialRoute,
+                instantSwitch = instantSwitch
+            ),
             initialRoute = initialRoute
         )
     }
@@ -279,6 +292,7 @@ internal fun MainTabLayerHost(
     selectedRoute: String,
     modifier: Modifier = Modifier,
     onVisibleGlassOwnersChanged: (Set<MainTabGlassOwner>) -> Unit = {},
+    saveableStateHolder: SaveableStateHolder = rememberSaveableStateHolder(),
     content: @Composable (route: String) -> Unit
 ) {
     val transitionState = rememberMainTabLayerTransitionState(selectedRoute)
@@ -287,6 +301,7 @@ internal fun MainTabLayerHost(
         transitionState = transitionState,
         modifier = modifier,
         onVisibleGlassOwnersChanged = onVisibleGlassOwnersChanged,
+        saveableStateHolder = saveableStateHolder,
         content = content
     )
 }
@@ -298,6 +313,7 @@ internal fun MainTabLayerHost(
     modifier: Modifier = Modifier,
     onVisibleGlassOwnersChanged: (Set<MainTabGlassOwner>) -> Unit = {},
     backHandlingEnabled: Boolean = true,
+    saveableStateHolder: SaveableStateHolder = rememberSaveableStateHolder(),
     content: @Composable (route: String) -> Unit
 ) {
     val useScaleTransition = shouldUseMainTabScaleTransition(
@@ -318,11 +334,19 @@ internal fun MainTabLayerHost(
             scene.glassOwner
         })
     }
-    val saveableStateHolder = rememberSaveableStateHolder()
     AdvancedGlassNavigationHandoff(enabled = visibleScenes.size > 1) {
         Box(
             modifier = modifier
-                // 电视：焦点走到本层左右边缘就停住，不要跳到上方标签栏去
+                // 封顶 / 封底：内容区首行按上、末行按下时焦点原地不动。
+                // 只挂 focusGroup 挡不住 —— 组只是搜索边界，上下仍会逃到贯穿整屏高度的侧栏上。
+                .tvSealVerticalEdges()
+                // 电视：按左到内容区最左边时，把光标交给左侧导航栏里本页对应的标签
+                .tvLeftEdgeToNavigation {
+                    TvTopBarFocus.requestTab(
+                        TvTopBarFocus.currentTabRoute ?: TvTopBarFocus.NOW_PLAYING_ROUTE
+                    )
+                }
+                // 按右挡住，别跑进正在淡出的隐藏层
                 .tvKeepFocusHorizontally()
                 .clipToBounds()
                 .onSizeChanged { size ->
@@ -358,6 +382,11 @@ internal fun MainTabLayerHost(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
+                            // 电视：侧栏按右键的落点 = 这个场景里第一个可聚焦元素。
+                            // focusRequester 挂在容器上时 requestFocus 会向下找第一个可聚焦后代。
+                            .focusRequester(
+                                TvTopBarFocus.contentEntryRequesterFor(scene.route)
+                            )
                             .then(
                                 if (useScaleTransition) {
                                     Modifier
@@ -460,7 +489,9 @@ private fun MainTabSceneBackScope(
 @Stable
 internal class MainTabLayerTransitionController(
     private val scope: CoroutineScope,
-    initialRoute: String
+    initialRoute: String,
+    /** 电视：切标签直接换页，不跑滑动转场 */
+    private val instantSwitch: Boolean = false
 ) {
     private var fromRouteState by mutableStateOf<String?>(null)
     private var toRouteState by mutableStateOf(initialRoute)
@@ -590,6 +621,27 @@ internal class MainTabLayerTransitionController(
                 return
             }
             commitPredictiveBack()
+        }
+        if (instantSwitch) {
+            // 电视：直接换页，一步到位。
+            // 原流程是「旧页退场动画 → 新场景组合完等两帧 → 新页入场动画」，
+            // 两端的重活就是用户看到的两次顿挫；这里只发一次状态变更。
+            if (!runningState && targetRoute == toRouteState) return
+            generation++
+            transitionJob?.cancel()
+            transitionJob = null
+            fromRouteState = null
+            toRouteState = targetRoute
+            directionState = 1
+            progressState = 1f
+            runningState = false
+            awaitingIncomingScenePreparation = false
+            pendingTransitionStart = null
+            queuedTransitionRequest = null
+            hasStartedTabAnimation = true
+            targetSceneRestoredState = restored
+            targetSceneRestorationToken = 0L
+            return
         }
         if (!containerReady) {
             if (pendingTransitionStart?.toRoute == targetRoute) return

@@ -29,6 +29,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.LocalIndication
@@ -56,6 +57,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -67,27 +71,17 @@ import moe.ouom.neriplayer.ui.tv.TvPerf
 import moe.ouom.neriplayer.navigation.Destinations
 import moe.ouom.neriplayer.ui.haptic.performHapticFeedback
 import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
-import moe.ouom.neriplayer.ui.tv.TvFocusGate
 import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
-import moe.ouom.neriplayer.ui.tv.tvFocusGate
 import moe.ouom.neriplayer.ui.tv.tvTrackFocusWithin
 
 /**
- * 电视用顶部标签栏。
+ * 电视导航栏（现在是左侧竖栏）的焦点调度器。
  *
- * 电视机没有触摸屏，底部标签栏会掉进滚动容器的焦点序列里，遥控器根本到不了，
- * 所以把它挪到屏幕上沿并固定，压成一条左对齐的窄带，不浪费垂直空间。
- *
- * 第一个格子是「正在播放」入口，用歌曲列表里那套频谱柱表示播放状态，
- * 播放时柱体动、暂停时静止。
+ * 页面本体在 [TvNavigationSidebar]，这里只留焦点相关的东西：
+ * 返回键、播放页关闭后的光标归还、`TvReturnFocus` 的顶栏锚点全都直接读
+ * `barHasFocus` / `focusedTabRoute` / `requesterFor`，所以这部分不跟着搬。
  */
-internal val TvTopBarHeight = 58.dp
-private val TvTopBarItemHeight = 44.dp
-// 主标签的选中底板是胶囊形（不是 12dp 圆角矩形）：高度 44dp → 半径取一半
-private val TvTopBarShape = RoundedCornerShape(percent = 50)
-/** 标签高度的一半，作为胶囊焦点环的半径 */
-private val TvTopBarItemRadius = TvTopBarItemHeight / 2
 
 /**
  * 顶部标签栏的焦点调度中心。
@@ -110,6 +104,32 @@ object TvTopBarFocus {
     }
 
     /**
+     * 内容区入口：每个主标签一份。
+     *
+     * 按标签分开而不是共用一个，是为了在「切页那一拍两个场景同时在」的时候，
+     * 落点一定在目标标签自己的场景里，不会钻进正在淡出的那一层。
+     */
+    private val contentEntryRequesters = HashMap<String, FocusRequester>()
+
+    fun contentEntryRequesterFor(route: String): FocusRequester = synchronized(lock) {
+        contentEntryRequesters.getOrPut(route) { FocusRequester() }
+    }
+
+    /**
+     * 侧栏按右键：把光标送进内容区**第一个可聚焦元素**。
+     *
+     * 走这条路而不是交给 Compose 的几何方向搜索，是因为几何搜索按「纵向距离最近」选点，
+     * 落点取决于每个标签格子恰好对着哪一行卡片，不稳定。
+     *
+     * 返回 false 表示内容区还没有可聚焦节点（页面还在加载），调用方应退回系统默认搜索，
+     * 免得按键被吞掉、光标停在原地。
+     */
+    fun requestContentEntry(): Boolean {
+        val route = currentTabRoute ?: return false
+        return runCatching { contentEntryRequesterFor(route).requestFocus() }.getOrDefault(false)
+    }
+
+    /**
      * 当前焦点所在的格子路由，焦点离开顶部栏时为 null。
      *
      * 必须是普通 @Volatile 字段，**不能**用 mutableStateOf 包一层：
@@ -128,6 +148,17 @@ object TvTopBarFocus {
     @Volatile
     var currentTabRoute: String? = null
         private set
+
+    /**
+     * 最近一次解析出来的「本页属于哪个标签」，**不停留在 null**。
+     *
+     * 详情页（歌单 / 歌手 / 专辑）的 route 不属于任何主标签，[currentTabRoute] 会被置空。
+     * 一旦置空，下面的焦点补偿就失去了锚点：焦点被系统塞进侧栏时没人把它挪走，
+     * 光标就停在标签栏上了。用这个字段当兜底锚点，详情页期间也能把光标收回到
+     * 「进入详情页之前那个标签」，和按返回键的语义一致。
+     */
+    @Volatile
+    private var lastResolvedTabRoute: String? = null
 
     /**
      * 标签栏这一层里**现在**有没有焦点。
@@ -157,27 +188,55 @@ object TvTopBarFocus {
     @Volatile
     private var lastTabBlurAt = 0L
 
+    /**
+     * 最近一次「我们主动把光标送到哪个标签」+ 时刻。
+     *
+     * 用来区分「系统把光标塞进标签栏」和「我们自己指定的落点」：
+     * 后者（比如从播放页返回后要求落到「正在播放」）不能被下面的补偿规则拽回本页标签。
+     */
+    @Volatile
+    private var explicitTarget: String? = null
+    @Volatile
+    private var explicitAt = 0L
+
+    /**
+     * 暂时不画「选中底板」。
+     *
+     * 只在「从歌单/歌手详情返回、播放页即将盖回来」这一小段窗口里置位：
+     * 详情页的 route 不属于任何主标签，所以详情页期间顶栏没有底板；按返回时
+     * 路由先变回首页、底板立刻亮起，而播放页要晚一拍才盖回来 —— 那一拍就是
+     * 用户看到的那道「阴影闪一下」。压住这一拍即可，其它时机一律不动。
+     *
+     * 必须是 Compose 状态（标签栏要跟着重组），不能像上面几个字段那样用 @Volatile。
+     */
+    private val selectionPillSuppressed = androidx.compose.runtime.mutableStateOf(false)
+
+    var suppressSelectionPill: Boolean
+        get() = selectionPillSuppressed.value
+        set(value) {
+            selectionPillSuppressed.value = value
+        }
+
     internal fun onTabFocusChanged(route: String, focused: Boolean) {
         val previous = focusedTabRoute
         if (focused) {
             focusedTabRoute = route
-            val correct = currentTabRoute
+            // 详情页 currentTabRoute 是 null，这时退回到「进入详情页之前那个标签」
+            val correct = currentTabRoute ?: lastResolvedTabRoute
             val movedByUser =
                 android.os.SystemClock.uptimeMillis() - lastTabBlurAt < TAB_MOVE_WINDOW_MS
+            // 是不是我们刚主动指定的落点（从播放页返回后落到「正在播放」就是这种）
+            val explicit = route == explicitTarget &&
+                android.os.SystemClock.uptimeMillis() - explicitAt < TAB_MOVE_WINDOW_MS
             // 光标被系统塞进了标签栏（我们事先并不在标签栏里），且落点不是本页标签
-            // → 送回本页标签。用户自己在标签之间移动的情况不干预。
-            if (!movedByUser && previous == null && correct != null && route != correct) {
+            // → 送回本页标签。用户自己在标签之间移动、或我们主动指定的落点，都不干预。
+            if (!movedByUser && !explicit && previous == null && correct != null && route != correct) {
                 requestTab(correct)
             }
         } else if (previous == route) {
             focusedTabRoute = null
             lastTabBlurAt = android.os.SystemClock.uptimeMillis()
         }
-        android.util.Log.e(
-            "NERI_TV_FOCUS",
-            "tab=$route focused=$focused prev=$previous " +
-                "=> focused=$focusedTabRoute current=$currentTabRoute"
-        )
     }
 
     /** 标签之间移动时，「旧标签失焦 → 新标签获得焦点」的最大间隔 */
@@ -185,13 +244,14 @@ object TvTopBarFocus {
 
     internal fun onCurrentTabResolved(route: String?) {
         currentTabRoute = route
-        android.util.Log.e("NERI_TV_FOCUS", "currentTabRoute -> $route")
+        if (route != null) lastResolvedTabRoute = route
     }
 
     /** 把光标送到指定标签；节点尚未挂载时静默失败 */
     fun requestTab(route: String): Boolean {
-        // 标签栏在横向按键期间是「关闸」状态（canFocus=false），程序化拉焦点必须先开闸
-        TvFocusGate.open()
+        // 记下这是我们主动定的落点，别让 onTabFocusChanged 的补偿规则再拽回本页标签
+        explicitTarget = route
+        explicitAt = android.os.SystemClock.uptimeMillis()
         return runCatching { requesterFor(route).requestFocus() }.getOrDefault(false)
     }
 
@@ -202,233 +262,6 @@ object TvTopBarFocus {
     }
 }
 
-private fun Modifier.tvTabFocusTracker(route: String): Modifier = onFocusChanged { state ->
+internal fun Modifier.tvTabFocusTracker(route: String): Modifier = onFocusChanged { state ->
     TvTopBarFocus.onTabFocusChanged(route, state.isFocused)
-}
-
-@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
-@Composable
-fun NeriTvTopBar(
-    items: List<Pair<Destinations, ImageVector>>,
-    currentDestination: NavDestination?,
-    hasCurrentSong: Boolean,
-    isPlaying: Boolean,
-    onItemSelected: (Destinations) -> Unit,
-    onOpenNowPlaying: () -> Unit,
-    /** 已经停在某个标签上再按一次确定键：按路由分发给各页（刷新 / 回到顶部） */
-    onTabConfirm: (String) -> Unit = {},
-    modifier: Modifier = Modifier
-) {
-    val context = LocalContext.current
-    val colors = MaterialTheme.colorScheme
-    val isTelevision = LocalIsTelevision.current
-    // 标签字号与页面里的分类标题（私人雷达、雷达猜歌那些）对齐
-    val labelStyle = MaterialTheme.typography.headlineSmall.copy(
-        fontWeight = FontWeight.SemiBold
-    )
-    // 二级页面没有自己的标签，按选中态反推它挂在哪个主标签下，
-    // 失焦兜底时用它当锚点
-    val selectedTabRoute = items
-        .firstOrNull { (dest, _) -> isNeriNavigationDestinationSelected(currentDestination, dest) }
-        ?.first?.route
-    SideEffect { TvTopBarFocus.onCurrentTabResolved(selectedTabRoute) }
-
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(TvTopBarHeight)
-            // 内容区按左/右键时不许跳到标签栏上来（只能按上键进标签栏）
-            .tvFocusGate()
-            .tvTrackFocusWithin(TvTopBarFocus::onBarFocusChanged)
-            .padding(start = pageSidePaddingOr(20.dp), end = pageSidePaddingOr(16.dp)),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        TvNowPlayingTab(
-            hasCurrentSong = hasCurrentSong,
-            isPlaying = isPlaying,
-            labelStyle = labelStyle,
-            onClick = {
-                context.performHapticFeedback()
-                onOpenNowPlaying()
-            },
-            modifier = Modifier
-                .then(
-                    if (isTelevision) {
-                        Modifier
-                            .focusRequester(TvTopBarFocus.requesterFor(TvTopBarFocus.NOW_PLAYING_ROUTE))
-                            .tvTabFocusTracker(TvTopBarFocus.NOW_PLAYING_ROUTE)
-                    } else {
-                        Modifier
-                    }
-                )
-        )
-
-        items.forEach { (dest, icon) ->
-            val selected = isNeriNavigationDestinationSelected(currentDestination, dest)
-            val label = stringResource(dest.labelResId)
-            val contentColor = if (selected) colors.onSurface else colors.onSurfaceVariant
-            // 焦点环按胶囊画：半径 = 节点短边一半（44dp 高 → 22dp 精确半圆）。
-            // 用默认指示器是 16dp 圆角矩形，两端看着「平」。
-            val tabRing = rememberTvFocusRingIndication(radius = TvTopBarItemRadius)
-                ?: LocalIndication.current
-            Row(
-                modifier = Modifier
-                    .height(TvTopBarItemHeight)
-                    .then(
-                        if (isTelevision) {
-                            Modifier
-                                .focusRequester(TvTopBarFocus.requesterFor(dest.route))
-                                .tvTabFocusTracker(dest.route)
-                        } else {
-                            Modifier
-                        }
-                    )
-                    .background(
-                        color = if (selected) colors.primary.copy(alpha = 0.22f) else Color.Transparent,
-                        shape = TvTopBarShape
-                    )
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = tabRing
-                    ) {
-                        context.performHapticFeedback()
-                        // 已经停在这个标签上时，再按一次确定键当成「刷新 + 回到顶部」
-                        // （电视上没有位置再放一个悬浮刷新按钮，挂在同名标签上是唯一不占地方的做法）
-                        if (selected) {
-                            onTabConfirm(dest.route)
-                        } else {
-                            onItemSelected(dest)
-                        }
-                    }
-                    .padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = label,
-                    tint = if (selected) colors.primary else contentColor,
-                    modifier = Modifier.size(22.dp)
-                )
-                Text(
-                    text = label,
-                    color = contentColor,
-                    style = labelStyle,
-                    maxLines = 1
-                )
-            }
-        }
-    }
-}
-
-/**
- * 「正在播放」格子不跟着页面走，所以不画选中底板（继续播放 / 播放界面两个状态本来也没有），
- * 只用频谱柱的颜色和文字颜色表示「有歌在播」。
- */
-@Composable
-private fun TvNowPlayingTab(
-    hasCurrentSong: Boolean,
-    isPlaying: Boolean,
-    labelStyle: androidx.compose.ui.text.TextStyle,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val colors = MaterialTheme.colorScheme
-    val active = hasCurrentSong && isPlaying
-    val label = when {
-        !hasCurrentSong -> "播放界面"
-        isPlaying -> "正在播放"
-        else -> "继续播放"
-    }
-    val tabRing = rememberTvFocusRingIndication(radius = TvTopBarItemRadius)
-        ?: LocalIndication.current
-    Row(
-        modifier = modifier
-            .height(TvTopBarItemHeight)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = tabRing,
-                onClick = onClick
-            )
-            .padding(horizontal = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        TvNowPlayingBars(
-            color = if (active) colors.primary else colors.onSurfaceVariant,
-            animate = active
-        )
-        Text(
-            text = label,
-            color = if (active) colors.onSurface else colors.onSurfaceVariant,
-            style = labelStyle,
-            maxLines = 1
-        )
-    }
-}
-
-/**
- * 三根频谱柱：播放时起伏，暂停时是一组静止的柱体。
- *
- * 静止状态下不能只是把动画值「冻住」——只要还读着无限动画的 state，整个标签栏
- * 就会每帧重组一次，电视那种弱 SoC 上白烧 CPU。所以暂停时直接换成一份静态的、
- * 完全不读动画的绘制。
- */
-@Composable
-private fun TvNowPlayingBars(color: Color, animate: Boolean) {
-    // 电视：顶栏是常驻的，频谱柱一直动就等于一直重绘，直接静态化
-    if (!animate || TvPerf.reduceMotion) {
-        TvNowPlayingBarsRow(color = color, heights = StaticBarHeights)
-        return
-    }
-    val transition = rememberInfiniteTransition(label = "tv_now_playing")
-    val wave1 = transition.animateFloat(
-        initialValue = 7f,
-        targetValue = 19f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 520, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "bar1"
-    )
-    val wave2 = transition.animateFloat(
-        initialValue = 11f,
-        targetValue = 24f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 680, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "bar2"
-    )
-    val wave3 = transition.animateFloat(
-        initialValue = 9f,
-        targetValue = 17f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 600, easing = FastOutSlowInEasing, delayMillis = 90),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "bar3"
-    )
-    TvNowPlayingBarsRow(color = color, heights = floatArrayOf(wave1.value, wave2.value, wave3.value))
-}
-
-private val StaticBarHeights = floatArrayOf(9f, 13f, 10f)
-
-@Composable
-private fun TvNowPlayingBarsRow(color: Color, heights: FloatArray) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.width(22.dp)
-    ) {
-        heights.forEachIndexed { index, barHeight ->
-            if (index > 0) Spacer(Modifier.width(3.dp))
-            Box(
-                Modifier
-                    .width(3.dp)
-                    .height(barHeight.dp)
-                    .background(color, RoundedCornerShape(1.dp))
-            )
-        }
-    }
 }

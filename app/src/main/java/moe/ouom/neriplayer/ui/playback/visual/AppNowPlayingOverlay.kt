@@ -49,6 +49,7 @@ import moe.ouom.neriplayer.ui.theme.NeriTheme
 import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 import moe.ouom.neriplayer.ui.tv.TvCleanFocusRingRadius
 import moe.ouom.neriplayer.ui.tv.TvNowPlayingFocus
+import moe.ouom.neriplayer.ui.tv.TvReturnFocus
 import moe.ouom.neriplayer.ui.util.hasKnownEmptyLocalCover
 import moe.ouom.neriplayer.util.platform.PHONE_SMALLEST_SCREEN_WIDTH_DP
 
@@ -126,7 +127,10 @@ internal fun shouldUseNowPlayingContainerMorph(
     smallestScreenWidthDp: Int
 ): Boolean = smallestScreenWidthDp < PHONE_SMALLEST_SCREEN_WIDTH_DP
 
-@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+/** 手机 fallback 分支用的动画时长（电视已改成直接切换，不再需要这一组常量） */
+private const val NowPlayingOverlayEnterFadeDurationMs = 150
+private const val NowPlayingOverlayExitFadeDurationMs = 150
+
 @Composable
 internal fun AppNowPlayingOverlay(
     visible: Boolean,
@@ -147,20 +151,25 @@ internal fun AppNowPlayingOverlay(
     // 电视上覆盖层一出来就得把光标抢进来，否则方向键还在下面那层看不见的界面上跑。
     // 请求器必须绑在浮层里真实存在的按钮上（播放/暂停），不能绑在浮层根节点上：
     // 根节点挂的是 canFocus=false，那种节点不接受焦点请求。
+    //
+    // 顺序不能拆成两个 effect：它们在同一帧依次执行，先抢焦点、后 clearFocus，
+    // 抢到的那一格会被 clearFocus(force = true) 清掉，playPause 又成功返回不再重试，
+    // 结果就是「进了播放页方向键完全没反应」。所以必须清完再抢。
     LaunchedEffect(visible, isTelevision) {
-        if (!visible || !isTelevision) return@LaunchedEffect
-        // 等两帧：覆盖层刚挂载时节点还没进入焦点树
-        withFrameNanos { }
-        withFrameNanos { }
-        runCatching { TvNowPlayingFocus.playPause.requestFocus() }
-        // 按钮可能比浮层外壳晚一帧挂上，补一次很便宜
-        withFrameNanos { }
-        runCatching { TvNowPlayingFocus.playPause.requestFocus() }
-    }
-    LaunchedEffect(visible) {
-        if (visible) {
-            dismissState.reset()
-            releaseNowPlayingInputSession(focusManager, textToolbar, keyboardController)
+        if (!visible) return@LaunchedEffect
+        dismissState.reset()
+        // 必须赶在 clearFocus 之前记下来源：一旦清掉焦点，
+        // 顶栏那格的 focusedTabRoute 也随之变 null，就再也找不到从哪进来的了。
+        if (isTelevision) TvReturnFocus.captureNowPlayingSource()
+        releaseNowPlayingInputSession(focusManager, textToolbar, keyboardController)
+        if (!isTelevision) return@LaunchedEffect
+        // 节点要过一次布局才 placement，第一帧常常请求不到：先试，失败才逐帧重试。
+        // 第一帧抢到也再补一次（attempt = 1）：封面/歌词那几块常在这一帧重新挂载，
+        // 跟着进来的焦点失效会把刚抢到的光标带走。
+        repeat(6) { attempt ->
+            val ok = TvNowPlayingFocus.request(TvNowPlayingFocus.playPause)
+            if (ok && attempt > 0) return@LaunchedEffect
+            withFrameNanos { }
         }
     }
     val useContainerMorph = shouldUseNowPlayingContainerMorph(
@@ -171,6 +180,10 @@ internal fun AppNowPlayingOverlay(
         DisposableEffect(Unit) {
             latestOnVisibilityChanged(true)
             onDispose {
+                // 任何没走 onClose / onNavigateUp 的收起路径（例如收完立刻导航）：
+                // 在这里交还焦点，赶在帧末焦点失效兜底之前 —— onDispose 在 applyChanges
+                // 派发阶段，早于 onEndApplyChanges 的焦点事务。
+                if (isTelevision) TvReturnFocus.restoreNowPlayingSourceNow()
                 latestOnVisibilityChanged(false)
             }
         }
@@ -207,7 +220,12 @@ internal fun AppNowPlayingOverlay(
                                     canFocus = false
                                     // 方向键想跑出浮层时原地取消，避免焦点回到下面看不见的界面。
                                     // 收起过程中放开，好让焦点交还给顶部标签栏。
-                                    onExit = { if (visible) cancelFocusChange() }
+                                    // 程序化交还焦点（关闭时送回来源行）也不能被拦掉。
+                                    onExit = {
+                                        if (visible && !TvReturnFocus.isRestoringSource) {
+                                            cancelFocusChange()
+                                        }
+                                    }
                                 }
                                 .focusTarget()
                         } else {
@@ -230,11 +248,12 @@ internal fun AppNowPlayingOverlay(
             }
         }
     }
-    // 电视：不要任何入场/退场动画。
-    // 之前这里走的是「容器变形」——从底部迷你播放器那个胶囊长成整页，四角圆角一路收缩，
-    // 电视上看着就是「整页先缩一下再弹开」。电视是 1.5 米外看的整屏切换，
-    // 直接出现/直接消失最干净，也最快。
+    // 电视：不进「容器变形」（那是从底部迷你播放器的胶囊长成整页，电视上没有迷你播放器，
+    // 起点对不上），也不做滑入/淡入 —— 整屏页面切换，直接出现、直接消失最干脆。
     if (isTelevision) {
+        // visible 判断不能省：overlayBody 里的 DisposableEffect 卸载时才回调
+        // onVisibilityChanged(false)，那是 NeriApp 里 nowPlayingOverlayMounted 的唯一来源。
+        // 少了它这一层永远"挂载中"，电视的返回键会被 BackHandler 一直挡住。
         if (visible) overlayBody()
         return
     }

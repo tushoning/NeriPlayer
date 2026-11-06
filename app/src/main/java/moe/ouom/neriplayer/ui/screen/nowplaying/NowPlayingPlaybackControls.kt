@@ -423,7 +423,9 @@ internal fun NowPlayingProgressSection(
     tabletLandscape: Boolean = false,
     progressRowModifier: Modifier = Modifier,
     /** 只加在进度条（可聚焦的那个滑块）上的修饰符，电视用来改上下方向键的去向 */
-    seekModifier: Modifier = Modifier
+    seekModifier: Modifier = Modifier,
+    /** 电视：焦点在小圆点上按「确定」时执行（播放页传播放/暂停） */
+    seekConfirmAction: (() -> Unit)? = null
 ) {
     val owner = remember(songKey) {
         NowPlayingProgressOwner(PlayerManager.playbackPositionFlow.value)
@@ -460,6 +462,7 @@ internal fun NowPlayingProgressSection(
             activeContentColor = activeContentColor,
             lyricSeekHaptic = lyricSeekHaptic,
             seekModifier = seekModifier,
+            seekConfirmAction = seekConfirmAction,
             modifier = Modifier.fillMaxWidth().then(progressRowModifier)
         )
         if (progressInfoPresentation.reserveRowHeight || progressInfoPresentation.segments.isNotEmpty()) {
@@ -493,7 +496,8 @@ private fun NowPlayingProgressRow(
     activeContentColor: Color,
     lyricSeekHaptic: LyricSeekHapticFeedback,
     modifier: Modifier,
-    seekModifier: Modifier = Modifier
+    seekModifier: Modifier = Modifier,
+    seekConfirmAction: (() -> Unit)? = null
 ) {
     Row(
         modifier = modifier,
@@ -518,7 +522,8 @@ private fun NowPlayingProgressRow(
             seekEnabled = seekEnabled,
             activeContentColor = activeContentColor,
             lyricSeekHaptic = lyricSeekHaptic,
-            modifier = Modifier.weight(1f).then(seekModifier)
+            modifier = Modifier.weight(1f).then(seekModifier),
+            onConfirm = seekConfirmAction
         )
         Text(
             text = formatDuration(durationMs),
@@ -565,7 +570,8 @@ private fun NowPlayingSeekSlider(
     seekEnabled: Boolean,
     activeContentColor: Color,
     lyricSeekHaptic: LyricSeekHapticFeedback,
-    modifier: Modifier
+    modifier: Modifier,
+    onConfirm: (() -> Unit)? = null
 ) {
     val actions = rememberNowPlayingSeekActions(owner, lyricSeekHaptic)
     actions.updatePlayback(durationMs, currentPosition)
@@ -584,6 +590,7 @@ private fun NowPlayingSeekSlider(
         activeTint = activeContentColor,
         durationMs = durationMs,
         playbackSpeed = playbackSpeed,
-        playbackSessionKey = songKey
+        playbackSessionKey = songKey,
+        onConfirm = onConfirm
     )
 }

@@ -24,6 +24,7 @@ package moe.ouom.neriplayer.ui.screen.playlist
  */
 
 import moe.ouom.neriplayer.ui.tv.TvPerf
+import moe.ouom.neriplayer.ui.tv.rememberProgressiveListReveal
 import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.LocalIndication
@@ -36,6 +37,8 @@ import android.content.Context
 import android.content.res.Resources
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.RepeatMode
@@ -254,6 +257,11 @@ fun NeteasePlaylistDetailScreen(
         }
     }
 
+    // 电视：探索页点进网易云歌单时这一页不会自动拿到焦点。焦点被移除后系统会兜给
+    // 左侧导航栏第一个可聚焦项，再被焦点补偿钉在「探索」标签上（要按一次右键才回得来）。
+    // 包一层带 requester 的容器，请求会往下落到第一个可聚焦项（顶栏返回键）。
+    val tvInitialFocus = rememberTvInitialFocus()
+    Box(modifier = Modifier.fillMaxSize().tvInitialFocus(tvInitialFocus)) {
     DetailScreen(
         ui = ui,
         playlistId = playlist.id,
@@ -268,6 +276,7 @@ fun NeteasePlaylistDetailScreen(
         onSongClick = onSongClick,
         offlineMode = offlineMode
     )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -585,10 +594,22 @@ fun DetailScreen(
     }
 
     val detailVisibilityState = rememberMainTabDetailVisibilityState(playlistId)
+    // 电视：不要上滑动画，直接出现（和宿主层的 EnterTransition.None 保持一致）；
+    // 手机保留原来的过渡。
     AnimatedVisibility(
         visibleState = detailVisibilityState,
-        enter = fadeIn() + slideInVertically { it / 6 },
-        exit = fadeOut() + slideOutVertically { it / 6 }
+        enter = if (LocalIsTelevision.current) {
+            EnterTransition.None
+        } else {
+            fadeIn(tween(150)) +
+                slideInVertically(tween(240, easing = FastOutSlowInEasing)) { it / 6 }
+        },
+        exit = if (LocalIsTelevision.current) {
+            ExitTransition.None
+        } else {
+            fadeOut(tween(200)) +
+                slideOutVertically(tween(200, easing = FastOutSlowInEasing)) { it / 6 }
+        }
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             Surface(
@@ -769,6 +790,8 @@ fun DetailScreen(
                         items = ui.tracks,
                         tokens = { song -> song.playlistSearchValues(searchContext) }
                     )
+                    // 分帧 + 分批：首帧只组合页头，之后分两批填歌曲行，把进页面的峰值摊成三份
+                    val revealCount = rememberProgressiveListReveal()
                     val trackCount = ui.header?.trackCount ?: ui.tracks.size
                     val heroTitle = ui.header?.name ?: stringResource(CoreCommonR.string.playlist_title)
                     val heroSubtitle = if (ui.header?.isAlbum == true) {
@@ -931,7 +954,11 @@ fun DetailScreen(
 
                                 else -> {
                                     itemsIndexed(
-                                        displayedTracks,
+                                        if (revealCount.value >= displayedTracks.size) {
+                                            displayedTracks
+                                        } else {
+                                            displayedTracks.take(revealCount.value)
+                                        },
                                         key = { _, it -> it.stableKey() }) { index, item ->
                                         PlaylistModernListItemSurface(
                                             coverUrl = displayCoverUrl,
