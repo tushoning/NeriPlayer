@@ -24,6 +24,7 @@ package moe.ouom.neriplayer.ui
  */
 
 import moe.ouom.neriplayer.data.identity.stableKey
+import android.app.Activity
 import android.app.Application
 import android.net.Uri
 import android.os.Build
