@@ -2,17 +2,19 @@ name: 同步上游并发布 TV 版
 
 # 干什么：
 #   定时（每小时）去上游 cwuom/NeriPlayer 看**有没有发布新 Release**。
-#   有新 Release → 把我方补丁叠到上游 master 上 → 编译电视包（aerial 签名）
-#                → 发 Release → 把结果推回 main → 打 seen/<上游 Release 名> 标记。
-#   没有新 Release → 定时触发时直接退出，不编译（上游 master 天天有提交也不管）。
+#   有新 Release → 在临时工作区里拉上游最新代码 → 叠上我方补丁 → 编译
+#                → 发 Release（APK + 源码包）→ 打 seen/<上游 Release 名> 标记。
+#   没有新 Release → 几秒退出，不编译（上游 master 天天有提交也不管）。
 #
 #   手动触发（Run workflow）**总是出包**：不管有没有新 Release，都编一遍并发 Release。
 #
-#   为什么按 Release 而不是按提交：上游大约 3~5 天发一版，master 则天天动。
-#   跟着 Release 走，出包节奏和上游一致，也不会把上游半成品带进来。
+# ★ 这个工作流**从不推送任何 commit**，只推 tag（tag 指向 main 上已有的提交）。
+#   所以它不需要 workflows 权限，也能永远保持原样不被自己改写：
+#   上游代码只在临时工作区出现，不进本仓库历史，main 分支保持不动。
+#   补丁基线要往前走时，在本地跑一次 fork-tools/sync-upstream.sh（用你自己的凭据推）。
 #
-# 合规：Release 的 tag 打在「实际编译的那个 commit」上，GitHub 自动给 tag 附源码包，
-#       满足 GPLv3 §6「分发二进制必须能拿到对应源码」。
+# 合规：GPLv3 §6 —— 二进制和对应源码从同一个地方提供。
+#       所以 Release 里除了 APK，还附一份 source.tar.gz（含全部子模块，解压即可编译）。
 
 on:
   schedule:
@@ -22,7 +24,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write # 打 tag、发 Release、push 分支都要写权限
+  contents: write # 推 tag、建 Release
 
 concurrency:
   group: fork-sync
@@ -40,21 +42,12 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     timeout-minutes: 60 # 卡死时早失败，而不是拖到 GitHub 默认的 6 小时
-    # 显式声明 token 权限，不依赖仓库的默认设置（否则推分支/建 Release 会 403）
     permissions:
-      contents: write # 推 main、打 tag、建 Release
+      contents: write # 打 tag、建 Release
     steps:
       - name: 拉取本仓库
         uses: actions/checkout@v4
         with:
-          # 必须用 PAT（secret SYNC_TOKEN），不能用默认 GITHUB_TOKEN。
-          # GITHUB_TOKEN 在设计上就拿不到 workflows 权限，推到 .github/workflows/ 的提交会被拒：
-          #   ! [remote rejected] (refusing to allow a GitHub App to create or update workflow
-          #    `.github/workflows/xxx.yml` without `workflows` permission)
-          # 而我们的补丁必然会改 .github/workflows/fork-sync.yml，所以每次 rebase 都推不上去。
-          # 注意：token 必须给 checkout，不能只给后面的 push —— checkout 会把凭据写进 git config，
-          # 后续所有 git 命令都用它，单独给 push 设 token 是无效的。
-          token: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
           fetch-depth: 0 # 需要完整历史：git am -3 要用到补丁的原始 blob
           submodules: recursive
 
@@ -70,8 +63,13 @@ jobs:
         run: |
           set -euo pipefail
 
+          # 记下 main 当前的 commit：tag 只打在这个已有的提交上，
+          # 推送时只有一个 tag 对象，不涉及任何提交内容。
+          MAIN_SHA=$(git rev-parse HEAD)
+          echo "main_sha=$MAIN_SHA" >> "$GITHUB_OUTPUT"
+
           # ---------- 1. 上游最新的正式 Release（忽略草稿和预发布）----------
-          # 「已处理过」靠 tag 记：seen/<上游 Release 名>，构建全流程跑完后才打。
+          # 「已处理过」靠 tag 记：seen/<上游 Release 名>，整套流程跑完才打。
           REL_TAG=$(curl -fsSL \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
@@ -88,24 +86,12 @@ jobs:
             SEEN=true
           fi
 
-          # ---------- 2. 上游 master 有没有我们基线之后的新提交 ----------
+          # ---------- 2. 上游 master 最新的提交（编译用的就是它 + 补丁）----------
           git remote add upstream "$UPSTREAM_REPO" 2>/dev/null || git remote set-url upstream "$UPSTREAM_REPO"
           git fetch --quiet upstream master || { echo "::error::拉取上游 master 失败"; exit 1; }
           NEW=$(git rev-parse upstream/master)
-          BASE=$(sed -n 's/^base_full_sha=//p' patches/BASE)
-          if [ -z "$BASE" ]; then
-            echo "::error::patches/BASE 里读不到 base_full_sha"
-            exit 1
-          fi
-          if git merge-base --is-ancestor "$NEW" "$BASE"; then
-            CHANGED=false
-          else
-            CHANGED=true
-          fi
-
           echo "new=$NEW" >> "$GITHUB_OUTPUT"
-          echo "base=$BASE" >> "$GITHUB_OUTPUT"
-          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
+          echo "上游 master：$(git rev-parse --short "$NEW")"
 
           # ---------- 3. 结论 ----------
           if [ -z "$REL_TAG" ]; then
@@ -119,9 +105,6 @@ jobs:
             REL_NEW=true
           fi
           echo "release_new=$REL_NEW" >> "$GITHUB_OUTPUT"
-          [ "$CHANGED" = "true" ] \
-            && echo "上游 master 也有新提交：$(git rev-parse --short "$BASE") → $(git rev-parse --short "$NEW")" \
-            || echo "上游 master 相对基线没有新提交。"
 
           if [ "$REL_NEW" = "true" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "build=true" >> "$GITHUB_OUTPUT"
@@ -131,45 +114,42 @@ jobs:
             echo "→ 没有新 Release，跳过（不编译）。"
           fi
 
-      - name: 准备要编译的代码
+      - name: 切到上游代码并叠上补丁
         id: apply
         if: steps.up.outputs.build == 'true'
         run: |
           set -uo pipefail
-          if [ "${{ steps.up.outputs.changed }}" = "false" ]; then
-            # 上游没变，当前分支就是最新代码，直接编
-            echo "ok=true" >> "$GITHUB_OUTPUT"
-            echo "rebased=false" >> "$GITHUB_OUTPUT"
-            echo "不需要叠补丁：当前分支已包含全部改动。"
-            exit 0
-          fi
-          echo "rebased=true" >> "$GITHUB_OUTPUT"
-          # patches/ 是我方分支上的文件，切到上游分支后会被删掉，先挪到临时目录
+
+          # patches/ 是本仓库的文件，切到上游提交后会被删掉，先挪到临时目录
+          rm -rf /tmp/patches
           cp -r patches /tmp/patches
-          git switch -c "sync/${GITHUB_RUN_ID}" upstream/master
+
+          # 切到上游最新提交（游离 HEAD，不会产生分支，也不会推任何东西）
+          git checkout --detach "${{ steps.up.outputs.new }}"
+          git submodule update --init --recursive
+
           if git am -3 --keep-cr /tmp/patches/series/*.patch; then
             echo "ok=true" >> "$GITHUB_OUTPUT"
-            git submodule update --init --recursive
+            echo "补丁已叠上：$(git log --oneline -1)"
           else
             echo "ok=false" >> "$GITHUB_OUTPUT"
             {
-              echo "上游 \`${{ steps.up.outputs.new }}\` 动到了我方补丁改过的代码，自动合并失败。"
+              echo "### ❌ 补丁叠不到上游 \`${{ steps.up.outputs.new }}\` 上"
               echo ""
-              echo "**冲突文件：**"
+              echo "上游动到了我们改过的代码。冲突文件："
+              echo ""
               git diff --name-only --diff-filter=U | sed 's/^/- `/;s/$/`/'
               echo ""
-              echo "**在本地怎么修：**"
+              echo "**在本地怎么修**（补丁基线往前走一次就行）："
               echo '```bash'
-              echo 'git fetch upstream master'
               echo 'bash fork-tools/sync-upstream.sh'
-              echo 'bash fork-tools/make-patches.sh   # 修好后重新生成补丁'
+              echo 'bash fork-tools/make-patches.sh'
+              echo 'git push origin main'
               echo '```'
               echo ""
               echo "处理原则：import 冲突取并集；上游只是改名就取我方再批量改名；"
               echo "上游真重构了就取上游，再把 TV 逻辑补回去。"
-            } > conflict-report.md
-            # 贴到本次运行的摘要页（Run 页面最上方），失败原因一眼可见
-            cat conflict-report.md >> "$GITHUB_STEP_SUMMARY"
+            } >> "$GITHUB_STEP_SUMMARY"
             git am --abort || true
             exit 1
           fi
@@ -180,18 +160,10 @@ jobs:
           set -euo pipefail
           # np-submodule/accompanist-lyrics-ui 里的 KaraokeLyricsView.kt 被我方改过
           # （加 linesInteractive 参数、亚像素滚动容差）。submodule 是别人的仓库，
-          # 我们的改动推不上去，本地一直是「工作区裸文件」状态，CI 按 .gitmodules
-          # 拉到的上游原版没有这些改动，app 模块调用 linesInteractive 就编译失败。
-          # 这里用主仓库随带的整份文件覆盖回去。
+          # 我们的改动推不上去，CI 按 .gitmodules 拉到的是上游原版，没有这些改动，
+          # app 模块调用 linesInteractive 就会编译失败。这里用备份里的整份文件覆盖回去。
           DEST=np-submodule/accompanist-lyrics-ui
-          # 走 rebase 时工作区已经切到 upstream/master，本仓库的 patches/ 被删掉了，
-          # apply 步骤开头曾把整份 patches 备份到 /tmp/patches。先把它搬回来（后面的
-          # 「刷新补丁快照」要保留其中的 README.md 和 submodule/ 目录）。
-          if [ ! -d patches ] && [ -d /tmp/patches ]; then
-            cp -r /tmp/patches patches
-            echo "已从 /tmp/patches 恢复 patches/ 目录"
-          fi
-          SRC=patches/submodule/accompanist-lyrics-ui
+          SRC=/tmp/patches/submodule/accompanist-lyrics-ui
           test -d "$DEST" || { echo "::error::找不到子模块 $DEST，检查 checkout 的 submodules: recursive"; exit 1; }
           test -d "$SRC"  || { echo "::error::找不到 $SRC"; exit 1; }
           cp -r "$SRC"/. "$DEST"/
@@ -199,16 +171,6 @@ jobs:
           grep -q "linesInteractive" "$TARGET" \
             || { echo "::error::覆盖后 $TARGET 里仍然没有 linesInteractive"; exit 1; }
           echo "子模块已覆盖：$(basename "$TARGET")"
-
-      - name: 刷新补丁快照（基线指向新上游）
-        if: steps.apply.outputs.ok == 'true' && steps.apply.outputs.rebased == 'true'
-        run: |
-          set -euo pipefail
-          bash fork-tools/make-patches.sh
-          git add -A patches/
-          if ! git diff --cached --quiet; then
-            git commit -qm "chore: 同步上游 $(git rev-parse --short '${{ steps.up.outputs.new }}')，刷新补丁快照"
-          fi
 
       - name: 安装 JDK 21
         if: steps.apply.outputs.ok == 'true'
@@ -261,7 +223,7 @@ jobs:
         if: always()
         run: rm -f app/aerial.keystore
 
-      - name: 整理产物并写发版说明
+      - name: 整理产物、打包源码、写发版说明
         id: meta
         if: steps.apply.outputs.ok == 'true'
         env:
@@ -274,15 +236,30 @@ jobs:
           cp "$APK" "$APK_OUT"
           VERSION=$(basename "$APK" | sed 's/^NeriPlayer-//; s/-armeabi-v7a.*//; s/\.apk$//')
           # tag 带月日时分，手动重复触发也不会撞车（同一个 tag 只能对应一次构建）
-          TAG="tv-$(date -u +%Y%m%d-%H%M)-$(git rev-parse --short=7 "$UPSTREAM_SHA")"
+          TAG="tv-$(date -u +%Y%m%d-%H%M)"
+          SRC_OUT="NeriPlayer-TV-${TAG}-source.tar.gz"
           REL_NOTE=""
           if [ -n "${UPSTREAM_RELEASE:-}" ]; then
             REL_NOTE="，由上游 Release \`${UPSTREAM_RELEASE}\` 触发"
           fi
+
+          # ---- 打包源码：当前工作区就是「上游 $UPSTREAM_SHA + 全部补丁」，
+          #      子模块内容也在里面，解压即可编译（GPLv3 §6 要求的对应源码） ----
+          tar -czf "$SRC_OUT" \
+            --exclude='./.git' \
+            --exclude='./.gradle' \
+            --exclude='./build' \
+            --exclude='*/build' \
+            --exclude='*/*/build' \
+            --exclude='*/*/*/build' \
+            --exclude='*/.git' \
+            .
+          echo "源码包：$SRC_OUT ($(du -h "$SRC_OUT" | cut -f1))"
+
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
-          echo "upstream_short=$(git rev-parse --short=7 "$UPSTREAM_SHA")" >> "$GITHUB_OUTPUT"
+          echo "src_out=$SRC_OUT" >> "$GITHUB_OUTPUT"
+
           cat > release-notes.md <<EOF
           ## 这是什么
 
@@ -306,23 +283,18 @@ jobs:
           - 歌词页、正在播放页的电视布局
           - 数据库启动时的 WAL 热日志恢复
 
-          ## 源码
+          ## 源码（重要）
 
-          与本次 APK 完全对应的源码：**本仓库 tag \`${TAG}\`**，对应提交
-          \`$(git rev-parse HEAD)\`（GitHub 已自动为该 tag 提供 Source code 压缩包）。
-
-          GitHub 的源码包**不包含子模块**。构建还需要下列子模块（仓库内 \`.gitmodules\` 有地址）：
-
-          \`\`\`
-          $(git submodule status --recursive | sed 's/^[ +-]*//' | awk '{printf "%s @ %s\n", $2, $1}')
-          \`\`\`
+          **本 Release 附带的 \`${SRC_OUT}\` 就是编出这个 APK 的完整源码**，
+          已包含全部子模块，解压后执行 \`./gradlew :app:assembleTvrelease\` 即可复现。
+          它对应上游 \`${UPSTREAM_SHA}\` 加上 \`patches/\` 里的电视适配改动。
 
           上游项目：https://github.com/cwuom/NeriPlayer
 
           ## 许可
 
           本程序为自由软件，按 **GNU General Public License v3.0 或更高版本**发布，
-          不提供任何担保。许可证全文见仓库根目录 LICENSE，修改声明见 NOTICE。
+          不提供任何担保。许可证全文见源码包内 LICENSE，修改声明见 NOTICE。
           本构建不是上游官方发布，也不代表上游作者的观点。
           EOF
 
@@ -342,23 +314,13 @@ jobs:
           fi
           echo "APK 签名校验通过：$GOT"
 
-      # 先推 main 再打 tag：这样 tag 指向的 commit 一定已经在远端，
-      # 推送时只需传一个 tag 对象，不会因为「要连带推整条提交链」被拒。
-      - name: 把同步结果推回 main
-        if: steps.apply.outputs.ok == 'true' && steps.apply.outputs.rebased == 'true'
-        run: |
-          set -uo pipefail
-          OUT=$(git push --force-with-lease origin "HEAD:main" 2>&1) || {
-            { echo "### ❌ 推送 main 失败"; echo; echo '```'; echo "$OUT" | tail -30; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-            echo "::error::推送 main 失败"; exit 1; }
-          echo "$OUT"
-
       - name: 打 tag 并发布 Release
         if: steps.apply.outputs.ok == 'true'
         env:
-          GH_TOKEN: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.meta.outputs.tag }}
-          UP_SHA: ${{ steps.up.outputs.new }}
+          SRC_OUT: ${{ steps.meta.outputs.src_out }}
+          MAIN_SHA: ${{ steps.up.outputs.main_sha }}
         run: |
           set -uo pipefail
 
@@ -371,36 +333,34 @@ jobs:
           }
 
           [ -n "${TAG:-}" ] || fail "meta 步骤没有产出 tag" "TAG 为空"
-          echo "目标 tag：$TAG"
-          echo "HEAD：$(git rev-parse HEAD)"
-          echo "远端是否已有该 commit：$(git ls-remote origin "refs/heads/main" | grep -c "$(git rev-parse HEAD)" || true)"
 
-          # 极端情况下（同一分钟重复触发）兜底加运行号，保证 tag 唯一
+          # tag 打在 main 已有的提交上：这样 push 只传一个 tag 对象，
+          # 不带任何提交内容，不会触发 workflows 权限检查。
           EXIST=$(git ls-remote --tags origin "refs/tags/$TAG" 2>&1) || fail "查询远端 tag 失败" "$EXIST"
           if [ -n "$EXIST" ]; then
             TAG="${TAG}-r${GITHUB_RUN_NUMBER}"
             echo "同名 tag 已存在，改用 $TAG"
           fi
 
-          OUT=$(git tag -a "$TAG" -m "基于上游 $UP_SHA 的电视适配构建" 2>&1) \
+          OUT=$(git tag -a "$TAG" "$MAIN_SHA" -m "基于上游 ${{ steps.up.outputs.new }} 的电视适配构建" 2>&1) \
             || fail "创建 tag 失败" "$OUT"
-
           OUT=$(git push origin "$TAG" 2>&1) || fail "推送 tag 失败" "$OUT"
-          echo "tag 已推送：$TAG"
+          echo "tag 已推送：$TAG → $MAIN_SHA"
 
-          # --repo 必须显式指定：仓库里多了一个 upstream remote（指向上游 cwuom/NeriPlayer），
-          # gh 推断默认仓库时会挑错，报「tag exists locally but has not been pushed to cwuom/...」
-          OUT=$(gh release create "$TAG" "$APK_OUT" \
+          # APK 和源码包一起发，GPLv3 §6 的「同一处提供对应源码」就满足了
+          OUT=$(gh release create "$TAG" "$APK_OUT" "$SRC_OUT" \
             --repo "${{ github.repository }}" \
             --title "TV 版 $TAG" \
             --notes-file release-notes.md 2>&1) \
             || fail "创建 Release 失败（tag $TAG 已在远端，可手动补建）" "$OUT"
           echo "Release 已发布：$TAG"
 
-      # 放在最后：只有编译、验签、推 main、发版全部成功才打标记，
+      # 放在最后：只有编译、验签、发版全部成功才打标记，
       # 中途失败的话下个小时还能重试，不会被误判成「已处理」。
       - name: 记录已处理的上游 Release
         if: steps.apply.outputs.ok == 'true' && steps.up.outputs.release_tag != ''
+        env:
+          MAIN_SHA: ${{ steps.up.outputs.main_sha }}
         run: |
           set -uo pipefail
           TAG="seen/${{ steps.up.outputs.release_tag }}"
@@ -408,8 +368,8 @@ jobs:
             echo "标记 $TAG 已存在，无需重复打。"
             exit 0
           fi
-          git tag "$TAG" HEAD
+          git tag "$TAG" "$MAIN_SHA"
           OUT=$(git push origin "$TAG" 2>&1) || {
             echo "::error::推送标记 tag 失败"; echo "$OUT" | tail -20; exit 1; }
-          echo "已标记：$TAG → $(git rev-parse --short=7 HEAD)"
+          echo "已标记：$TAG → $(git rev-parse --short=7 "$MAIN_SHA")"
           echo "下次定时任务看到这个标记就跳过，直到上游再发新 Release。"
