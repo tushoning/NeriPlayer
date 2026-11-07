@@ -55,6 +55,19 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+      - name: 确保是完整仓库（不是浅克隆）
+        run: |
+          set -uo pipefail
+          SHALLOW=$(git rev-parse --is-shallow-repository)
+          echo "shallow=$SHALLOW"
+          # 浅克隆的仓库 push 新 commit 会被 GitHub 拒绝（shallow update not allowed），
+          # 这正是「tag 指向远端没有的 commit 时推不上去」的原因。
+          if [ "$SHALLOW" = "true" ]; then
+            echo "仓库是浅克隆，取消浅克隆……"
+            git fetch --unshallow origin || true
+            echo "处理后 shallow=$(git rev-parse --is-shallow-repository)"
+          fi
+
       - name: 检查上游有没有新 Release
         id: up
         env:
@@ -334,42 +347,74 @@ jobs:
           fi
           echo "APK 签名校验通过：$GOT"
 
+      # 先推 main 再打 tag：这样 tag 指向的 commit 一定已经在远端，
+      # 推送时只需传一个 tag 对象，不会因为「要连带推整条提交链」被拒。
+      - name: 把同步结果推回 main
+        if: steps.apply.outputs.ok == 'true' && steps.apply.outputs.rebased == 'true'
+        run: |
+          set -uo pipefail
+          OUT=$(git push --force-with-lease origin "HEAD:main" 2>&1) || {
+            { echo "### ❌ 推送 main 失败"; echo; echo '```'; echo "$OUT" | tail -30; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::推送 main 失败"; exit 1; }
+          echo "$OUT"
+
       - name: 打 tag 并发布 Release
         if: steps.apply.outputs.ok == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.meta.outputs.tag }}
+          UP_SHA: ${{ steps.up.outputs.new }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
+
+          # 任何一步失败都把真实报错贴到 Run 页面最上方，
+          # 免得又只剩一句 "Process completed with exit code 1"。
+          fail() {
+            { echo "### ❌ $1"; echo; echo '```'; echo "${2:-（无输出）}" | tail -30; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::$1"
+            exit 1
+          }
+
+          [ -n "${TAG:-}" ] || fail "meta 步骤没有产出 tag" "TAG 为空"
+          echo "目标 tag：$TAG"
+          echo "HEAD：$(git rev-parse HEAD)"
+          echo "远端是否已有该 commit：$(git ls-remote origin "refs/heads/main" | grep -c "$(git rev-parse HEAD)" || true)"
+
           # 极端情况下（同一分钟重复触发）兜底加运行号，保证 tag 唯一
-          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "refs/tags/$TAG$"; then
+          EXIST=$(git ls-remote --tags origin "refs/tags/$TAG" 2>&1) || fail "查询远端 tag 失败" "$EXIST"
+          if [ -n "$EXIST" ]; then
             TAG="${TAG}-r${GITHUB_RUN_NUMBER}"
+            echo "同名 tag 已存在，改用 $TAG"
           fi
-          git tag -a "$TAG" -m "基于上游 ${{ steps.up.outputs.new }} 的电视适配构建"
-          git push origin "$TAG"
+
+          OUT=$(git tag -a "$TAG" -m "基于上游 $UP_SHA 的电视适配构建" 2>&1) \
+            || fail "创建 tag 失败" "$OUT"
+
+          OUT=$(git push origin "$TAG" 2>&1) || fail "推送 tag 失败" "$OUT"
+          echo "tag 已推送：$TAG"
+
           # --repo 必须显式指定：仓库里多了一个 upstream remote（指向上游 cwuom/NeriPlayer），
           # gh 推断默认仓库时会挑错，报「tag exists locally but has not been pushed to cwuom/...」
-          gh release create "$TAG" "$APK_OUT" \
+          OUT=$(gh release create "$TAG" "$APK_OUT" \
             --repo "${{ github.repository }}" \
             --title "TV 版 $TAG" \
-            --notes-file release-notes.md
+            --notes-file release-notes.md 2>&1) \
+            || fail "创建 Release 失败（tag $TAG 已在远端，可手动补建）" "$OUT"
+          echo "Release 已发布：$TAG"
 
-      - name: 把同步结果推回 main
-        if: steps.apply.outputs.ok == 'true' && steps.apply.outputs.rebased == 'true'
-        run: git push --force-with-lease origin "HEAD:main"
-
-      # 放在最后：只有编译、验签、发版、推 main 全部成功才打标记，
+      # 放在最后：只有编译、验签、推 main、发版全部成功才打标记，
       # 中途失败的话下个小时还能重试，不会被误判成「已处理」。
       - name: 记录已处理的上游 Release
         if: steps.apply.outputs.ok == 'true' && steps.up.outputs.release_tag != ''
         run: |
-          set -euo pipefail
+          set -uo pipefail
           TAG="seen/${{ steps.up.outputs.release_tag }}"
           if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
             echo "标记 $TAG 已存在，无需重复打。"
             exit 0
           fi
           git tag "$TAG" HEAD
-          git push origin "$TAG"
+          OUT=$(git push origin "$TAG" 2>&1) || {
+            echo "::error::推送标记 tag 失败"; echo "$OUT" | tail -20; exit 1; }
           echo "已标记：$TAG → $(git rev-parse --short=7 HEAD)"
           echo "下次定时任务看到这个标记就跳过，直到上游再发新 Release。"
