@@ -1,6 +1,6 @@
 # NeriPlayer TV fork — 相对上游的完整改动（单个合并补丁）
 # 基线 upstream commit : 1ce32a4b  (fix(settings): 修复设置默认启动页后启动应用时需要从首页跳转到启动页 (#641))
-# 我方 tip             : 3088e79b  (fix(ci): 源码包先写到 /tmp 再挪回，避免 tar 读到正在增长的自己)
+# 我方 tip             : 69ad6351  (fix(tv): 更多面板返回一级菜单保住位置；百科到底按下不再跳到返回键)
 # 生成命令             : bash fork-tools/make-patches.sh 1ce32a4b
 # 应用                 : git apply -3 patches/tv-fork.diff
 
@@ -10570,10 +10570,10 @@ index 7b6a1c3f..54f8ea6c 100644
 +    }
 +}
 diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/NowPlayingSecondaryActions.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/NowPlayingSecondaryActions.kt
-index 8cc9b2ef..008a005b 100644
+index 8cc9b2ef..cfd9f723 100644
 --- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/NowPlayingSecondaryActions.kt
 +++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/NowPlayingSecondaryActions.kt
-@@ -14,17 +14,25 @@ import androidx.compose.animation.fadeOut
+@@ -14,17 +14,26 @@ import androidx.compose.animation.fadeOut
  import androidx.compose.animation.scaleIn
  import androidx.compose.animation.togetherWith
  import androidx.compose.animation.core.tween
@@ -10596,10 +10596,11 @@ index 8cc9b2ef..008a005b 100644
 +import androidx.compose.foundation.layout.widthIn
  import androidx.compose.foundation.layout.windowInsetsPadding
 +import androidx.compose.foundation.layout.wrapContentHeight
++import androidx.compose.foundation.ScrollState
  import androidx.compose.foundation.rememberScrollState
  import androidx.compose.foundation.verticalScroll
  import androidx.compose.material.icons.Icons
-@@ -37,6 +45,7 @@ import androidx.compose.material3.MaterialTheme
+@@ -37,26 +46,34 @@ import androidx.compose.material3.MaterialTheme
  import androidx.compose.material3.ModalBottomSheetProperties
  import androidx.compose.material3.SheetState
  import androidx.compose.material3.SnackbarHostState
@@ -10607,7 +10608,8 @@ index 8cc9b2ef..008a005b 100644
  import androidx.compose.material3.Text
  import androidx.compose.material3.rememberModalBottomSheetState
  import androidx.compose.runtime.Composable
-@@ -44,19 +53,24 @@ import androidx.compose.runtime.DisposableEffect
++import androidx.compose.runtime.CompositionLocalProvider
+ import androidx.compose.runtime.DisposableEffect
  import androidx.compose.runtime.LaunchedEffect
  import androidx.compose.runtime.NonRestartableComposable
  import androidx.compose.runtime.SideEffect
@@ -10618,6 +10620,7 @@ index 8cc9b2ef..008a005b 100644
  import androidx.compose.runtime.rememberCoroutineScope
  import androidx.compose.runtime.rememberUpdatedState
  import androidx.compose.runtime.setValue
++import androidx.compose.runtime.staticCompositionLocalOf
 +import androidx.compose.ui.Alignment
  import androidx.compose.ui.Modifier
  import androidx.compose.ui.graphics.Color
@@ -10632,7 +10635,7 @@ index 8cc9b2ef..008a005b 100644
  import androidx.compose.ui.unit.IntSize
  import androidx.lifecycle.compose.collectAsStateWithLifecycle
  import kotlinx.coroutines.CoroutineScope
-@@ -102,6 +116,12 @@ import moe.ouom.neriplayer.ui.viewmodel.NowPlayingViewModel
+@@ -102,6 +119,12 @@ import moe.ouom.neriplayer.ui.viewmodel.NowPlayingViewModel
  import moe.ouom.neriplayer.ui.viewmodel.tab.AlbumSummary
  import moe.ouom.neriplayer.ui.viewmodel.tab.PlaylistSummary
  import moe.ouom.neriplayer.ui.screen.host.rememberHostPredictiveBackTransition
@@ -10645,7 +10648,53 @@ index 8cc9b2ef..008a005b 100644
  
  private val NowPlayingFeedbackExtraBottomPadding = 24.dp
  private val EditSongInfoFeedbackControlClearance = 72.dp
-@@ -558,11 +578,16 @@ private fun rememberMoreOptionsSheetSession(
+@@ -386,6 +409,45 @@ internal class MoreOptionsSheetOwner(
+     var sheetImeVisible by mutableStateOf(false)
+         private set
+ 
++    /**
++     * 一级（MAIN）菜单的滚动位置。
++     *
++     * 必须放在 owner 里，不能留在 [MoreOptionsMainContent] 内部：切到二级页时
++     * `MoreOptionsMainPage` 会直接 return，一级内容整棵离开组合，内部 `remember` 的
++     * ScrollState 随之销毁，返回时重建归零 —— 表现就是「二级页返回后一级菜单回到顶部」。
++     */
++    val mainScrollState = ScrollState(0)
++
++    /** 一级菜单各条目的焦点 requester，key 是固定的动作名 */
++    private val mainFocusRequesters = mutableMapOf<String, FocusRequester>()
++
++    /** 一级菜单最后一次聚焦的条目，返回主页时据此把光标放回去 */
++    private var lastMainFocusKey: String? = null
++
++    fun registerMainFocus(key: String, requester: FocusRequester) {
++        mainFocusRequesters[key] = requester
++    }
++
++    fun unregisterMainFocus(key: String) {
++        mainFocusRequesters.remove(key)
++        if (lastMainFocusKey == key) lastMainFocusKey = null
++    }
++
++    fun noteMainFocus(key: String) {
++        lastMainFocusKey = key
++    }
++
++    /**
++     * 返回一级菜单时优先回到离开前那一项。
++     *
++     * 不能只靠「请求第一个可聚焦项」：那会把光标和滚动一起拽回顶部，
++     * 就算 ScrollState 被保住了也白搭（requestFocus 会 bring-into-view）。
++     */
++    fun restoreMainFocus(): Boolean {
++        val requester = lastMainFocusKey?.let(mainFocusRequesters::get) ?: return false
++        return runCatching { requester.requestFocus() }.isSuccess
++    }
++
+     val sheetGesturesEnabled: Boolean
+         get() = page != MoreOptionsPage.LISTEN_TOGETHER && !isEditSongSaving && !isMetadataApplicationBusy
+ 
+@@ -558,11 +620,16 @@ private fun rememberMoreOptionsSheetSession(
      val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
      val coroutineScope = rememberCoroutineScope()
      val latestOnDismiss = rememberUpdatedState(navigation.onDismiss)
@@ -10664,10 +10713,18 @@ index 8cc9b2ef..008a005b 100644
                  initialPage = resolveMoreOptionsInitialPage(navigation.startWithLyricBehavior)
              ) { latestOnDismiss.value() }
          )
-@@ -682,6 +707,14 @@ private fun MoreOptionsPages(
+@@ -682,6 +749,22 @@ private fun MoreOptionsPages(
      MoreOptionsEncyclopediaPage(targetState, viewModel, actualSong, offlineMode, owner, navigation)
  }
  
++/**
++ * 让一级菜单的每个条目自己注册焦点 requester（配合 [MoreOptionsSheetOwner.restoreMainFocus]）。
++ *
++ * 走 CompositionLocal 而不是层层传参：[MoreOptionsMainContent] 的条目在很深的调用链下面，
++ * 再加一个参数会把那条原本就很长的签名继续撑长。
++ */
++internal val LocalMoreOptionsOwner = staticCompositionLocalOf<MoreOptionsSheetOwner?> { null }
++
 +/**
 + * 播放页「更多」面板的焦点入口：面板打开后光标落在第一个按钮（获取歌曲信息）上。
 + * 和播放页主控制区一样，改由面板里真实存在的按钮承接焦点请求。
@@ -10679,7 +10736,7 @@ index 8cc9b2ef..008a005b 100644
  @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
  @Composable
  internal fun MoreOptionsSheetSurface(
-@@ -690,6 +723,13 @@ internal fun MoreOptionsSheetSurface(
+@@ -690,6 +773,13 @@ internal fun MoreOptionsSheetSurface(
      snackbarHostState: SnackbarHostState,
      content: @Composable () -> Unit
  ) {
@@ -10693,10 +10750,16 @@ index 8cc9b2ef..008a005b 100644
      val predictiveDismissState = rememberPredictiveDismissState()
      var sheetSize by remember { mutableStateOf(IntSize.Zero) }
      val presentation = owner.windowPresentation(isCompactEditSongLandscape())
-@@ -726,6 +766,78 @@ internal fun MoreOptionsSheetSurface(
-     }
- }
- 
+@@ -721,7 +811,79 @@ internal fun MoreOptionsSheetSurface(
+             showDragHandle = presentation.showDragHandle,
+             onDismissRequest = owner.onDismissRequest
+         ) {
+-            MoreOptionsSheetBody(owner.page, snackbarHostState, content)
++            MoreOptionsSheetBody(owner, snackbarHostState, content)
++        }
++    }
++}
++
 +/**
 + * 电视上的「更多」面板：一层无动画的全屏覆盖 + 底部固定面板。
 + * 除了去掉弹层动画，它也不参与任何手势/嵌套滚动，方向键移动焦点时面板不会跟着位移。
@@ -10764,15 +10827,28 @@ index 8cc9b2ef..008a005b 100644
 +            shape = RoundedCornerShape(20.dp),
 +            color = MaterialTheme.colorScheme.surface
 +        ) {
-+            MoreOptionsSheetBody(owner.page, snackbarHostState, content)
-+        }
-+    }
-+}
-+
- internal data class MoreOptionsSheetPresentation(
-     val expandToFit: Boolean,
-     val showDragHandle: Boolean,
-@@ -796,13 +908,52 @@ internal fun MoreOptionsAnimatedPage(
++            MoreOptionsSheetBody(owner, snackbarHostState, content)
+         }
+     }
+ }
+@@ -765,13 +927,13 @@ private fun MoreOptionsBackHandlers(owner: MoreOptionsSheetOwner) {
+ 
+ @Composable
+ private fun MoreOptionsSheetBody(
+-    page: MoreOptionsPage,
++    owner: MoreOptionsSheetOwner,
+     snackbarHostState: SnackbarHostState,
+     content: @Composable () -> Unit
+ ) {
+     Box(modifier = Modifier.fillMaxWidth()) {
+-        content()
+-        MoreOptionsFeedbackHost(page, snackbarHostState)
++        CompositionLocalProvider(LocalMoreOptionsOwner provides owner) { content() }
++        MoreOptionsFeedbackHost(owner.page, snackbarHostState)
+     }
+ }
+ 
+@@ -796,13 +958,58 @@ internal fun MoreOptionsAnimatedPage(
          onBack = { owner.back() },
          label = "more_options_sheet_content"
      )
@@ -10785,6 +10861,12 @@ index 8cc9b2ef..008a005b 100644
 +    val tvPageFirstFocus = remember { FocusRequester() }
 +    if (tvNoPageAnimation) {
 +        LaunchedEffect(owner.page) {
++            // 从二级页回到一级菜单：先回到离开前那一项。
++            // 滚动位置由 owner.mainScrollState 一直留着，光标也放回原位，
++            // 这样「返回」不会再变成「回到顶部」。
++            if (owner.page == MoreOptionsPage.MAIN && owner.restoreMainFocus()) {
++                return@LaunchedEffect
++            }
 +            // 先立刻试一次，别上来就先等一帧
 +            if (runCatching { tvPageFirstFocus.requestFocus() }.getOrDefault(false)) {
 +                return@LaunchedEffect
@@ -10829,7 +10911,7 @@ index 8cc9b2ef..008a005b 100644
      )
  }
  
-@@ -817,6 +968,9 @@ private fun MoreOptionsListenTogetherPage(
+@@ -817,6 +1024,9 @@ private fun MoreOptionsListenTogetherPage(
              .fillMaxWidth()
              .bottomSheetScrollGuard()
              .verticalScroll(listenTogetherScrollState)
@@ -10839,6 +10921,15 @@ index 8cc9b2ef..008a005b 100644
              .padding(horizontal = 16.dp, vertical = 8.dp)
              .windowInsetsPadding(WindowInsets.navigationBars)
      ) {
+@@ -1191,6 +1401,8 @@ private fun MoreOptionsMainPageContent(
+         translationFontScale = translationFontScale,
+         currentPlaybackAudioInfo = currentPlaybackAudioInfo,
+         isDismissing = owner.isDismissing,
++        // 提到 owner 上：切二级页时一级内容会离开组合，留在里面的 ScrollState 会被销毁
++        scrollState = owner.mainScrollState,
+         snackbarHostState = snackbarHostState,
+         onOpenSearch = actions.onOpenSearch,
+         onOpenEditInfo = actions.onOpenEditInfo,
 diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/NowPlayingSpeedPitchSheet.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/NowPlayingSpeedPitchSheet.kt
 new file mode 100644
 index 00000000..55e85795
@@ -11425,27 +11516,60 @@ index 15a6383f..1a5217d0 100644
                      )
                  }
 diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/actions/MoreOptionsMainContent.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/actions/MoreOptionsMainContent.kt
-index c6d24afb..e48784d0 100644
+index c6d24afb..5c65dc66 100644
 --- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/actions/MoreOptionsMainContent.kt
 +++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/actions/MoreOptionsMainContent.kt
-@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.padding
+@@ -28,8 +28,9 @@ import androidx.compose.foundation.layout.Column
+ import androidx.compose.foundation.layout.fillMaxWidth
+ import androidx.compose.foundation.layout.padding
  import androidx.compose.foundation.layout.size
- import androidx.compose.foundation.rememberScrollState
+-import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.ScrollState
  import androidx.compose.foundation.verticalScroll
 +import moe.ouom.neriplayer.ui.tv.tvScrollPane
  import androidx.compose.material.icons.Icons
  import androidx.compose.material.icons.outlined.BarChart
  import androidx.compose.material.icons.outlined.Download
-@@ -101,6 +102,8 @@ import moe.ouom.neriplayer.data.model.stableKey
+@@ -56,6 +57,7 @@ import androidx.compose.material3.MaterialTheme
+ import androidx.compose.material3.SnackbarHostState
+ import androidx.compose.material3.Text
+ import androidx.compose.runtime.Composable
++import androidx.compose.runtime.DisposableEffect
+ import androidx.compose.runtime.LaunchedEffect
+ import androidx.compose.runtime.getValue
+ import androidx.compose.runtime.mutableIntStateOf
+@@ -101,6 +103,11 @@ import moe.ouom.neriplayer.data.model.stableKey
  import moe.ouom.neriplayer.data.model.stats.TrackStat
  import moe.ouom.neriplayer.ui.component.sheet.bottomSheetScrollGuard
  import moe.ouom.neriplayer.ui.component.download.downloadStageLabelResource
++import androidx.compose.ui.focus.FocusRequester
 +import androidx.compose.ui.focus.focusRequester
++import androidx.compose.ui.focus.onFocusChanged
++import moe.ouom.neriplayer.ui.screen.nowplaying.LocalMoreOptionsOwner
 +import moe.ouom.neriplayer.ui.screen.nowplaying.TvMoreOptionsFocus
  import moe.ouom.neriplayer.ui.haptic.HapticTextButton
  import moe.ouom.neriplayer.ui.theme.neriRoundedShape
  import moe.ouom.neriplayer.ui.screen.nowplaying.hasCachedLocalDownload
-@@ -147,6 +150,9 @@ internal fun MoreOptionsMainContent(
+@@ -128,6 +135,13 @@ internal fun MoreOptionsMainContent(
+     translationFontScale: Float,
+     currentPlaybackAudioInfo: PlaybackAudioInfo?,
+     isDismissing: Boolean,
++    /**
++     * 由 [moe.ouom.neriplayer.ui.screen.nowplaying.MoreOptionsSheetOwner] 持有。
++     *
++     * 不在这里 `rememberScrollState()`：切到二级页时本 composable 整棵离开组合，
++     * 内部记住的滚动位置会一起销毁，返回时归零 —— 就是「二级菜单返回后回到一级菜单顶部」。
++     */
++    scrollState: ScrollState,
+     snackbarHostState: SnackbarHostState,
+     onOpenSearch: () -> Unit,
+     onOpenEditInfo: () -> Unit,
+@@ -142,11 +156,13 @@ internal fun MoreOptionsMainContent(
+     onEnterAlbum: (AlbumSummary) -> Unit,
+     onDismissSheet: (() -> Unit) -> Unit
+ ) {
+-    val scrollState = rememberScrollState()
+     Column(
          Modifier
              .bottomSheetScrollGuard { scrollState.value == 0 }
              .verticalScroll(scrollState)
@@ -11455,40 +11579,182 @@ index c6d24afb..e48784d0 100644
              .padding(bottom = 32.dp)
      ) {
          MoreOptionsGroup {
-@@ -232,7 +238,9 @@ private fun MetadataAndPlaybackActions(
+@@ -183,13 +199,15 @@ internal fun MoreOptionsMainContent(
+                     title = stringResource(CoreCommonR.string.bili_video_skip_manage),
+                     icon = Icons.Outlined.SkipNext,
+                     hue = MoreHuePink,
+-                    onClick = onOpenBiliVideoSkip
++                    onClick = onOpenBiliVideoSkip,
++                    focusKey = "bili_skip"
+                 )
+                 MoreOptionsItem(
+                     title = stringResource(AppR.string.bili_cc_subtitle_manage),
+                     icon = Icons.Outlined.Subtitles,
+                     hue = MoreHuePink,
+-                    onClick = onOpenBiliCcSubtitle
++                    onClick = onOpenBiliCcSubtitle,
++                    focusKey = "bili_cc"
+                 )
+             }
+             ShareSongAction(
+@@ -203,12 +221,14 @@ internal fun MoreOptionsMainContent(
+                 title = stringResource(AppR.string.encyclopedia_title),
+                 icon = Icons.AutoMirrored.Outlined.MenuBook,
+                 hue = MoreHueViolet,
+-                onClick = onOpenEncyclopedia
++                onClick = onOpenEncyclopedia,
++                focusKey = "encyclopedia"
+             )
+             MoreOptionsItem(
+                 title = stringResource(CoreCommonR.string.listen_together_title),
+                 icon = Icons.Outlined.Headphones,
+                 hue = MoreHueIndigo,
++                focusKey = "listen_together",
+                 enabled = !originalSong.isServerSong(),
+                 subtitle = if (originalSong.isServerSong()) {
+                     stringResource(CoreCommonR.string.server_listen_together_unavailable)
+@@ -232,13 +252,19 @@ private fun MetadataAndPlaybackActions(
          icon = Icons.Outlined.Info,
          hue = MoreHueBlue,
          enabled = !isDismissing,
 -        onClick = onOpenSearch
 +        onClick = onOpenSearch,
-+        // 电视上弹出面板后光标就落在这里（面板第一个按钮）
++        focusKey = "get_info",
++        // 电视上弹出面板后光标就落在这里（面板第一个按钮）。
++        // 这里已经有全局 requester，别再让条目自己建一个。
++        ownFocusRequester = false,
 +        modifier = Modifier.focusRequester(TvMoreOptionsFocus.firstItem)
      )
      MoreOptionsItem(
          title = stringResource(CoreCommonR.string.music_edit_info),
-@@ -656,7 +664,8 @@ private fun MoreOptionsItem(
+         icon = Icons.Outlined.Edit,
+         hue = MoreHueOrange,
+-        onClick = onOpenEditInfo
++        onClick = onOpenEditInfo,
++        focusKey = "edit_info"
+     )
+     if (audioInfo?.qualityOptions.orEmpty().size > 1) {
+         MoreOptionsItem(
+@@ -246,7 +272,8 @@ private fun MetadataAndPlaybackActions(
+             icon = Icons.Outlined.MusicNote,
+             hue = MoreHueRed,
+             subtitle = audioInfo?.qualityLabel?.takeIf { it.isNotBlank() },
+-            onClick = onShowQualitySwitch
++            onClick = onShowQualitySwitch,
++            focusKey = "quality"
+         )
+     }
+ }
+@@ -263,7 +290,8 @@ private fun DownloadOrDetailsAction(
+             title = stringResource(CoreCommonR.string.local_song_open_details),
+             icon = Icons.Outlined.Info,
+             hue = MoreHueTeal,
+-            onClick = onShowSongDetails
++            onClick = onShowSongDetails,
++            focusKey = "details"
+         )
+         return
+     }
+@@ -294,6 +322,7 @@ private fun DownloadOrDetailsAction(
+         title = stringResource(downloadActionLabel(currentTask)),
+         icon = Icons.Outlined.Download,
+         hue = MoreHueGreen,
++        focusKey = "download",
+         enabled = canClick,
+         supporting = if (currentTask != null) {
+             { DownloadProgressContent(currentTask) }
+@@ -427,12 +456,14 @@ private fun LyricsActions(
+         title = stringResource(CoreCommonR.string.lyrics_adjust_behavior),
+         icon = Icons.Outlined.Timer,
+         hue = MoreHueViolet,
+-        onClick = onOpenLyricBehavior
++        onClick = onOpenLyricBehavior,
++        focusKey = "lyric_behavior"
+     )
+     MoreOptionsItem(
+         title = stringResource(CoreCommonR.string.lyrics_font_size),
+         icon = Icons.Outlined.FormatSize,
+         hue = MoreHueMint,
++        focusKey = "font_size",
+         subtitle = stringResource(
+             CoreCommonR.string.settings_lyrics_font_scale_pair_value,
+             (lyricFontScale * 100).roundToInt(),
+@@ -477,6 +508,7 @@ private fun NeteaseAlbumAction(
+         title = stringResource(CoreCommonR.string.music_view_album, albumName),
+         icon = Icons.Outlined.LibraryMusic,
+         hue = MoreHuePurple,
++        focusKey = "album",
+         enabled = !resolvingAlbum,
+         busy = resolvingAlbum,
+         onClick = {
+@@ -500,6 +532,7 @@ private fun ShareSongAction(
+         title = stringResource(CoreCommonR.string.action_share),
+         icon = Icons.Outlined.Share,
+         hue = MoreHueBlue,
++        focusKey = "share",
+         onClick = share@{
+             if (song.isLocalSong()) {
+                 coroutineScope.launch {
+@@ -553,7 +586,8 @@ private fun PlaybackStatsAction(song: SongItem) {
+         title = stringResource(AppR.string.stats_title),
+         icon = Icons.Outlined.BarChart,
+         hue = MoreHueOrange,
+-        onClick = { showDialog = true }
++        onClick = { showDialog = true },
++        focusKey = "stats"
+     )
+     if (!showDialog) return
+ 
+@@ -656,8 +690,35 @@ private fun MoreOptionsItem(
      enabled: Boolean = true,
      busy: Boolean = false,
      subtitle: String? = null,
 -    supporting: (@Composable () -> Unit)? = null
 +    supporting: (@Composable () -> Unit)? = null,
++    /** 稳定的动作名：一级菜单进二级页再返回时，靠它把光标放回原来那一项 */
++    focusKey: String? = null,
++    /** 调用方已经用 modifier 挂了自己的 FocusRequester 时置 false，避免同一节点挂两个 */
++    ownFocusRequester: Boolean = true,
 +    modifier: Modifier = Modifier
  ) {
++    // 焦点 requester 注册到面板 owner，返回一级菜单时由 owner.restoreMainFocus() 找回
++    val focusOwner = LocalMoreOptionsOwner.current
++    val key = focusKey
++    val focusRequester = if (focusOwner != null && key != null && ownFocusRequester) {
++        remember(key) { FocusRequester() }
++    } else {
++        null
++    }
++    if (focusOwner != null && key != null && focusRequester != null) {
++        DisposableEffect(focusOwner, key) {
++            focusOwner.registerMainFocus(key, focusRequester)
++            onDispose { focusOwner.unregisterMainFocus(key) }
++        }
++    }
++    // focusRequester / onFocusChanged 必须排在 clickable 左边：要观察的是 clickable
++    // 自己生成的那个 focusable 节点
++    val itemModifier = if (focusOwner != null && key != null) {
++        val base = if (focusRequester != null) modifier.focusRequester(focusRequester) else modifier
++        base.onFocusChanged { state -> if (state.isFocused) focusOwner.noteMainFocus(key) }
++    } else {
++        modifier
++    }
      if (!NeriDesign.isClean) {
          ListItem(
-@@ -669,13 +678,13 @@ private fun MoreOptionsItem(
+             headlineContent = { Text(title) },
+@@ -669,13 +730,13 @@ private fun MoreOptionsItem(
                  }
              },
              supportingContent = supporting ?: subtitle?.let { text -> { Text(text) } },
 -            modifier = Modifier.clickable(enabled = enabled, onClick = onClick)
-+            modifier = modifier.clickable(enabled = enabled, onClick = onClick)
++            modifier = itemModifier.clickable(enabled = enabled, onClick = onClick)
          )
          return
      }
      val colors = MaterialTheme.colorScheme
      Row(
 -        modifier = Modifier
-+        modifier = modifier
++        modifier = itemModifier
              .fillMaxWidth()
              .clip(MoreRowShape)
              .clickable(enabled = enabled, onClick = onClick)
@@ -24845,10 +25111,10 @@ index 00000000..6a62174f
 +}
 diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvFocusNav.kt b/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvFocusNav.kt
 new file mode 100644
-index 00000000..dffdb861
+index 00000000..05778b02
 --- /dev/null
 +++ b/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvFocusNav.kt
-@@ -0,0 +1,597 @@
+@@ -0,0 +1,610 @@
 +package moe.ouom.neriplayer.ui.tv
 +
 +/*
@@ -25244,8 +25510,13 @@ index 00000000..dffdb861
 +    val lastDown = remember { mutableStateOf(false) }
 +    return this
 +        .onPreviewKeyEvent { event ->
-+            if (event.type == KeyEventType.KeyDown) {
-+                lastDown.value = event.key == Key.DirectionDown
++            when (event.type) {
++                KeyEventType.KeyDown -> lastDown.value = event.key == Key.DirectionDown
++                // 标记「用完就清」：onExit 拦的是所有离开本节点的焦点变更，包括返回键
++                // 把光标收回侧栏、程序化 requestFocus。只在上下键 down 时置位不够 ——
++                // 按过下键再按返回，收回侧栏的请求会被一起取消。
++                KeyEventType.KeyUp -> lastDown.value = false
++                else -> Unit
 +            }
 +            false
 +        }
@@ -25255,7 +25526,15 @@ index 00000000..dffdb861
 +        .focusProperties {
 +            canFocus = false
 +            onExit = {
-+                if (lastDown.value && !scrollState.canScrollForward) cancelFocusChange()
++                // 按下键一律不许把焦点送出面板。
++                //
++                // 原先是「到底了才拦」（`&& !scrollState.canScrollForward`），但焦点按到
++                // 最后一个可聚焦项时内容通常还剩一截没滚 —— 此时 canScrollForward 仍为 true，
++                // 于是放行，二维搜索跨组命中页面顶部的返回键，光标直接飞上去；
++                // 下面 tvEdgeScroll 的滚动兜底压根轮不到（焦点已经离开了原节点）。
++                // 现在改成无条件取消：焦点留在原地，能滚就交给 tvEdgeScroll 滚，到头就停住。
++                if (lastDown.value) cancelFocusChange()
++                lastDown.value = false
 +            }
 +        }
 +        .focusTarget()
