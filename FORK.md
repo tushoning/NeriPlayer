@@ -81,8 +81,8 @@ cat aerial.b64
 网页路径：仓库顶部 **Actions** → 左侧 **「同步上游并发布 TV 版」** →
 右边 **Run workflow** → 绿色 **Run workflow** 按钮。
 
-**手动触发总是出包**：不管上游有没有更新，都会用当前 `main` 的代码编一遍并发 Release。
-定时触发才是「上游没更新就跳过」。
+**手动触发总是出包**：不管有没有新 Release，都会用当前 `main` 的代码编一遍并发 Release。
+定时触发只在**上游发了新 Release** 时才出包（上游 master 天天有提交也不管）。
 
 等 15～25 分钟（第一次要下依赖、编 native），跑完去 **Releases** 看，应该有一个
 `NeriPlayer-TV.apk`。tag 形如 `tv-20261107-0205-1ce32a4`（日期-时分-上游短哈希），
@@ -114,7 +114,7 @@ adb install -r NeriPlayer-TV.apk          # 装新的 .tv 包
 | `archive/*` | 历史存档，只读 |
 | `patches/` | 上游补丁快照，自动生成，**不要手改** |
 | `fork-tools/` | 同步与生成补丁的脚本 |
-| `.github/workflows/fork-sync.yml` | CI：定时同步上游 → 编译 → 发 Release |
+| `.github/workflows/fork-sync.yml` | CI：定时检查上游 Release → 有新版才编译 → 发 Release |
 
 **`main` 必须保持线性**（不含 merge commit）。`patches/series/` 是靠逐个 `git am`
 重放的，历史里一旦有 merge，merge 之后的提交其 diff 基准是合并结果而不是上游，
@@ -145,8 +145,16 @@ git push origin main
 
 ## 3. 上游更新了怎么办
 
-**正常情况下什么都不用做** —— CI 每小时看一次上游，有新提交就自动叠补丁、
-编译、发 Release、把结果推回 `main`。你只要去 Releases 下载。
+**正常情况下什么都不用做** —— CI 每小时去上游看**有没有发新 Release**：
+
+| 情况 | 动作 |
+| --- | --- |
+| 有新 Release | 把我方补丁叠到上游 master → 编译 → 发 Release → 推回 `main` → 打 `seen/<Release 名>` 标记 |
+| 没有新 Release | 几秒钟退出，不编译（上游 master 中间那些提交不会触发打包） |
+
+所以出包节奏跟着上游发版走，大约 3～5 天一个。
+
+> ⚠️ `seen/*` 那些 tag 是「这个上游 Release 已经处理过」的记号，**千万别删**——删了下一次定时任务会当成新 Release，重复出一个包。`tv-*` 的 tag 更不能删（GPL 要求），详见第 4 节。
 
 **CI 红了（打不开 / 报错）** 说明上游动到了我们改过的地方。GitHub 会给仓库 owner
 发一封「workflow 运行失败」的通知（手机 App 的 Inbox 也能收到），点进去那次运行，
@@ -324,8 +332,19 @@ A：建议改。fork 出来的 About 默认抄的上游描述，别人搜到会�
 - 本地手动：`bash fork-tools/sync-upstream.sh`
 
 **Q：为什么手动跑的时候上游没更新就不出包？**
-A：已经改了。现在**手动触发（Run workflow）总是出包**，不管上游有没有新提交，
-都会用当前 `main` 的代码编一遍并发 Release；只有定时触发才遵守「没更新就跳过」。
+A：已经改了。现在**手动触发（Run workflow）总是出包**，不管有没有新 Release，
+都会用当前 `main` 的代码编一遍并发 Release；只有定时触发才遵守「没新 Release 就跳过」。
+
+**Q：为什么上游明明有新提交，CI 却一直绿着不出包？**
+A：**这是设计如此**。定时任务只看上游有没有**发 Release**，不看 master 提交数。
+上游大约 3～5 天发一版，中间天天有提交也不出包——避免把上游半成品打成电视包，
+也省 CI 时间。上游发新版后最多 1 小时就会自动出包。
+想立刻要一个包，手动点 **Run workflow** 即可。
+
+**Q：仓库里那些 `seen/xxx` 的 tag 是什么？**
+A：**「这条上游 Release 已经打包过」的记号**，由 CI 在整条流程全部成功后自动打。
+定时任务靠它判断「有没有新 Release」。**不要删**，删了会重复出一个包。
+它和 `tv-*` 是两回事，后者是真正发布用的版本 tag（GPL 要求必须留）。
 
 **Q：CI 失败怎么通知我？会往 Issues 里发东西吗？**
 A：**不会开 Issue**，仓库里一个 Issue 都不会有。失败通知只走 GitHub 自己的渠道
