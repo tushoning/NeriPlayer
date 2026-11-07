@@ -37,7 +37,7 @@ git push -f fork main:main
 
 > 为什么必须改：GitHub Actions 的定时任务（schedule）只在**默认分支**上生效。
 
-### 0.4 填 4 个 Secret
+### 0.4 填 3 个 Secret
 
 网页路径：`仓库主页` → **Settings** → 左侧 **Secrets and variables** → **Actions** →
 右上 **New repository secret**，一个一个加：
@@ -47,7 +47,6 @@ git push -f fork main:main
 | `AERIAL_KEYSTORE_B64` | 见下面 0.4.1 |
 | `AERIAL_STORE_PASSWORD` | `C:/Users/Tushon/keystores/aerial/README.md` 里的 `storePassword` |
 | `AERIAL_KEY_PASSWORD` | 同一个文件里的 `keyPassword` |
-| `SYNC_TOKEN` | 见下面 0.4.2 —— **不配这个，CI 一定推不上去** |
 
 证书指纹（`4ca2921…581b5`）是公开信息、不是密钥，
 已经写死在 workflow 的 `CERT_SHA256` 里，不用再配。
@@ -67,36 +66,15 @@ cat aerial.b64
 
 > 注意：`.gitignore` 已经把 `*.keystore` / `*.b64` 挡住，这些文件不会被提交上去。
 
-#### 0.4.2 生成 `SYNC_TOKEN`（推送用的令牌）
+#### 0.4.2 不需要额外的推送令牌
 
-**为什么需要它**：CI 默认的 `GITHUB_TOKEN` 按设计**不能修改 `.github/workflows/` 下的文件**。
-而我们的补丁必然要改 `.github/workflows/fork-sync.yml`，所以每次同步上游后
-推 tag / 推 main 都会被 GitHub 拒绝：
+不需要。CI 只推 tag（tag 指向 `main` 上已有的提交），不推任何 commit，
+所以用默认的 `GITHUB_TOKEN` 就够，也不用管什么 `workflows` 权限。
 
-```
-! [remote rejected] (refusing to allow a GitHub App to create or update workflow
- `.github/workflows/xxx.yml` without `workflows` permission)
-```
-
-这个限制**无法**用 `permissions:` 打开，只能用个人令牌（PAT）。
-
-**步骤**（全是网页点击）：
-
-1. 打开 https://github.com/settings/tokens?type=beta
-2. 右上 **Generate new token**
-3. **Token name** 填 `neriplayer-ci`
-4. **Expiration** 选 `1 year`（或更长）
-5. **Repository access** 选 **Only select repositories** → 选 `NeriPlayer`
-6. 展开 **Permissions** → **Repository permissions**，勾两个：
-   - **Contents** → `Read and write`
-   - **Workflows** → `Read and write` ← **最关键，只有这里能勾**
-   - （`Metadata` 会自动变成 `Read-only`，不用管）
-7. 底部 **Generate token**，复制出来的 `github_pat_...`（**只显示一次**）
-8. 回到仓库 **Settings → Secrets and variables → Actions**，新建 secret
-   `SYNC_TOKEN`，把刚才那串粘进去
-
-> 令牌到期后 CI 会失败（报 401 或同样的 rejected），回来重新生成一次、
-> 更新 `SYNC_TOKEN` 的值即可，其它都不用动。
+> 背景：如果让 CI 把「上游代码 + 补丁」推回 `main`，那些提交里必然含
+> `.github/workflows/fork-sync.yml` 的改动，而 `GITHUB_TOKEN` 按设计**不能**改
+> `.github/workflows/` 下的文件，`permissions:` 里加也没用。现在改成 CI 只在临时
+> 目录编译、不写仓库，这个限制就完全绕开了。
 
 ### 0.5 打开 Actions 的写权限
 
@@ -146,7 +124,7 @@ adb install -r NeriPlayer-TV.apk          # 装新的 .tv 包
 | `archive/*` | 历史存档，只读 |
 | `patches/` | 上游补丁快照，自动生成，**不要手改** |
 | `fork-tools/` | 同步与生成补丁的脚本 |
-| `.github/workflows/fork-sync.yml` | CI：定时检查上游 Release → 有新版才编译 → 发 Release |
+| `.github/workflows/fork-sync.yml` | CI：定时检查上游 Release → 有新版才编译 → 发 Release（**只读仓库，不推 commit**） |
 
 **`main` 必须保持线性**（不含 merge commit）。`patches/series/` 是靠逐个 `git am`
 重放的，历史里一旦有 merge，merge 之后的提交其 diff 基准是合并结果而不是上游，
@@ -181,29 +159,35 @@ git push origin main
 
 | 情况 | 动作 |
 | --- | --- |
-| 有新 Release | 把我方补丁叠到上游 master → 编译 → 发 Release → 推回 `main` → 打 `seen/<Release 名>` 标记 |
+| 有新 Release | 临时切到上游最新代码 → 叠补丁 → 编译 → 发 Release（APK + 源码包）→ 打 `seen/<Release 名>` 标记 |
 | 没有新 Release | 几秒钟退出，不编译（上游 master 中间那些提交不会触发打包） |
 
 所以出包节奏跟着上游发版走，大约 3～5 天一个。
 
+> **CI 全程只读仓库**：上游代码只在临时目录里出现，不会推任何 commit 回 `main`，
+> 也不 force push。`main` 只有你自己推的时候才会变。这也意味着 workflow 文件
+> 永远不会被 CI 自己改写。
+
 > ⚠️ `seen/*` 那些 tag 是「这个上游 Release 已经处理过」的记号，**千万别删**——删了下一次定时任务会当成新 Release，重复出一个包。`tv-*` 的 tag 更不能删（GPL 要求），详见第 4 节。
 
-**CI 红了（打不开 / 报错）** 说明上游动到了我们改过的地方。GitHub 会给仓库 owner
-发一封「workflow 运行失败」的通知（手机 App 的 Inbox 也能收到），点进去那次运行，
-**最上方的 Summary 区**会列出冲突文件。本地这样处理：
+### 3.1 补丁基线会不会过期
+
+会，但很慢。CI 用的是 `patches/` 里现成的补丁，直接往**最新的上游代码**上叠
+（`git am -3` 会做三方合并）。上游改的是别处代码时它自动就合上了；只有动到我们
+改过的同一段代码，才会冲突。
+
+那时候 CI 会红，Summary 区列出冲突文件。本地跑一次：
 
 ```bash
-bash fork-tools/sync-upstream.sh --build
+bash fork-tools/sync-upstream.sh
 ```
 
-- **没冲突**：分支变成「新上游 + 我方补丁」，然后
+它会：拉上游 → 叠补丁 → 冲突时停下让你处理 → 处理完用
+`bash fork-tools/make-patches.sh` 重新生成补丁 → `git push origin main`。
 
-  ```bash
-  bash fork-tools/make-patches.sh
-  git checkout main && git reset --hard sync/<日期>
-  git push -f origin main
-  ```
+这一趟走完，补丁基线就往前挪了，之后又能稳定很长一段时间。**这就是"偶尔要手动同步一次"的全部内容。**
 
+- **没冲突**：脚本直接把 `main` 换成「新上游 + 我方补丁」
 - **有冲突**：脚本停下并保留 `<<<<<<<` 标记，按这个表处理
 
   | 冲突类型 | 处理 |
@@ -231,24 +215,23 @@ Capsulyric（GPL-3.0-or-later）、InstallerX Revived（GPL-3.0-only）、libusb
 | --- | --- | --- |
 | §5a | 修改版要有醒目改动声明 + 日期 | 根目录 `NOTICE`，README 顶部那段，Release 说明 |
 | §5c | 整个作品整体继续按 GPL 授权 | 保留 `LICENSE`，不加任何额外限制 |
-| §6 | 发二进制要给**对应源码** | Release 的 tag 打在编译的那个 commit 上，GitHub 自动给 tag 附源码包 |
+| §6 | 发二进制要给**对应源码** | 每个 Release 同时附 `*-source.tar.gz`（含全部子模块，解压即编译），二进制和源码在同一个页面 |
 | §5d | 保留原版权声明与无担保声明 | 文件头不动 |
 | §10 | 不得追加额外限制 | 不写「禁止商用/转载」之类 |
 | §7 | 保留上游署名 | README、NOTICE 都指向上游 |
 
 ### 四个真正容易踩的坑
 
-1. **别删 tag、别删 Release。** 删了 tag，GitHub 的源码包跟着没了，已经发出去的 APK 就失去
-   对应源码——这是唯一会真正造成违规的操作。`tv-*` 的 tag 一个都别动。
+1. **别删 Release。** 源码包是 Release 的附件，Release 一删，已经发出去的 APK 就失去
+   对应源码——这是唯一会真正造成违规的操作。`tv-*`、`seen/*` 的 tag 也一个都别动。
 
 2. **别加任何额外限制。** 国内安卓圈习惯写「仅供学习交流，禁止转载/商用/二次分发」、
    「下载即视为同意本协议」——这些话和 GPLv3 §10（不得对接收者施加额外限制）**直接冲突**，
    写了就等于自己把授权变成非自由许可。可以写的是：这是 fork、不是官方、无担保。
 
-3. **GitHub 的源码包不含子模块。** 这个项目构建依赖 `np-submodule/accompanist-lyrics-core`
-   和 `accompanist-lyrics-ui`，GitHub 给 tag 自动打的 zip 里它们是空目录。
-   所以 Release 说明里必须列出子模块地址和 commit（CI 已经自动写进去），
-   别人才能真的复现出这个 APK。
+3. **源码包必须连子模块一起给。** 这个项目构建依赖 `np-submodule/accompanist-lyrics-core`
+   和 `accompanist-lyrics-ui`，而 GitHub 给 tag 自动打的 zip 里它们是**空目录**，根本编不出来。
+   所以对外一律以 Release 附件里的 `*-source.tar.gz` 为准——它是连子模块内容一起打的。
 
 4. **GPL 不可撤回。** 一旦发布了某个版本，任何人拿到后都可以按 GPL 继续分发，
    你之后想收回、想改成闭源都做不到。发之前想清楚。
@@ -258,7 +241,7 @@ Capsulyric（GPL-3.0-or-later）、InstallerX Revived（GPL-3.0-only）、libusb
 - ✅ 公开仓库、发 Releases、发网盘、发群里 —— 只要同时能看到源码
 - ✅ 换应用名、换图标、改包名
 - ✅ 收费（GPL 允许卖二进制），但买了的人有权拿到源码并再分发
-- ✅ 只发 APK 不附源码文件本身 —— 前提是**同一个地方**能拿到源码（本仓库 tag 即可）
+- ✅ 只发 APK 不附源码文件本身 —— 前提是**同一个地方**能拿到源码（Release 附件里的 `*-source.tar.gz` 就是干这个的）
 - ❌ 只发 APK 且不提供任何源码获取方式
 - ❌ 在 Release 里写「禁止转载」「版权归我所有」
 
@@ -378,11 +361,13 @@ A：**「这条上游 Release 已经打包过」的记号**，由 CI 在整条�
 定时任务靠它判断「有没有新 Release」。**不要删**，删了会重复出一个包。
 它和 `tv-*` 是两回事，后者是真正发布用的版本 tag（GPL 要求必须留）。
 
-**Q：CI 报 `refusing to allow a GitHub App to create or update workflow ... without `workflows` permission`**
-A：`GITHUB_TOKEN` 按设计就**不能**改 `.github/workflows/` 下的文件，`permissions:` 里加也没用，
-这是 GitHub 的硬边界。只能换成 PAT：按 0.4.2 配好 `SYNC_TOKEN` 即可，workflow 已改成用它 checkout。
-> 这个检查针对「推送的 commit 有没有改 workflow 文件」。我们不 rebase、直接编现有代码时
-> 什么都不用推，所以那种运行一直是好的；一旦上游有新提交要 rebase，就必然踩到。
+**Q：CI 报 `refusing to allow a GitHub App to create or update workflow ...` 怎么办？**
+A：**现在的流程不会报这个了**。以前 CI 会把「上游代码 + 补丁」推回 `main`，那些提交里必然含
+`.github/workflows/fork-sync.yml` 的改动，而 `GITHUB_TOKEN` 按设计**不能**改 `.github/workflows/`
+下的文件（`permissions:` 里加也没用，是 GitHub 的硬边界）。
+现在 CI 全程不推任何 commit，只推 tag（指向已有提交），所以用默认 token 就够了。
+> 如果你看到 CI 真的在推分支，说明 workflow 被改回旧版本了，`git checkout` 一下本仓库的
+> `.github/workflows/fork-sync.yml` 即可。
 
 **Q：CI 失败怎么通知我？会往 Issues 里发东西吗？**
 A：**不会开 Issue**，仓库里一个 Issue 都不会有。失败通知只走 GitHub 自己的渠道
@@ -415,5 +400,5 @@ A：那是另一套东西（应用内更新指向本仓库 Release）。本 fork
 要做得在 `app` 里加更新检查逻辑指向 `tushoning/NeriPlayer/releases/latest`。
 
 **Q：`git push` 提示 rejected**
-A：CI 会用 `--force-with-lease` 推 `main`，你本地落后了。先 `git pull --rebase`，
-或者从 CI 那个 commit 重新开始。
+A：远端有你本地没有的提交，先 `git pull --rebase`。
+> 现在 CI 不再改 `main`，所以这种情况只会发生在你换机器、或者在网页上改过东西之后。
