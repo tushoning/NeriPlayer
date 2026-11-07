@@ -47,6 +47,14 @@ jobs:
       - name: 拉取本仓库
         uses: actions/checkout@v4
         with:
+          # 必须用 PAT（secret SYNC_TOKEN），不能用默认 GITHUB_TOKEN。
+          # GITHUB_TOKEN 在设计上就拿不到 workflows 权限，推到 .github/workflows/ 的提交会被拒：
+          #   ! [remote rejected] (refusing to allow a GitHub App to create or update workflow
+          #    `.github/workflows/xxx.yml` without `workflows` permission)
+          # 而我们的补丁必然会改 .github/workflows/fork-sync.yml，所以每次 rebase 都推不上去。
+          # 注意：token 必须给 checkout，不能只给后面的 push —— checkout 会把凭据写进 git config，
+          # 后续所有 git 命令都用它，单独给 push 设 token 是无效的。
+          token: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
           fetch-depth: 0 # 需要完整历史：git am -3 要用到补丁的原始 blob
           submodules: recursive
 
@@ -54,19 +62,6 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: 确保是完整仓库（不是浅克隆）
-        run: |
-          set -uo pipefail
-          SHALLOW=$(git rev-parse --is-shallow-repository)
-          echo "shallow=$SHALLOW"
-          # 浅克隆的仓库 push 新 commit 会被 GitHub 拒绝（shallow update not allowed），
-          # 这正是「tag 指向远端没有的 commit 时推不上去」的原因。
-          if [ "$SHALLOW" = "true" ]; then
-            echo "仓库是浅克隆，取消浅克隆……"
-            git fetch --unshallow origin || true
-            echo "处理后 shallow=$(git rev-parse --is-shallow-repository)"
-          fi
 
       - name: 检查上游有没有新 Release
         id: up
@@ -361,7 +356,7 @@ jobs:
       - name: 打 tag 并发布 Release
         if: steps.apply.outputs.ok == 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.meta.outputs.tag }}
           UP_SHA: ${{ steps.up.outputs.new }}
         run: |
