@@ -1,0 +1,153 @@
+From 16a8f6d58abdeddb208a4943c28f3f0082a2289b Mon Sep 17 00:00:00 2001
+From: neri-fork <local@neriplayer.fork>
+Date: Sat, 7 Nov 2026 19:48:26 +0800
+Subject: [PATCH] =?UTF-8?q?fix(ci):=20=E7=94=A8=20PAT(SYNC=5FTOKEN)=20chec?=
+ =?UTF-8?q?kout=EF=BC=8CGITHUB=5FTOKEN=20=E6=97=A0=E6=9D=83=E6=8E=A8?=
+ =?UTF-8?q?=E9=80=81=20workflow=20=E5=8F=98=E6=9B=B4?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+真实报错（日志 logs_114788761752）：
+  ! [remote rejected] tv-... -> tv-...
+  (refusing to allow a GitHub App to create or update workflow
+   `.github/workflows/android_ci.yml` without `workflows` permission)
+
+根因：GITHUB_TOKEN 按设计不能修改 .github/workflows/ 下的文件，permissions: 里加也无效。
+我们的补丁必然改 .github/workflows/fork-sync.yml，所以每次 rebase 后
+推 tag / 推 main 都被拒；不 rebase（直接编现有代码）时无需推送，所以那种运行一直正常。
+
+修复：
+- actions/checkout 改用 ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+  （必须给 checkout，不能只给 push —— checkout 会把凭据写进 git config）
+- gh 命令同样使用 SYNC_TOKEN
+- 删掉上一轮基于错误假设加的「确保是完整仓库」步骤
+- FORK.md 新增 0.4.2：如何生成带 Workflows 权限的 PAT
+---
+ .github/workflows/fork-sync.yml | 23 +++++++-----------
+ FORK.md                         | 42 +++++++++++++++++++++++++++++++--
+ 2 files changed, 49 insertions(+), 16 deletions(-)
+
+diff --git a/.github/workflows/fork-sync.yml b/.github/workflows/fork-sync.yml
+index 2da2bad3..1a40cf61 100644
+--- a/.github/workflows/fork-sync.yml
++++ b/.github/workflows/fork-sync.yml
+@@ -47,6 +47,14 @@ jobs:
+       - name: 拉取本仓库
+         uses: actions/checkout@v4
+         with:
++          # 必须用 PAT（secret SYNC_TOKEN），不能用默认 GITHUB_TOKEN。
++          # GITHUB_TOKEN 在设计上就拿不到 workflows 权限，推到 .github/workflows/ 的提交会被拒：
++          #   ! [remote rejected] (refusing to allow a GitHub App to create or update workflow
++          #    `.github/workflows/xxx.yml` without `workflows` permission)
++          # 而我们的补丁必然会改 .github/workflows/fork-sync.yml，所以每次 rebase 都推不上去。
++          # 注意：token 必须给 checkout，不能只给后面的 push —— checkout 会把凭据写进 git config，
++          # 后续所有 git 命令都用它，单独给 push 设 token 是无效的。
++          token: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+           fetch-depth: 0 # 需要完整历史：git am -3 要用到补丁的原始 blob
+           submodules: recursive
+ 
+@@ -55,19 +63,6 @@ jobs:
+           git config user.name  "github-actions[bot]"
+           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+ 
+-      - name: 确保是完整仓库（不是浅克隆）
+-        run: |
+-          set -uo pipefail
+-          SHALLOW=$(git rev-parse --is-shallow-repository)
+-          echo "shallow=$SHALLOW"
+-          # 浅克隆的仓库 push 新 commit 会被 GitHub 拒绝（shallow update not allowed），
+-          # 这正是「tag 指向远端没有的 commit 时推不上去」的原因。
+-          if [ "$SHALLOW" = "true" ]; then
+-            echo "仓库是浅克隆，取消浅克隆……"
+-            git fetch --unshallow origin || true
+-            echo "处理后 shallow=$(git rev-parse --is-shallow-repository)"
+-          fi
+-
+       - name: 检查上游有没有新 Release
+         id: up
+         env:
+@@ -361,7 +356,7 @@ jobs:
+       - name: 打 tag 并发布 Release
+         if: steps.apply.outputs.ok == 'true'
+         env:
+-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
++          GH_TOKEN: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+           TAG: ${{ steps.meta.outputs.tag }}
+           UP_SHA: ${{ steps.up.outputs.new }}
+         run: |
+diff --git a/FORK.md b/FORK.md
+index c292898c..fd63e8d5 100644
+--- a/FORK.md
++++ b/FORK.md
+@@ -37,7 +37,7 @@ git push -f fork main:main
+ 
+ > 为什么必须改：GitHub Actions 的定时任务（schedule）只在**默认分支**上生效。
+ 
+-### 0.4 填 3 个签名 Secret
++### 0.4 填 4 个 Secret
+ 
+ 网页路径：`仓库主页` → **Settings** → 左侧 **Secrets and variables** → **Actions** →
+ 右上 **New repository secret**，一个一个加：
+@@ -47,8 +47,9 @@ git push -f fork main:main
+ | `AERIAL_KEYSTORE_B64` | 见下面 0.4.1 |
+ | `AERIAL_STORE_PASSWORD` | `C:/Users/Tushon/keystores/aerial/README.md` 里的 `storePassword` |
+ | `AERIAL_KEY_PASSWORD` | 同一个文件里的 `keyPassword` |
++| `SYNC_TOKEN` | 见下面 0.4.2 —— **不配这个，CI 一定推不上去** |
+ 
+-只需要这 3 个。证书指纹（`4ca2921…581b5`）是公开信息、不是密钥，
++证书指纹（`4ca2921…581b5`）是公开信息、不是密钥，
+ 已经写死在 workflow 的 `CERT_SHA256` 里，不用再配。
+ 
+ #### 0.4.1 把密钥库转成 base64 文本
+@@ -66,6 +67,37 @@ cat aerial.b64
+ 
+ > 注意：`.gitignore` 已经把 `*.keystore` / `*.b64` 挡住，这些文件不会被提交上去。
+ 
++#### 0.4.2 生成 `SYNC_TOKEN`（推送用的令牌）
++
++**为什么需要它**：CI 默认的 `GITHUB_TOKEN` 按设计**不能修改 `.github/workflows/` 下的文件**。
++而我们的补丁必然要改 `.github/workflows/fork-sync.yml`，所以每次同步上游后
++推 tag / 推 main 都会被 GitHub 拒绝：
++
++```
++! [remote rejected] (refusing to allow a GitHub App to create or update workflow
++ `.github/workflows/xxx.yml` without `workflows` permission)
++```
++
++这个限制**无法**用 `permissions:` 打开，只能用个人令牌（PAT）。
++
++**步骤**（全是网页点击）：
++
++1. 打开 https://github.com/settings/tokens?type=beta
++2. 右上 **Generate new token**
++3. **Token name** 填 `neriplayer-ci`
++4. **Expiration** 选 `1 year`（或更长）
++5. **Repository access** 选 **Only select repositories** → 选 `NeriPlayer`
++6. 展开 **Permissions** → **Repository permissions**，勾两个：
++   - **Contents** → `Read and write`
++   - **Workflows** → `Read and write` ← **最关键，只有这里能勾**
++   - （`Metadata` 会自动变成 `Read-only`，不用管）
++7. 底部 **Generate token**，复制出来的 `github_pat_...`（**只显示一次**）
++8. 回到仓库 **Settings → Secrets and variables → Actions**，新建 secret
++   `SYNC_TOKEN`，把刚才那串粘进去
++
++> 令牌到期后 CI 会失败（报 401 或同样的 rejected），回来重新生成一次、
++> 更新 `SYNC_TOKEN` 的值即可，其它都不用动。
++
+ ### 0.5 打开 Actions 的写权限
+ 
+ 网页路径：**Settings** → 左侧 **Actions** → **General** → 拉到最下面
+@@ -346,6 +378,12 @@ A：**「这条上游 Release 已经打包过」的记号**，由 CI 在整条
+ 定时任务靠它判断「有没有新 Release」。**不要删**，删了会重复出一个包。
+ 它和 `tv-*` 是两回事，后者是真正发布用的版本 tag（GPL 要求必须留）。
+ 
++**Q：CI 报 `refusing to allow a GitHub App to create or update workflow ... without `workflows` permission`**
++A：`GITHUB_TOKEN` 按设计就**不能**改 `.github/workflows/` 下的文件，`permissions:` 里加也没用，
++这是 GitHub 的硬边界。只能换成 PAT：按 0.4.2 配好 `SYNC_TOKEN` 即可，workflow 已改成用它 checkout。
++> 这个检查针对「推送的 commit 有没有改 workflow 文件」。我们不 rebase、直接编现有代码时
++> 什么都不用推，所以那种运行一直是好的；一旦上游有新提交要 rebase，就必然踩到。
++
+ **Q：CI 失败怎么通知我？会往 Issues 里发东西吗？**
+ A：**不会开 Issue**，仓库里一个 Issue 都不会有。失败通知只走 GitHub 自己的渠道
+ （邮件 + 手机 App 的 Inbox），点进那次运行，最上方 **Summary** 区就是冲突详情。
