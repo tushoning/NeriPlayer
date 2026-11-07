@@ -93,4 +93,10 @@
     <string name="cd_queue_quick_actions">播放队列快捷操作</string>
     <string name="cd_close">关闭</string>
     <string name="cd_app_background">应用背景</string>
+    <string name="settings_update_latest">已是最新版本</string>
+    <string name="settings_update_available">有新版本：%1$s</string>
+    <string name="settings_update_check_failed">检查更新失败</string>
+    <string name="settings_update_download_failed">下载失败</string>
+    <string name="settings_update_action_update">更新</string>
+    <string name="settings_update_action_install">安装</string>
 </resources>

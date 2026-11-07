@@ -39,7 +39,6 @@ import androidx.compose.foundation.layout.padding
 import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 import moe.ouom.neriplayer.ui.tv.LocalTvInputTracker
 import moe.ouom.neriplayer.ui.tv.TvInputActivityTracker
-import moe.ouom.neriplayer.ui.tv.TvInputTrace
 import moe.ouom.neriplayer.ui.tv.TvReturnFocus
 import moe.ouom.neriplayer.ui.tv.isTvDirectionKey
 import androidx.compose.foundation.layout.fillMaxSize
@@ -1890,7 +1889,6 @@ private fun NeriAppContent(
                                 TvReturnFocus.onUserInput()
                                 if (event.key.isTvDirectionKey()) {
                                     tvInputTracker.onDirectionKey()
-                                    TvInputTrace.onKeyDown(event.key)
                                 }
                             }
                             false
