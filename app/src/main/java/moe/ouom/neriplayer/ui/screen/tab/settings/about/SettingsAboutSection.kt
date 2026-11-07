@@ -72,8 +72,7 @@ internal fun SettingsAboutContent(
     SettingsBuildUuidItem(onCopyValue)
     SettingsVersionItem(
         devModeEnabled = devModeEnabled,
-        onVersionClick = onVersionClick,
-        onCopyValue = onCopyValue
+        onVersionClick = onVersionClick
     )
     SettingsBuildTimeItem(onCopyValue)
     SettingsGitHubItem(onOpenGitHubRepo = onOpenGitHubRepo)
@@ -129,8 +128,7 @@ private fun SettingsBuildUuidItem(onCopyValue: (String) -> Unit) {
 @Composable
 private fun SettingsVersionItem(
     devModeEnabled: Boolean,
-    onVersionClick: () -> Unit,
-    onCopyValue: (String) -> Unit
+    onVersionClick: () -> Unit
 ) {
     val suffix = if (devModeEnabled) {
         " (${stringResource(CoreCommonR.string.settings_version_debug_suffix)})"
@@ -154,8 +152,8 @@ private fun SettingsVersionItem(
             )
         },
         supportingContent = { Text(versionName) },
+        // 点一下 = 检查更新（不再是复制版本号）
         modifier = androidx.compose.ui.Modifier.settingsItemClickable {
-            onCopyValue(versionName)
             onVersionClick()
         },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent)

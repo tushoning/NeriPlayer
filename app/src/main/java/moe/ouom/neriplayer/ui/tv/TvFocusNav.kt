@@ -24,13 +24,7 @@ package moe.ouom.neriplayer.ui.tv
  */
 
 import androidx.compose.foundation.ScrollState
-import androidx.compose.foundation.focusGroup
-import androidx.compose.foundation.focusable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.ui.focus.focusTarget
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.gestures.animateScrollBy
@@ -39,17 +33,13 @@ import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
@@ -354,7 +344,8 @@ fun Modifier.tvEdgeScroll(
             else -> return@onKeyEvent false
         }
         val forward = direction == FocusDirection.Down
-        if (focusManager.moveFocus(direction)) return@onKeyEvent true
+        val moved = focusManager.moveFocus(direction)
+        if (moved) return@onKeyEvent true
         val canScroll = if (forward) scrollState.canScrollForward else scrollState.canScrollBackward
         if (!canScroll) {
             // 已经在端头（moveFocus 上面已经试过并失败，说明这个方向确实没有可聚焦项了）。
@@ -372,86 +363,51 @@ fun Modifier.tvEdgeScroll(
 private val TV_EDGE_SCROLL_STEP = 300.dp
 
 /**
- * 电视：同样的道理用 [androidx.compose.foundation.ScrollState]（普通 Column 滚动）。
- * 表头是固定的、内容在下面滚，光标回到表头按钮后按上，先把内容滚回顶部，
- * 把滚上去的那段文字露出来；已经到顶了才放行。
- */
-/**
- * 电视：可滚动的文字面板 —— 一个修饰符管完三件事。
+ * 电视：可滚动的文字面板接管方向键（04:00 那版）。
  *
- *  1. 内容比一屏长时，光标走到最后一个可聚焦项还能继续把剩下的内容挪出来（[tvEdgeScroll]）；
- *  2. 滚到底再按「下」，Compose 的方向搜索会回绕到页面顶部的返回键上。这里把这个出口掐掉，
- *     光标就停在底部不动；
- *  3. 整个面板当成一个焦点组，光标不会从中间某一行直接跳到组外的控件上。
- *
- * 说明：`focusProperties.onExit` 在当前版本拿不到方向，所以先用面板自己的按键监听
- * 把「这一下按的是不是下键」记在 [lastDown] 里，再在出口判断时用它。
+ * 规则：四个方向都在 Initial pass 接管 —— 面内能走就交给焦点搜索走，走不动就自己滚，
+ * 滚到头就停住。焦点因此不会跨出面板去找别的可聚焦元素。
  */
 @Composable
 fun Modifier.tvScrollPane(scrollState: ScrollState): Modifier {
     if (!LocalIsTelevision.current) return this
-    val lastDown = remember { mutableStateOf(false) }
-    return this
-        .onPreviewKeyEvent { event ->
-            when (event.type) {
-                KeyEventType.KeyDown -> lastDown.value = event.key == Key.DirectionDown
-                // 标记「用完就清」：onExit 拦的是所有离开本节点的焦点变更，包括返回键
-                // 把光标收回侧栏、程序化 requestFocus。只在上下键 down 时置位不够 ——
-                // 按过下键再按返回，收回侧栏的请求会被一起取消。
-                KeyEventType.KeyUp -> lastDown.value = false
-                else -> Unit
+    val focusManager = LocalFocusManager.current
+    val scope = rememberCoroutineScope()
+    val stepPx = with(LocalDensity.current) { TV_EDGE_SCROLL_STEP.toPx() }
+    return this.onPreviewKeyEvent { event ->
+        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+        when (event.key) {
+            Key.DirectionDown, Key.DirectionUp -> {
+                val forward = event.key == Key.DirectionDown
+                val moved = focusManager.moveFocus(
+                    if (forward) FocusDirection.Down else FocusDirection.Up
+                )
+                if (!moved) {
+                    val canScroll = if (forward) {
+                        scrollState.canScrollForward
+                    } else {
+                        scrollState.canScrollBackward
+                    }
+                    if (canScroll) {
+                        val delta = if (forward) stepPx else -stepPx
+                        scope.launch {
+                            runCatching { scrollState.animateScrollBy(delta) }
+                        }
+                    }
+                }
+                true
             }
-            false
-        }
-        // 必须同时是焦点组：容器成为组边界后，组内搜不到候选时才会走 onExit；
-        // 只挂 focusTarget 的话，二维搜索会直接跨组命中页面顶部的返回键，onExit 根本不触发。
-        .focusGroup()
-        .focusProperties {
-            canFocus = false
-            onExit = {
-                // 按下键一律不许把焦点送出面板。
-                //
-                // 原先是「到底了才拦」（`&& !scrollState.canScrollForward`），但焦点按到
-                // 最后一个可聚焦项时内容通常还剩一截没滚 —— 此时 canScrollForward 仍为 true，
-                // 于是放行，二维搜索跨组命中页面顶部的返回键，光标直接飞上去；
-                // 下面 tvEdgeScroll 的滚动兜底压根轮不到（焦点已经离开了原节点）。
-                // 现在改成无条件取消：焦点留在原地，能滚就交给 tvEdgeScroll 滚，到头就停住。
-                if (lastDown.value) cancelFocusChange()
-                lastDown.value = false
+            Key.DirectionLeft, Key.DirectionRight -> {
+                focusManager.moveFocus(
+                    if (event.key == Key.DirectionLeft) FocusDirection.Left else FocusDirection.Right
+                )
+                true
             }
-        }
-        .focusTarget()
-        // 文字面板都要「到底就停」：不夹边的话系统兜底搜索会回绕到页面顶部的返回键。
-        .tvEdgeScroll(scrollState, clampDownAtEnd = true)
-}
-
-/**
- * 电视方向键「最近一次按的是哪边」。
- *
- * 只用来区分两种「焦点落到顶部返回键」：用户自己按上键走过去，和焦点被方向搜索意外跳上去。
- * 前者应该把正文滚回顶部，后者不能 —— 否则看起来就是「按到底又回到了开头」。
- */
-internal object TvInputTrace {
-    @Volatile
-    private var lastDownAt: Long = 0L
-
-    @Volatile
-    private var lastUpAt: Long = 0L
-
-    fun onKeyDown(key: Key) {
-        val now = android.os.SystemClock.uptimeMillis()
-        when (key) {
-            Key.DirectionDown -> lastDownAt = now
-            Key.DirectionUp -> lastUpAt = now
-            else -> Unit
+            else -> false
         }
     }
-
-    fun movedUpRecently(windowMs: Long = 400L): Boolean {
-        val now = android.os.SystemClock.uptimeMillis()
-        return lastUpAt > lastDownAt && now - lastUpAt <= windowMs
-    }
 }
+
 
 /**
  * 电视：网格停在「第一屏内、但已经把顶部表头滚掉一截」时，按上先把网格拉回最顶端。

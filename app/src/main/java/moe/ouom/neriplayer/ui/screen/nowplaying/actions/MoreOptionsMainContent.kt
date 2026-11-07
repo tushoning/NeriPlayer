@@ -715,7 +715,9 @@ private fun MoreOptionsItem(
     // 自己生成的那个 focusable 节点
     val itemModifier = if (focusOwner != null && key != null) {
         val base = if (focusRequester != null) modifier.focusRequester(focusRequester) else modifier
-        base.onFocusChanged { state -> if (state.isFocused) focusOwner.noteMainFocus(key) }
+        base.onFocusChanged { state ->
+            if (state.isFocused) focusOwner.noteMainFocus(key) else focusOwner.clearMainFocus(key)
+        }
     } else {
         modifier
     }

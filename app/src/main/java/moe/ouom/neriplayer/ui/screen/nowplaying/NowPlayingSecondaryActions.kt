@@ -424,17 +424,33 @@ internal class MoreOptionsSheetOwner(
     /** 一级菜单最后一次聚焦的条目，返回主页时据此把光标放回去 */
     private var lastMainFocusKey: String? = null
 
+    /** 当前真正持有焦点的一级菜单条目（由 onFocusChanged 维护，用来校验 requestFocus 是否生效） */
+    private var focusedMainKey: String? = null
+
     fun registerMainFocus(key: String, requester: FocusRequester) {
         mainFocusRequesters[key] = requester
     }
 
+    /**
+     * 条目离开组合时只摘掉 requester，**不能清 [lastMainFocusKey]**。
+     *
+     * 切到二级页时 `MoreOptionsMainPage` 直接 return，一级菜单所有条目一起离开组合，
+     * 每个条目都会走一次 onDispose；原来这里顺手把 key 清了，结果「记住的那一项」
+     * 在真正需要它的那一刻已经被抹成 null，返回时 restoreMainFocus() 直接返回 false，
+     * 又退回「请求第一个可聚焦项」，表现就是光标和滚动一起回到顶部。
+     */
     fun unregisterMainFocus(key: String) {
         mainFocusRequesters.remove(key)
-        if (lastMainFocusKey == key) lastMainFocusKey = null
+        if (focusedMainKey == key) focusedMainKey = null
     }
 
     fun noteMainFocus(key: String) {
         lastMainFocusKey = key
+        focusedMainKey = key
+    }
+
+    fun clearMainFocus(key: String) {
+        if (focusedMainKey == key) focusedMainKey = null
     }
 
     /**
@@ -442,10 +458,18 @@ internal class MoreOptionsSheetOwner(
      *
      * 不能只靠「请求第一个可聚焦项」：那会把光标和滚动一起拽回顶部，
      * 就算 ScrollState 被保住了也白搭（requestFocus 会 bring-into-view）。
+     *
+     * 判定不能用 runCatching().isSuccess —— `FocusRequester.requestFocus()` 失败是
+     * **静默**的：节点还没 attach 时它什么都不做也不抛异常，恒为 success。
+     * 这里改成看 onFocusChanged 有没有真的把焦点落到目标条目上，没落到就由调用方下一帧再试。
      */
     fun restoreMainFocus(): Boolean {
-        val requester = lastMainFocusKey?.let(mainFocusRequesters::get) ?: return false
-        return runCatching { requester.requestFocus() }.isSuccess
+        val key = lastMainFocusKey ?: return false
+        val requester = mainFocusRequesters[key] ?: return false
+        if (focusedMainKey != key) {
+            runCatching { requester.requestFocus() }
+        }
+        return focusedMainKey == key
     }
 
     val sheetGesturesEnabled: Boolean
@@ -970,8 +994,14 @@ internal fun MoreOptionsAnimatedPage(
             // 从二级页回到一级菜单：先回到离开前那一项。
             // 滚动位置由 owner.mainScrollState 一直留着，光标也放回原位，
             // 这样「返回」不会再变成「回到顶部」。
-            if (owner.page == MoreOptionsPage.MAIN && owner.restoreMainFocus()) {
-                return@LaunchedEffect
+            //
+            // 必须跨帧重试：LaunchedEffect 启动时一级菜单刚进组合，条目节点还没被布局
+            // attach，requestFocus() 会静默失败（不抛异常），一帧之后再试才有效。
+            if (owner.page == MoreOptionsPage.MAIN) {
+                repeat(12) {
+                    if (owner.restoreMainFocus()) return@LaunchedEffect
+                    withFrameNanos { }
+                }
             }
             // 先立刻试一次，别上来就先等一帧
             if (runCatching { tvPageFirstFocus.requestFocus() }.getOrDefault(false)) {

@@ -23,7 +23,7 @@ import moe.ouom.neriplayer.R as AppR
  * Created: 2025/10/16
  */
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -47,19 +47,23 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import kotlinx.coroutines.launch
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.runtime.rememberCoroutineScope
+import moe.ouom.neriplayer.ui.tv.TvUserInput
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import moe.ouom.neriplayer.core.player.PlayerManager
 import moe.ouom.neriplayer.data.model.NeteaseArtistSummary
@@ -67,8 +71,8 @@ import moe.ouom.neriplayer.data.model.comments.CommentSource
 import moe.ouom.neriplayer.data.model.comments.CommentPlatform
 import moe.ouom.neriplayer.platform.comments.resolveCommentSource
 import moe.ouom.neriplayer.ui.component.sheet.HalfExpandableSheetPanel
-import moe.ouom.neriplayer.ui.tv.TvInputTrace
-import moe.ouom.neriplayer.ui.tv.tvScrollPane
+import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
+import moe.ouom.neriplayer.ui.tv.tvSealVerticalEdges
 import moe.ouom.neriplayer.ui.theme.NeriDesign
 import moe.ouom.neriplayer.ui.viewmodel.tab.PlaylistSummary
 import java.text.SimpleDateFormat
@@ -76,7 +80,6 @@ import java.util.Date
 import java.util.Locale
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import moe.ouom.neriplayer.common.R as CoreCommonR
@@ -153,8 +156,11 @@ private fun SongEncyclopediaStateContent(
     // 半屏 / 全屏 / 关闭三档由公共组件 HalfExpandableSheetPanel 提供，
     // 与评论面板共用同一套拖拽与吸附实现，避免两处各写一遍。
     val contentScrollState = rememberScrollState()
+    val isTelevision = LocalIsTelevision.current
     HalfExpandableSheetPanel(
         onDismiss = onCloseSheet,
+        // 电视：封顶 / 封底，和设置二级页在 MainTabLayerHost 上用的是同一个修饰符
+        modifier = Modifier.tvSealVerticalEdges(),
         panelTestTag = SONG_ENCYCLOPEDIA_TEST_TAG,
         header = {
             SongEncyclopediaHeader(
@@ -172,8 +178,6 @@ private fun SongEncyclopediaStateContent(
                 .weight(1f)
                 .bottomSheetScrollGuard { false }
                 .verticalScroll(contentScrollState)
-                // 电视：焦点组 + 滚动兜底 + 到底后不许回绕到顶部返回键，都在这个修饰符里。
-                .tvScrollPane(contentScrollState)
                 .padding(
                     horizontal = NeriDesign.tokens.pageHorizontalPadding,
                     vertical = if (NeriDesign.isClean) 12.dp else 8.dp
@@ -208,9 +212,37 @@ private fun SongEncyclopediaStateContent(
                     }
                 }
             }
+            // 电视「落脚点」：内容最末尾放一个可聚焦的空节点。
+            //
+            // 目的不是给用户看的，是把方向搜索「向下」的候选留在面板里：
+            // 最后一项再按下时焦点落到它上面（而不是跨出面板回绕到标题栏的返回键），
+            // 而它本身在内容最底部，bringIntoView 顺带把剩下那一整段滚出来。
+            // 不依赖 canScrollForward 之类的判断 —— 那些条件在「到底了但还没滚完」时不成立。
+            if (isTelevision) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .focusable()
+                        .onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown) {
+                                return@onPreviewKeyEvent false
+                            }
+                            // 上键放行：交回给焦点搜索，回到最后一项
+                            event.key != Key.DirectionUp
+                        }
+                )
+            }
         }
     }
 }
+/**
+ * 标题栏 —— 规则与设置页二级页（`MiuixSettingsDetailScaffold`）完全一致：
+ *
+ *  - 返回键可聚焦，进页面后把光标送到它上面（逐帧重试，用户一按键就停手）；
+ *  - 光标从正文走回返回键时，正文顺手回到顶部 —— 标题下面那几屏纯文字拿不到焦点，
+ *    不这样处理就永远滚不回去。程序自己抢焦点那一次不算（autoFocusingBack）。
+ */
 @Composable
 private fun SongEncyclopediaHeader(
     onDismiss: () -> Unit,
@@ -219,29 +251,47 @@ private fun SongEncyclopediaHeader(
     onToggleFullScreen: () -> Unit,
     contentScrollState: ScrollState
 ) {
-    // 电视：光标落到这一排的返回键上，正文自动回到顶部 ——
-    // 页面顶部那段纯文字拿不到焦点，不这样处理就永远滚不回去。
-    val headerScope = rememberCoroutineScope()
+    val isTelevision = LocalIsTelevision.current
+    val scope = rememberCoroutineScope()
+    val backFocusRequester = remember { FocusRequester() }
+    val autoFocusingBack = remember { mutableStateOf(false) }
+    LaunchedEffect(isTelevision) {
+        if (!isTelevision) return@LaunchedEffect
+        val startTick = TvUserInput.keyDownTick
+        repeat(6) {
+            // 用户已经自己按过键，别再跟用户抢光标
+            if (TvUserInput.keyDownTick != startTick) return@LaunchedEffect
+            autoFocusingBack.value = true
+            val focused = runCatching { backFocusRequester.requestFocus() }.getOrDefault(false)
+            autoFocusingBack.value = false
+            if (focused) return@LaunchedEffect
+            withFrameNanos { }
+        }
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
         IconButton(
             onClick = onDismiss,
-            modifier = Modifier.onFocusChanged { focus ->
-                // 只有用户自己按上键走过来时才回顶。
-                // 焦点若是因为方向搜索的兜底被"跳"到这一格，页面跟着瞬移回顶部，
-                // 看起来就是「按到底又回到了开头」。
-                if (focus.isFocused &&
-                    contentScrollState.value > 0 &&
-                    TvInputTrace.movedUpRecently()
-                ) {
-                    // 瞬时到位：用动画的话，光标紧接着按下会被焦点项的 bringIntoView
-                    // 抢一次滚动，看起来就是页面先升上去、又降下来抖一下。
-                    headerScope.launch {
-                        runCatching { contentScrollState.scrollTo(0) }
+            modifier = if (isTelevision) {
+                Modifier
+                    .focusRequester(backFocusRequester)
+                    // 光标从正文走到返回键时把正文带回顶部。
+                    // 瞬时到位：用动画的话紧接着按下会被焦点项的 bringIntoView 再抢一次滚动，看着会抖。
+                    .onFocusChanged { focus ->
+                        if (
+                            focus.isFocused &&
+                            !autoFocusingBack.value &&
+                            contentScrollState.canScrollBackward
+                        ) {
+                            scope.launch {
+                                runCatching { contentScrollState.scrollTo(0) }
+                            }
+                        }
                     }
-                }
+            } else {
+                Modifier
             }
         ) {
             Icon(
