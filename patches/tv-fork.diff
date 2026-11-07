@@ -1,6 +1,6 @@
 # NeriPlayer TV fork — 相对上游的完整改动（单个合并补丁）
 # 基线 upstream commit : 1ce32a4b  (fix(settings): 修复设置默认启动页后启动应用时需要从首页跳转到启动页 (#641))
-# 我方 tip             : 69ad6351  (fix(tv): 更多面板返回一级菜单保住位置；百科到底按下不再跳到返回键)
+# 我方 tip             : c6a2786a  (fix(tv): 百科焦点按设置二级页规则收敛；三点菜单返回保留位置)
 # 生成命令             : bash fork-tools/make-patches.sh 1ce32a4b
 # 应用                 : git apply -3 patches/tv-fork.diff
 
@@ -954,10 +954,10 @@ index f64f3017..b04db0ca 100644
              create("benchmark") {
                  initWith(getByName("release"))
 diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
-index 3086107b..9bf37d49 100644
+index 3086107b..4964988f 100644
 --- a/app/src/main/AndroidManifest.xml
 +++ b/app/src/main/AndroidManifest.xml
-@@ -7,6 +7,11 @@
+@@ -7,7 +7,14 @@
          android:name="android.hardware.usb.host"
          android:required="false" />
  
@@ -967,9 +967,12 @@ index 3086107b..9bf37d49 100644
 +        android:required="false" />
 +
      <uses-permission android:name="android.permission.INTERNET" />
++    <!-- 应用内更新：下载完 APK 后唤起系统安装器 -->
++    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
      <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
      <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-@@ -67,6 +72,8 @@
+     <uses-permission
+@@ -67,6 +74,8 @@
                  <action android:name="android.intent.action.MAIN" />
  
                  <category android:name="android.intent.category.LAUNCHER" />
@@ -1074,10 +1077,10 @@ index b3fff282..57767191 100644
              return
          }
 diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/NeriApp.kt b/app/src/main/java/moe/ouom/neriplayer/ui/NeriApp.kt
-index 7097f43c..e7bb882a 100644
+index 7097f43c..2545b30b 100644
 --- a/app/src/main/java/moe/ouom/neriplayer/ui/NeriApp.kt
 +++ b/app/src/main/java/moe/ouom/neriplayer/ui/NeriApp.kt
-@@ -24,19 +24,29 @@ package moe.ouom.neriplayer.ui
+@@ -24,19 +24,28 @@ package moe.ouom.neriplayer.ui
   */
  
  import moe.ouom.neriplayer.data.identity.stableKey
@@ -1096,7 +1099,6 @@ index 7097f43c..e7bb882a 100644
 +import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 +import moe.ouom.neriplayer.ui.tv.LocalTvInputTracker
 +import moe.ouom.neriplayer.ui.tv.TvInputActivityTracker
-+import moe.ouom.neriplayer.ui.tv.TvInputTrace
 +import moe.ouom.neriplayer.ui.tv.TvReturnFocus
 +import moe.ouom.neriplayer.ui.tv.isTvDirectionKey
  import androidx.compose.foundation.layout.fillMaxSize
@@ -1107,7 +1109,7 @@ index 7097f43c..e7bb882a 100644
  import androidx.compose.runtime.Composable
  import androidx.compose.runtime.CompositionLocalProvider
  import androidx.compose.runtime.DisposableEffect
-@@ -50,17 +60,26 @@ import androidx.compose.runtime.remember
+@@ -50,17 +59,26 @@ import androidx.compose.runtime.remember
  import androidx.compose.runtime.rememberCoroutineScope
  import androidx.compose.runtime.rememberUpdatedState
  import androidx.compose.runtime.saveable.rememberSaveable
@@ -1134,7 +1136,7 @@ index 7097f43c..e7bb882a 100644
  import androidx.compose.ui.platform.LocalResources
  import androidx.compose.ui.platform.LocalView
  import androidx.compose.ui.platform.LocalWindowInfo
-@@ -122,6 +141,9 @@ import moe.ouom.neriplayer.data.model.settings.appearance.ThemePreferenceSnapsho
+@@ -122,6 +140,9 @@ import moe.ouom.neriplayer.data.model.settings.appearance.ThemePreferenceSnapsho
  import moe.ouom.neriplayer.data.settings.appearance.isCurrentBuildDimensity
  import moe.ouom.neriplayer.data.settings.playback.readPlaybackPreferenceSnapshotCached
  import moe.ouom.neriplayer.navigation.Destinations
@@ -1144,7 +1146,7 @@ index 7097f43c..e7bb882a 100644
  import moe.ouom.neriplayer.data.model.navigation.LauncherShortcutAction
  import moe.ouom.neriplayer.data.model.navigation.LauncherShortcutRequest
  import moe.ouom.neriplayer.navigation.launcherShortcutMainTabRoute
-@@ -141,6 +163,7 @@ import moe.ouom.neriplayer.ui.screen.host.rememberHomeHostRuntimeState
+@@ -141,6 +162,7 @@ import moe.ouom.neriplayer.ui.screen.host.rememberHomeHostRuntimeState
  import moe.ouom.neriplayer.ui.screen.tab.home.shouldShowHomeContinueSection
  import moe.ouom.neriplayer.ui.screen.tab.home.rememberHomeUsageSnapshot
  import moe.ouom.neriplayer.ui.screen.tab.home.HomeContinueDiagnostics
@@ -1152,7 +1154,7 @@ index 7097f43c..e7bb882a 100644
  import moe.ouom.neriplayer.ui.theme.NeriTheme
  import moe.ouom.neriplayer.ui.theme.biasCoverSeedTowardBlue
  import moe.ouom.neriplayer.ui.theme.rememberActualSystemDarkTheme
-@@ -169,7 +192,6 @@ import moe.ouom.neriplayer.ui.haptic.syncHapticFeedbackSetting
+@@ -169,7 +191,6 @@ import moe.ouom.neriplayer.ui.haptic.syncHapticFeedbackSetting
  import moe.ouom.neriplayer.ui.navigation.AppBottomBarPresentation
  import moe.ouom.neriplayer.ui.navigation.playbackSourceNavigationAction
  import moe.ouom.neriplayer.ui.navigation.shouldSuppressPlaybackNavigation
@@ -1160,7 +1162,7 @@ index 7097f43c..e7bb882a 100644
  import moe.ouom.neriplayer.ui.navigation.AppNavigationGraph
  import moe.ouom.neriplayer.ui.navigation.AppNavigationGraphOwner
  import moe.ouom.neriplayer.ui.navigation.AppNavigationGraphPresentation
-@@ -183,6 +205,7 @@ import moe.ouom.neriplayer.ui.navigation.MainTabPredictiveBackHandler
+@@ -183,6 +204,7 @@ import moe.ouom.neriplayer.ui.navigation.MainTabPredictiveBackHandler
  import moe.ouom.neriplayer.ui.navigation.biliPlaylistSourceRoute
  import moe.ouom.neriplayer.ui.navigation.biliUploaderSourceRoute
  import moe.ouom.neriplayer.ui.navigation.localPlaylistSourceRoute
@@ -1168,7 +1170,7 @@ index 7097f43c..e7bb882a 100644
  import moe.ouom.neriplayer.ui.navigation.mainTabDetailContentOffsetEasing
  import moe.ouom.neriplayer.ui.navigation.navigationGson
  import moe.ouom.neriplayer.ui.navigation.neteaseAlbumSourceRoute
-@@ -238,6 +261,33 @@ import moe.ouom.neriplayer.R as AppR
+@@ -238,6 +260,33 @@ import moe.ouom.neriplayer.R as AppR
  private val EmptyLauncherShortcutRequestFlow =
      MutableStateFlow<LauncherShortcutRequest?>(null)
  private const val LAUNCHER_SHORTCUT_PLAYLIST_READY_TIMEOUT_MS = 5000L
@@ -1202,7 +1204,7 @@ index 7097f43c..e7bb882a 100644
  internal const val MAIN_TAB_LAYER_Z_INDEX = 0f
  internal const val NAV_HOST_LAYER_Z_INDEX = 1f
  internal const val MINI_PLAYER_OVERLAY_Z_INDEX = 2f
-@@ -272,6 +322,24 @@ internal fun localPlaylistIdFromSourceRoute(sourceRoute: String?): Long? {
+@@ -272,6 +321,24 @@ internal fun localPlaylistIdFromSourceRoute(sourceRoute: String?): Long? {
          ?.toLongOrNull()
  }
  
@@ -1227,7 +1229,7 @@ index 7097f43c..e7bb882a 100644
  /**
   * 应用主界面入口.
   *
-@@ -294,13 +362,33 @@ fun NeriApp(
+@@ -294,13 +361,33 @@ fun NeriApp(
      onGlobalDialogVisibilityChanged: (Boolean) -> Unit = {},
      canShowGlobalDialogs: Boolean = true
  ) {
@@ -1262,7 +1264,7 @@ index 7097f43c..e7bb882a 100644
          ) {
              NeriAppContent(
                  initialThemeSnapshot = initialThemeSnapshot,
-@@ -412,6 +500,11 @@ private fun NeriAppContent(
+@@ -412,6 +499,11 @@ private fun NeriAppContent(
      var currentPlaybackSourceRoute by rememberSaveable { mutableStateOf<String?>(null) }
      var restoreLyricsAfterAlbumBack by rememberSaveable { mutableStateOf(false) }
      var lyricsAlbumRouteObserved by rememberSaveable { mutableStateOf(false) }
@@ -1274,7 +1276,7 @@ index 7097f43c..e7bb882a 100644
      val devModeEnabled by repo.devModeEnabledFlow.collectAsStateWithLifecycle(initialValue = false)
      val alwaysRecordLogsEnabled by repo.alwaysRecordLogsEnabledFlow.collectAsStateWithLifecycle(initialValue = false)
      val themeSeedColor by repo.themeSeedColorFlow.collectAsStateWithLifecycle(initialValue = ThemeDefaults.DEFAULT_SEED_COLOR_HEX)
-@@ -430,8 +523,11 @@ private fun NeriAppContent(
+@@ -430,8 +522,11 @@ private fun NeriAppContent(
      val lyricBlurEnabled by repo.lyricBlurEnabledFlow.collectAsStateWithLifecycle(initialValue = true)
      val lyricBlurAmount by repo.lyricBlurAmountFlow.collectAsStateWithLifecycle(initialValue = 1.5f)
      val advancedLyricsEnabled by repo.advancedLyricsEnabledFlow.collectAsStateWithLifecycle(initialValue = true)
@@ -1287,7 +1289,7 @@ index 7097f43c..e7bb882a 100644
      val advancedBlurEnabled by repo.advancedBlurEnabledFlow.collectAsStateWithLifecycle(initialValue = true)
      val enhancedAdvancedBlurEnabled by repo.enhancedAdvancedBlurEnabledFlow
          .collectAsStateWithLifecycle(initialValue = false)
-@@ -446,7 +542,7 @@ private fun NeriAppContent(
+@@ -446,7 +541,7 @@ private fun NeriAppContent(
          initialValue = initialAdvancedBlurQuality
      )
      val advancedBlurAvailable = isAdvancedGlassBackendSupported(Build.VERSION.SDK_INT)
@@ -1296,7 +1298,7 @@ index 7097f43c..e7bb882a 100644
      val nowPlayingAudioReactiveEnabled by repo.nowPlayingAudioReactiveEnabledFlow.collectAsStateWithLifecycle(initialValue = true)
      val nowPlayingDynamicBackgroundEnabled by repo.nowPlayingDynamicBackgroundEnabledFlow.collectAsStateWithLifecycle(initialValue = true)
      val nowPlayingCoverBlurBackgroundEnabled by repo.nowPlayingCoverBlurBackgroundEnabledFlow.collectAsStateWithLifecycle(initialValue = false)
-@@ -608,6 +704,8 @@ private fun NeriAppContent(
+@@ -608,6 +703,8 @@ private fun NeriAppContent(
      }
  
      val currentSong by PlayerManager.currentSongFlow.collectAsStateWithLifecycle()
@@ -1305,7 +1307,7 @@ index 7097f43c..e7bb882a 100644
      val displayCoverUrl = rememberSongDisplayCoverUrl(currentSong)
      val currentSongKey = remember(currentSong) { currentSong?.stableKey() }
      val coverAssetRootGeneration by LocalAssetInvalidationBus.rootGenerationFlow
-@@ -644,6 +742,8 @@ private fun NeriAppContent(
+@@ -644,6 +741,8 @@ private fun NeriAppContent(
          coverAssetRefresh.key(coverAssetSongRevision)
      }
      val scope = rememberCoroutineScope()
@@ -1314,7 +1316,7 @@ index 7097f43c..e7bb882a 100644
      var pendingTrafficRiskDownloadRequest by remember {
          mutableStateOf<GlobalDownloadManager.TrafficRiskDownloadRequest?>(null)
      }
-@@ -894,8 +994,8 @@ private fun NeriAppContent(
+@@ -894,8 +993,8 @@ private fun NeriAppContent(
      ) {
          AdvancedGlassController(
              sdkInt = Build.VERSION.SDK_INT,
@@ -1325,7 +1327,7 @@ index 7097f43c..e7bb882a 100644
              backendReady = isAdvancedGlassBackendSupported(Build.VERSION.SDK_INT),
              enhancedAdvancedBlurRadiusDp = enhancedAdvancedBlurRadiusDp,
              advancedBlurQuality = advancedBlurQuality,
-@@ -1217,6 +1317,11 @@ private fun NeriAppContent(
+@@ -1217,6 +1316,11 @@ private fun NeriAppContent(
              // 恢复导航栈时保留原起点，避免启动页偏好变化后 popUpTo 找不到栈内目标
              val navHostStartDestination = rememberSaveable { initialMainStartDestination }
              val navController = rememberNavController()
@@ -1337,7 +1339,7 @@ index 7097f43c..e7bb882a 100644
              val navigationVisibility = rememberAppNavigationVisibility(navController, lifecycleOwner)
              val currentRoute = navigationVisibility.currentRoute
              val visibleNavigationOwners = navigationVisibility.owners
-@@ -1299,7 +1404,20 @@ private fun NeriAppContent(
+@@ -1299,7 +1403,20 @@ private fun NeriAppContent(
                      visibleMainTabGlassOwners +
                          MainTabGlassOwner(selectedMainTabRoute)
              }
@@ -1359,7 +1361,7 @@ index 7097f43c..e7bb882a 100644
                  if (selectedMainTabRoute != route) {
                      selectedMainTabRoute = route
                  }
-@@ -1313,13 +1431,22 @@ private fun NeriAppContent(
+@@ -1313,13 +1430,22 @@ private fun NeriAppContent(
                  ) {
                      return
                  }
@@ -1386,7 +1388,7 @@ index 7097f43c..e7bb882a 100644
                  }
              }
              fun showLauncherShortcutToast(messageRes: Int) {
-@@ -1431,6 +1558,8 @@ private fun NeriAppContent(
+@@ -1431,6 +1557,8 @@ private fun NeriAppContent(
                  scope.launch {
                      preloadNeteaseDetailRouteCover(route)
                      showNowPlayingLyrics = false
@@ -1395,7 +1397,7 @@ index 7097f43c..e7bb882a 100644
                      showNowPlaying = false
                      navController.navigate(route) {
                          launchSingleTop = true
-@@ -1443,6 +1572,60 @@ private fun NeriAppContent(
+@@ -1443,6 +1571,60 @@ private fun NeriAppContent(
                  navController.navigateToYouTubeMusicCreator(creator)
              fun navigateToYouTubeMusicPlaylist(playlist: YouTubeMusicPlaylist) =
                  navController.navigateToYouTubeMusicPlaylist(playlist)
@@ -1456,7 +1458,7 @@ index 7097f43c..e7bb882a 100644
              LaunchedEffect(currentRoute, restoreLyricsAfterAlbumBack) {
                  if (!restoreLyricsAfterAlbumBack) {
                      lyricsAlbumRouteObserved = false
-@@ -1464,7 +1647,6 @@ private fun NeriAppContent(
+@@ -1464,7 +1646,6 @@ private fun NeriAppContent(
              }
  
              val snackbarHostState = remember { SnackbarHostState() }
@@ -1464,7 +1466,7 @@ index 7097f43c..e7bb882a 100644
  
              val navigationSceneRenderer = AppNavigationSceneRenderer(
                  advancedGlassController = advancedGlassController,
-@@ -1669,7 +1851,12 @@ private fun NeriAppContent(
+@@ -1669,7 +1850,12 @@ private fun NeriAppContent(
              NowPlayingPresentationEffects(
                  showNowPlaying = showNowPlaying,
                  lifecycleResumed = lifecycleResumed,
@@ -1478,7 +1480,7 @@ index 7097f43c..e7bb882a 100644
                  keepScreenOn = nowPlayingKeepScreenOn
              )
  
-@@ -1681,7 +1868,10 @@ private fun NeriAppContent(
+@@ -1681,7 +1867,10 @@ private fun NeriAppContent(
              CompositionLocalProvider(
                  LocalSharedCoverFlight provides sharedCoverFlight,
                  LocalHasCustomBackground provides hasCustomBackground,
@@ -1490,7 +1492,7 @@ index 7097f43c..e7bb882a 100644
              ) {
              AdvancedGlassHost(
                  controller = advancedGlassController,
-@@ -1690,7 +1880,22 @@ private fun NeriAppContent(
+@@ -1690,7 +1879,21 @@ private fun NeriAppContent(
                  activeNavigationOwners = activeAdvancedGlassOwners,
                  disableStretchOverscroll = hasCustomBackground
              ) {
@@ -1505,7 +1507,6 @@ index 7097f43c..e7bb882a 100644
 +                                TvReturnFocus.onUserInput()
 +                                if (event.key.isTvDirectionKey()) {
 +                                    tvInputTracker.onDirectionKey()
-+                                    TvInputTrace.onKeyDown(event.key)
 +                                }
 +                            }
 +                            false
@@ -1514,7 +1515,7 @@ index 7097f43c..e7bb882a 100644
                  Box(
                      modifier = Modifier
                          .fillMaxSize()
-@@ -1721,7 +1926,9 @@ private fun NeriAppContent(
+@@ -1721,7 +1924,9 @@ private fun NeriAppContent(
                              .drawNowPlayingUnderlay(
                                  flight = sharedCoverFlight,
                                  playbackVisible = { showNowPlaying },
@@ -1525,7 +1526,7 @@ index 7097f43c..e7bb882a 100644
                              )
                      ) {
                      AppNavigationScaffold(
-@@ -1736,26 +1943,28 @@ private fun NeriAppContent(
+@@ -1736,26 +1941,28 @@ private fun NeriAppContent(
                              alwaysUseNewTabStyle = true,
                              backgroundImageUri = backgroundImageUri
                          ),
@@ -1566,7 +1567,7 @@ index 7097f43c..e7bb882a 100644
                              AdvancedGlassNavigationHandoff(
                                  enabled = shouldUseAdvancedGlassNavigationHandoff(
                                      visibleNavigationRoutes
-@@ -1797,10 +2006,120 @@ private fun NeriAppContent(
+@@ -1797,10 +2004,120 @@ private fun NeriAppContent(
                                  enabled = !showNowPlaying && !nowPlayingOverlayMounted && pendingMainTabRoute == null,
                                  onBackCommitted = { selectedMainTabRoute = it }
                              )
@@ -1687,7 +1688,7 @@ index 7097f43c..e7bb882a 100644
                                  modifier = Modifier
                                      .fillMaxSize()
                                      .onSizeChanged { size ->
-@@ -1866,29 +2185,68 @@ private fun NeriAppContent(
+@@ -1866,29 +2183,68 @@ private fun NeriAppContent(
                          ),
                          onVisibilityChanged = { mounted ->
                              nowPlayingOverlayMounted = mounted
@@ -10570,7 +10571,7 @@ index 7b6a1c3f..54f8ea6c 100644
 +    }
 +}
 diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/NowPlayingSecondaryActions.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/NowPlayingSecondaryActions.kt
-index 8cc9b2ef..cfd9f723 100644
+index 8cc9b2ef..830853a5 100644
 --- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/NowPlayingSecondaryActions.kt
 +++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/NowPlayingSecondaryActions.kt
 @@ -14,17 +14,26 @@ import androidx.compose.animation.fadeOut
@@ -10648,7 +10649,7 @@ index 8cc9b2ef..cfd9f723 100644
  
  private val NowPlayingFeedbackExtraBottomPadding = 24.dp
  private val EditSongInfoFeedbackControlClearance = 72.dp
-@@ -386,6 +409,45 @@ internal class MoreOptionsSheetOwner(
+@@ -386,6 +409,69 @@ internal class MoreOptionsSheetOwner(
      var sheetImeVisible by mutableStateOf(false)
          private set
  
@@ -10667,17 +10668,33 @@ index 8cc9b2ef..cfd9f723 100644
 +    /** 一级菜单最后一次聚焦的条目，返回主页时据此把光标放回去 */
 +    private var lastMainFocusKey: String? = null
 +
++    /** 当前真正持有焦点的一级菜单条目（由 onFocusChanged 维护，用来校验 requestFocus 是否生效） */
++    private var focusedMainKey: String? = null
++
 +    fun registerMainFocus(key: String, requester: FocusRequester) {
 +        mainFocusRequesters[key] = requester
 +    }
 +
++    /**
++     * 条目离开组合时只摘掉 requester，**不能清 [lastMainFocusKey]**。
++     *
++     * 切到二级页时 `MoreOptionsMainPage` 直接 return，一级菜单所有条目一起离开组合，
++     * 每个条目都会走一次 onDispose；原来这里顺手把 key 清了，结果「记住的那一项」
++     * 在真正需要它的那一刻已经被抹成 null，返回时 restoreMainFocus() 直接返回 false，
++     * 又退回「请求第一个可聚焦项」，表现就是光标和滚动一起回到顶部。
++     */
 +    fun unregisterMainFocus(key: String) {
 +        mainFocusRequesters.remove(key)
-+        if (lastMainFocusKey == key) lastMainFocusKey = null
++        if (focusedMainKey == key) focusedMainKey = null
 +    }
 +
 +    fun noteMainFocus(key: String) {
 +        lastMainFocusKey = key
++        focusedMainKey = key
++    }
++
++    fun clearMainFocus(key: String) {
++        if (focusedMainKey == key) focusedMainKey = null
 +    }
 +
 +    /**
@@ -10685,16 +10702,24 @@ index 8cc9b2ef..cfd9f723 100644
 +     *
 +     * 不能只靠「请求第一个可聚焦项」：那会把光标和滚动一起拽回顶部，
 +     * 就算 ScrollState 被保住了也白搭（requestFocus 会 bring-into-view）。
++     *
++     * 判定不能用 runCatching().isSuccess —— `FocusRequester.requestFocus()` 失败是
++     * **静默**的：节点还没 attach 时它什么都不做也不抛异常，恒为 success。
++     * 这里改成看 onFocusChanged 有没有真的把焦点落到目标条目上，没落到就由调用方下一帧再试。
 +     */
 +    fun restoreMainFocus(): Boolean {
-+        val requester = lastMainFocusKey?.let(mainFocusRequesters::get) ?: return false
-+        return runCatching { requester.requestFocus() }.isSuccess
++        val key = lastMainFocusKey ?: return false
++        val requester = mainFocusRequesters[key] ?: return false
++        if (focusedMainKey != key) {
++            runCatching { requester.requestFocus() }
++        }
++        return focusedMainKey == key
 +    }
 +
      val sheetGesturesEnabled: Boolean
          get() = page != MoreOptionsPage.LISTEN_TOGETHER && !isEditSongSaving && !isMetadataApplicationBusy
  
-@@ -558,11 +620,16 @@ private fun rememberMoreOptionsSheetSession(
+@@ -558,11 +644,16 @@ private fun rememberMoreOptionsSheetSession(
      val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
      val coroutineScope = rememberCoroutineScope()
      val latestOnDismiss = rememberUpdatedState(navigation.onDismiss)
@@ -10713,7 +10738,7 @@ index 8cc9b2ef..cfd9f723 100644
                  initialPage = resolveMoreOptionsInitialPage(navigation.startWithLyricBehavior)
              ) { latestOnDismiss.value() }
          )
-@@ -682,6 +749,22 @@ private fun MoreOptionsPages(
+@@ -682,6 +773,22 @@ private fun MoreOptionsPages(
      MoreOptionsEncyclopediaPage(targetState, viewModel, actualSong, offlineMode, owner, navigation)
  }
  
@@ -10736,7 +10761,7 @@ index 8cc9b2ef..cfd9f723 100644
  @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
  @Composable
  internal fun MoreOptionsSheetSurface(
-@@ -690,6 +773,13 @@ internal fun MoreOptionsSheetSurface(
+@@ -690,6 +797,13 @@ internal fun MoreOptionsSheetSurface(
      snackbarHostState: SnackbarHostState,
      content: @Composable () -> Unit
  ) {
@@ -10750,7 +10775,7 @@ index 8cc9b2ef..cfd9f723 100644
      val predictiveDismissState = rememberPredictiveDismissState()
      var sheetSize by remember { mutableStateOf(IntSize.Zero) }
      val presentation = owner.windowPresentation(isCompactEditSongLandscape())
-@@ -721,7 +811,79 @@ internal fun MoreOptionsSheetSurface(
+@@ -721,7 +835,79 @@ internal fun MoreOptionsSheetSurface(
              showDragHandle = presentation.showDragHandle,
              onDismissRequest = owner.onDismissRequest
          ) {
@@ -10831,7 +10856,7 @@ index 8cc9b2ef..cfd9f723 100644
          }
      }
  }
-@@ -765,13 +927,13 @@ private fun MoreOptionsBackHandlers(owner: MoreOptionsSheetOwner) {
+@@ -765,13 +951,13 @@ private fun MoreOptionsBackHandlers(owner: MoreOptionsSheetOwner) {
  
  @Composable
  private fun MoreOptionsSheetBody(
@@ -10848,7 +10873,7 @@ index 8cc9b2ef..cfd9f723 100644
      }
  }
  
-@@ -796,13 +958,58 @@ internal fun MoreOptionsAnimatedPage(
+@@ -796,13 +982,64 @@ internal fun MoreOptionsAnimatedPage(
          onBack = { owner.back() },
          label = "more_options_sheet_content"
      )
@@ -10864,8 +10889,14 @@ index 8cc9b2ef..cfd9f723 100644
 +            // 从二级页回到一级菜单：先回到离开前那一项。
 +            // 滚动位置由 owner.mainScrollState 一直留着，光标也放回原位，
 +            // 这样「返回」不会再变成「回到顶部」。
-+            if (owner.page == MoreOptionsPage.MAIN && owner.restoreMainFocus()) {
-+                return@LaunchedEffect
++            //
++            // 必须跨帧重试：LaunchedEffect 启动时一级菜单刚进组合，条目节点还没被布局
++            // attach，requestFocus() 会静默失败（不抛异常），一帧之后再试才有效。
++            if (owner.page == MoreOptionsPage.MAIN) {
++                repeat(12) {
++                    if (owner.restoreMainFocus()) return@LaunchedEffect
++                    withFrameNanos { }
++                }
 +            }
 +            // 先立刻试一次，别上来就先等一帧
 +            if (runCatching { tvPageFirstFocus.requestFocus() }.getOrDefault(false)) {
@@ -10911,7 +10942,7 @@ index 8cc9b2ef..cfd9f723 100644
      )
  }
  
-@@ -817,6 +1024,9 @@ private fun MoreOptionsListenTogetherPage(
+@@ -817,6 +1054,9 @@ private fun MoreOptionsListenTogetherPage(
              .fillMaxWidth()
              .bottomSheetScrollGuard()
              .verticalScroll(listenTogetherScrollState)
@@ -10921,7 +10952,7 @@ index 8cc9b2ef..cfd9f723 100644
              .padding(horizontal = 16.dp, vertical = 8.dp)
              .windowInsetsPadding(WindowInsets.navigationBars)
      ) {
-@@ -1191,6 +1401,8 @@ private fun MoreOptionsMainPageContent(
+@@ -1191,6 +1431,8 @@ private fun MoreOptionsMainPageContent(
          translationFontScale = translationFontScale,
          currentPlaybackAudioInfo = currentPlaybackAudioInfo,
          isDismissing = owner.isDismissing,
@@ -11516,7 +11547,7 @@ index 15a6383f..1a5217d0 100644
                      )
                  }
 diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/actions/MoreOptionsMainContent.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/actions/MoreOptionsMainContent.kt
-index c6d24afb..5c65dc66 100644
+index c6d24afb..530b20fc 100644
 --- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/actions/MoreOptionsMainContent.kt
 +++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/actions/MoreOptionsMainContent.kt
 @@ -28,8 +28,9 @@ import androidx.compose.foundation.layout.Column
@@ -11705,7 +11736,7 @@ index c6d24afb..5c65dc66 100644
      )
      if (!showDialog) return
  
-@@ -656,8 +690,35 @@ private fun MoreOptionsItem(
+@@ -656,8 +690,37 @@ private fun MoreOptionsItem(
      enabled: Boolean = true,
      busy: Boolean = false,
      subtitle: String? = null,
@@ -11735,14 +11766,16 @@ index c6d24afb..5c65dc66 100644
 +    // 自己生成的那个 focusable 节点
 +    val itemModifier = if (focusOwner != null && key != null) {
 +        val base = if (focusRequester != null) modifier.focusRequester(focusRequester) else modifier
-+        base.onFocusChanged { state -> if (state.isFocused) focusOwner.noteMainFocus(key) }
++        base.onFocusChanged { state ->
++            if (state.isFocused) focusOwner.noteMainFocus(key) else focusOwner.clearMainFocus(key)
++        }
 +    } else {
 +        modifier
 +    }
      if (!NeriDesign.isClean) {
          ListItem(
              headlineContent = { Text(title) },
-@@ -669,13 +730,13 @@ private fun MoreOptionsItem(
+@@ -669,13 +732,13 @@ private fun MoreOptionsItem(
                  }
              },
              supportingContent = supporting ?: subtitle?.let { text -> { Text(text) } },
@@ -12122,10 +12155,10 @@ index f6205b40..5d30059b 100644
  }
 \ No newline at end of file
 diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/actions/SongEncyclopediaContent.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/actions/SongEncyclopediaContent.kt
-index c9713ce5..d8bbb2bf 100644
+index c9713ce5..ad36a454 100644
 --- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/actions/SongEncyclopediaContent.kt
 +++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/nowplaying/actions/SongEncyclopediaContent.kt
-@@ -1,408 +1,448 @@
+@@ -1,408 +1,498 @@
 -package moe.ouom.neriplayer.ui.screen.nowplaying.actions
 -/*
 - * NeriPlayer - A unified Android player for streaming music and videos from multiple online platforms.
@@ -12559,7 +12592,7 @@ index c9713ce5..d8bbb2bf 100644
 + * Created: 2025/10/16
 + */
 +import androidx.compose.foundation.clickable
-+import androidx.compose.foundation.focusGroup
++import androidx.compose.foundation.focusable
 +import androidx.compose.foundation.layout.Box
 +import androidx.compose.foundation.layout.Arrangement
 +import androidx.compose.foundation.layout.Column
@@ -12583,19 +12616,23 @@ index c9713ce5..d8bbb2bf 100644
 +import androidx.compose.material3.MaterialTheme
 +import androidx.compose.material3.Text
 +import androidx.compose.runtime.Composable
++import kotlinx.coroutines.launch
++import androidx.compose.ui.focus.onFocusChanged
++import androidx.compose.runtime.rememberCoroutineScope
++import moe.ouom.neriplayer.ui.tv.TvUserInput
++import androidx.compose.ui.focus.focusRequester
++import androidx.compose.ui.focus.FocusRequester
++import androidx.compose.runtime.withFrameNanos
 +import androidx.compose.runtime.DisposableEffect
 +import androidx.compose.runtime.LaunchedEffect
 +import androidx.compose.ui.Modifier
-+import androidx.compose.ui.focus.focusProperties
 +import androidx.compose.ui.input.key.Key
 +import androidx.compose.ui.input.key.KeyEventType
 +import androidx.compose.ui.input.key.key
 +import androidx.compose.ui.input.key.onPreviewKeyEvent
 +import androidx.compose.ui.input.key.type
-+import androidx.compose.ui.focus.onFocusChanged
 +import androidx.compose.ui.res.stringResource
 +import androidx.compose.ui.unit.dp
-+import kotlinx.coroutines.launch
 +import androidx.lifecycle.compose.collectAsStateWithLifecycle
 +import moe.ouom.neriplayer.core.player.PlayerManager
 +import moe.ouom.neriplayer.data.model.NeteaseArtistSummary
@@ -12603,8 +12640,8 @@ index c9713ce5..d8bbb2bf 100644
 +import moe.ouom.neriplayer.data.model.comments.CommentPlatform
 +import moe.ouom.neriplayer.platform.comments.resolveCommentSource
 +import moe.ouom.neriplayer.ui.component.sheet.HalfExpandableSheetPanel
-+import moe.ouom.neriplayer.ui.tv.TvInputTrace
-+import moe.ouom.neriplayer.ui.tv.tvScrollPane
++import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
++import moe.ouom.neriplayer.ui.tv.tvSealVerticalEdges
 +import moe.ouom.neriplayer.ui.theme.NeriDesign
 +import moe.ouom.neriplayer.ui.viewmodel.tab.PlaylistSummary
 +import java.text.SimpleDateFormat
@@ -12612,7 +12649,6 @@ index c9713ce5..d8bbb2bf 100644
 +import java.util.Locale
 +import androidx.compose.runtime.mutableStateOf
 +import androidx.compose.runtime.remember
-+import androidx.compose.runtime.rememberCoroutineScope
 +import androidx.compose.runtime.setValue
 +import androidx.compose.runtime.getValue
 +import moe.ouom.neriplayer.common.R as CoreCommonR
@@ -12689,8 +12725,11 @@ index c9713ce5..d8bbb2bf 100644
 +    // 半屏 / 全屏 / 关闭三档由公共组件 HalfExpandableSheetPanel 提供，
 +    // 与评论面板共用同一套拖拽与吸附实现，避免两处各写一遍。
 +    val contentScrollState = rememberScrollState()
++    val isTelevision = LocalIsTelevision.current
 +    HalfExpandableSheetPanel(
 +        onDismiss = onCloseSheet,
++        // 电视：封顶 / 封底，和设置二级页在 MainTabLayerHost 上用的是同一个修饰符
++        modifier = Modifier.tvSealVerticalEdges(),
 +        panelTestTag = SONG_ENCYCLOPEDIA_TEST_TAG,
 +        header = {
 +            SongEncyclopediaHeader(
@@ -12708,8 +12747,6 @@ index c9713ce5..d8bbb2bf 100644
 +                .weight(1f)
 +                .bottomSheetScrollGuard { false }
 +                .verticalScroll(contentScrollState)
-+                // 电视：焦点组 + 滚动兜底 + 到底后不许回绕到顶部返回键，都在这个修饰符里。
-+                .tvScrollPane(contentScrollState)
 +                .padding(
 +                    horizontal = NeriDesign.tokens.pageHorizontalPadding,
 +                    vertical = if (NeriDesign.isClean) 12.dp else 8.dp
@@ -12744,9 +12781,37 @@ index c9713ce5..d8bbb2bf 100644
 +                    }
 +                }
 +            }
++            // 电视「落脚点」：内容最末尾放一个可聚焦的空节点。
++            //
++            // 目的不是给用户看的，是把方向搜索「向下」的候选留在面板里：
++            // 最后一项再按下时焦点落到它上面（而不是跨出面板回绕到标题栏的返回键），
++            // 而它本身在内容最底部，bringIntoView 顺带把剩下那一整段滚出来。
++            // 不依赖 canScrollForward 之类的判断 —— 那些条件在「到底了但还没滚完」时不成立。
++            if (isTelevision) {
++                Box(
++                    modifier = Modifier
++                        .fillMaxWidth()
++                        .height(1.dp)
++                        .focusable()
++                        .onPreviewKeyEvent { event ->
++                            if (event.type != KeyEventType.KeyDown) {
++                                return@onPreviewKeyEvent false
++                            }
++                            // 上键放行：交回给焦点搜索，回到最后一项
++                            event.key != Key.DirectionUp
++                        }
++                )
++            }
 +        }
 +    }
 +}
++/**
++ * 标题栏 —— 规则与设置页二级页（`MiuixSettingsDetailScaffold`）完全一致：
++ *
++ *  - 返回键可聚焦，进页面后把光标送到它上面（逐帧重试，用户一按键就停手）；
++ *  - 光标从正文走回返回键时，正文顺手回到顶部 —— 标题下面那几屏纯文字拿不到焦点，
++ *    不这样处理就永远滚不回去。程序自己抢焦点那一次不算（autoFocusingBack）。
++ */
 +@Composable
 +private fun SongEncyclopediaHeader(
 +    onDismiss: () -> Unit,
@@ -12755,29 +12820,47 @@ index c9713ce5..d8bbb2bf 100644
 +    onToggleFullScreen: () -> Unit,
 +    contentScrollState: ScrollState
 +) {
-+    // 电视：光标落到这一排的返回键上，正文自动回到顶部 ——
-+    // 页面顶部那段纯文字拿不到焦点，不这样处理就永远滚不回去。
-+    val headerScope = rememberCoroutineScope()
++    val isTelevision = LocalIsTelevision.current
++    val scope = rememberCoroutineScope()
++    val backFocusRequester = remember { FocusRequester() }
++    val autoFocusingBack = remember { mutableStateOf(false) }
++    LaunchedEffect(isTelevision) {
++        if (!isTelevision) return@LaunchedEffect
++        val startTick = TvUserInput.keyDownTick
++        repeat(6) {
++            // 用户已经自己按过键，别再跟用户抢光标
++            if (TvUserInput.keyDownTick != startTick) return@LaunchedEffect
++            autoFocusingBack.value = true
++            val focused = runCatching { backFocusRequester.requestFocus() }.getOrDefault(false)
++            autoFocusingBack.value = false
++            if (focused) return@LaunchedEffect
++            withFrameNanos { }
++        }
++    }
 +    Row(
 +        modifier = Modifier.fillMaxWidth(),
 +        verticalAlignment = Alignment.CenterVertically
 +    ) {
 +        IconButton(
 +            onClick = onDismiss,
-+            modifier = Modifier.onFocusChanged { focus ->
-+                // 只有用户自己按上键走过来时才回顶。
-+                // 焦点若是因为方向搜索的兜底被"跳"到这一格，页面跟着瞬移回顶部，
-+                // 看起来就是「按到底又回到了开头」。
-+                if (focus.isFocused &&
-+                    contentScrollState.value > 0 &&
-+                    TvInputTrace.movedUpRecently()
-+                ) {
-+                    // 瞬时到位：用动画的话，光标紧接着按下会被焦点项的 bringIntoView
-+                    // 抢一次滚动，看起来就是页面先升上去、又降下来抖一下。
-+                    headerScope.launch {
-+                        runCatching { contentScrollState.scrollTo(0) }
++            modifier = if (isTelevision) {
++                Modifier
++                    .focusRequester(backFocusRequester)
++                    // 光标从正文走到返回键时把正文带回顶部。
++                    // 瞬时到位：用动画的话紧接着按下会被焦点项的 bringIntoView 再抢一次滚动，看着会抖。
++                    .onFocusChanged { focus ->
++                        if (
++                            focus.isFocused &&
++                            !autoFocusingBack.value &&
++                            contentScrollState.canScrollBackward
++                        ) {
++                            scope.launch {
++                                runCatching { contentScrollState.scrollTo(0) }
++                            }
++                        }
 +                    }
-+                }
++            } else {
++                Modifier
 +            }
 +        ) {
 +            Icon(
@@ -23457,6 +23540,251 @@ index f09a62ca..1093cd37 100644
                                      leadingContent = {
                                          SettingRowIcon(
                                              key = "internationalization",
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/SettingsAboutInteractions.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/SettingsAboutInteractions.kt
+index fb1b06b9..9499e361 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/SettingsAboutInteractions.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/SettingsAboutInteractions.kt
+@@ -7,11 +7,19 @@ import android.content.Intent
+ import android.content.res.Resources
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.MutableIntState
++import androidx.compose.runtime.getValue
+ import androidx.compose.runtime.mutableIntStateOf
++import androidx.compose.runtime.mutableStateOf
+ import androidx.compose.runtime.remember
++import androidx.compose.runtime.rememberCoroutineScope
++import androidx.compose.runtime.setValue
+ import androidx.compose.ui.platform.LocalContext
+ import androidx.compose.ui.platform.LocalResources
+ import androidx.core.net.toUri
++import kotlinx.coroutines.launch
++import moe.ouom.neriplayer.BuildConfig
++import moe.ouom.neriplayer.update.AppUpdateRepository
++import moe.ouom.neriplayer.ui.feedback.AppFeedback
+ import moe.ouom.neriplayer.common.R as CoreCommonR
+ import moe.ouom.neriplayer.util.platform.tryStartActivity
+ import moe.ouom.neriplayer.R as AppR
+@@ -22,19 +30,21 @@ internal class SettingsAboutVersionTapOwner(
+     private val onEnableDevMode: () -> Unit,
+     private val onMessage: (Int) -> Unit
+ ) {
+-    fun onVersionClick() {
++    /** @return true 表示这一下刚好把开发者模式打开了（此时不该再去查更新）。 */
++    fun onVersionClick(): Boolean {
+         if (devModeEnabled) {
+             onMessage(AppR.string.debug_mode_enabled)
+-            return
++            return true
+         }
+         val nextCount = tapCount.intValue + 1
+         if (nextCount < 7) {
+             tapCount.intValue = nextCount
+-            return
++            return false
+         }
+         tapCount.intValue = 0
+         onEnableDevMode()
+         onMessage(AppR.string.debug_mode_opened)
++        return true
+     }
+ }
+ 
+@@ -54,7 +64,7 @@ private class SettingsAboutPageActions(
+         onMessage = { messageRes -> onInlineMessageChange(resources.getString(messageRes)) }
+     )
+ 
+-    fun onVersionClick() = versionTap.onVersionClick()
++    fun onVersionClick(): Boolean = versionTap.onVersionClick()
+ 
+     fun onCopyValue(value: String) {
+         context.getSystemService(ClipboardManager::class.java)
+@@ -80,6 +90,7 @@ internal fun SettingsAboutPageContent(
+ ) {
+     val context = LocalContext.current
+     val resources = LocalResources.current
++    val scope = rememberCoroutineScope()
+     val tapCount = remember { mutableIntStateOf(0) }
+     val actions = SettingsAboutPageActions(
+         context = context,
+@@ -90,10 +101,39 @@ internal fun SettingsAboutPageContent(
+         onInlineMessageChange = onInlineMessageChange,
+         onShowMessage = onShowMessage
+     )
++    // 点「版本」= 检查更新：没新版弹 Toast，有新版弹菜单。
++    var checking by remember { mutableStateOf(false) }
++    var latest by remember { mutableStateOf<AppUpdateRepository.Latest?>(null) }
++    val startUpdateCheck: () -> Unit = {
++        if (!checking) {
++            checking = true
++            scope.launch {
++                val found = runCatching { AppUpdateRepository.fetchLatest() }.getOrNull()
++                checking = false
++                when {
++                    found == null -> AppFeedback.showToast(
++                        context = context,
++                        message = resources.getString(CoreCommonR.string.settings_update_check_failed)
++                    )
++                    found.versionCode <= BuildConfig.VERSION_CODE -> AppFeedback.showToast(
++                        context = context,
++                        message = resources.getString(CoreCommonR.string.settings_update_latest)
++                    )
++                    else -> latest = found
++                }
++            }
++        }
++    }
+     SettingsAboutContent(
+         devModeEnabled = devModeEnabled,
+-        onVersionClick = actions::onVersionClick,
++        onVersionClick = {
++            // 开发者模式那 7 连击期间不查更新，免得连点七次网络请求
++            if (!actions.onVersionClick()) startUpdateCheck()
++        },
+         onCopyValue = actions::onCopyValue,
+         onOpenGitHubRepo = actions::onOpenGitHubRepo
+     )
++    latest?.let { found ->
++        SettingsUpdateDialog(latest = found, onDismiss = { latest = null })
++    }
+ }
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/SettingsAboutSection.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/SettingsAboutSection.kt
+index 9ad12ac0..4deb4b23 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/SettingsAboutSection.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/SettingsAboutSection.kt
+@@ -72,8 +72,7 @@ internal fun SettingsAboutContent(
+     SettingsBuildUuidItem(onCopyValue)
+     SettingsVersionItem(
+         devModeEnabled = devModeEnabled,
+-        onVersionClick = onVersionClick,
+-        onCopyValue = onCopyValue
++        onVersionClick = onVersionClick
+     )
+     SettingsBuildTimeItem(onCopyValue)
+     SettingsGitHubItem(onOpenGitHubRepo = onOpenGitHubRepo)
+@@ -129,8 +128,7 @@ private fun SettingsBuildUuidItem(onCopyValue: (String) -> Unit) {
+ @Composable
+ private fun SettingsVersionItem(
+     devModeEnabled: Boolean,
+-    onVersionClick: () -> Unit,
+-    onCopyValue: (String) -> Unit
++    onVersionClick: () -> Unit
+ ) {
+     val suffix = if (devModeEnabled) {
+         " (${stringResource(CoreCommonR.string.settings_version_debug_suffix)})"
+@@ -154,8 +152,8 @@ private fun SettingsVersionItem(
+             )
+         },
+         supportingContent = { Text(versionName) },
++        // 点一下 = 检查更新（不再是复制版本号）
+         modifier = androidx.compose.ui.Modifier.settingsItemClickable {
+-            onCopyValue(versionName)
+             onVersionClick()
+         },
+         colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/SettingsUpdateDialog.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/SettingsUpdateDialog.kt
+new file mode 100644
+index 00000000..6813aec5
+--- /dev/null
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/SettingsUpdateDialog.kt
+@@ -0,0 +1,98 @@
++/*
++ * NeriPlayer TV fork - update dialog.
++ *
++ * This file is part of NeriPlayer (GPL-3.0-or-later).
++ */
++package moe.ouom.neriplayer.ui.screen.tab.settings.about
++
++import androidx.compose.material3.Text
++import androidx.compose.material3.TextButton
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableIntStateOf
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.rememberCoroutineScope
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.platform.LocalContext
++import androidx.compose.ui.res.stringResource
++import kotlinx.coroutines.launch
++import moe.ouom.neriplayer.update.AppUpdateRepository
++import moe.ouom.neriplayer.ui.component.overlay.DensityScaledAlertDialog
++import moe.ouom.neriplayer.ui.feedback.AppFeedback
++import java.io.File
++import moe.ouom.neriplayer.common.R as CoreCommonR
++
++/**
++ * 「有新版本」菜单。
++ *
++ * 用项目里现成的 [DensityScaledAlertDialog]（Clean / Material 两套主题都吃），不另造弹窗。
++ * 按钮只有两个：左边「取消」，右边「更新」→ 下载中显示百分比 → 下载完变「安装」。
++ */
++@Composable
++internal fun SettingsUpdateDialog(
++    latest: AppUpdateRepository.Latest,
++    onDismiss: () -> Unit
++) {
++    val context = LocalContext.current
++    val scope = rememberCoroutineScope()
++    var downloading by remember { mutableStateOf(false) }
++    var progress by remember { mutableIntStateOf(0) }
++    var apk by remember { mutableStateOf<File?>(null) }
++
++    val downloadedFile = apk
++    val downloadingThis = downloading
++
++    DensityScaledAlertDialog(
++        // 下载中不许点外面关掉，否则进度和文件都白费
++        onDismissRequest = { if (!downloadingThis) onDismiss() },
++        title = {
++            Text(stringResource(CoreCommonR.string.settings_update_available, latest.tag))
++        },
++        dismissButton = {
++            TextButton(onClick = onDismiss, enabled = !downloadingThis) {
++                Text(stringResource(CoreCommonR.string.action_cancel))
++            }
++        },
++        confirmButton = {
++            TextButton(
++                enabled = !downloadingThis,
++                onClick = {
++                    when {
++                        downloadedFile != null -> AppUpdateRepository.install(context, downloadedFile)
++                        downloadingThis -> Unit
++                        else -> {
++                            downloading = true
++                            progress = 0
++                            scope.launch {
++                                val result = AppUpdateRepository.download(context, latest.tag) { percent ->
++                                    progress = percent
++                                }
++                                downloading = false
++                                if (result != null) {
++                                    apk = result
++                                } else {
++                                    AppFeedback.showToast(
++                                        context = context,
++                                        message = context.getString(
++                                            CoreCommonR.string.settings_update_download_failed
++                                        )
++                                    )
++                                }
++                            }
++                        }
++                    }
++                }
++            ) {
++                Text(
++                    when {
++                        downloadedFile != null ->
++                            stringResource(CoreCommonR.string.settings_update_action_install)
++                        downloadingThis -> "$progress%"
++                        else -> stringResource(CoreCommonR.string.settings_update_action_update)
++                    }
++                )
++            }
++        }
++    )
++}
 diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/appearance/SettingsPersonalizationContent.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/appearance/SettingsPersonalizationContent.kt
 index 3c7f1810..17b82744 100644
 --- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/appearance/SettingsPersonalizationContent.kt
@@ -25111,10 +25439,10 @@ index 00000000..6a62174f
 +}
 diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvFocusNav.kt b/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvFocusNav.kt
 new file mode 100644
-index 00000000..05778b02
+index 00000000..68021dcf
 --- /dev/null
 +++ b/app/src/main/java/moe/ouom/neriplayer/ui/tv/TvFocusNav.kt
-@@ -0,0 +1,610 @@
+@@ -0,0 +1,566 @@
 +package moe.ouom.neriplayer.ui.tv
 +
 +/*
@@ -25141,13 +25469,7 @@ index 00000000..05778b02
 + */
 +
 +import androidx.compose.foundation.ScrollState
-+import androidx.compose.foundation.focusGroup
-+import androidx.compose.foundation.focusable
-+import androidx.compose.foundation.layout.Box
-+import androidx.compose.foundation.layout.fillMaxSize
-+import androidx.compose.foundation.layout.fillMaxWidth
 +import androidx.compose.foundation.layout.height
-+import androidx.compose.ui.focus.focusTarget
 +import androidx.compose.foundation.lazy.LazyListState
 +import androidx.compose.foundation.lazy.grid.LazyGridState
 +import androidx.compose.foundation.gestures.animateScrollBy
@@ -25156,17 +25478,13 @@ index 00000000..05778b02
 +import androidx.compose.runtime.Composable
 +import androidx.compose.runtime.LaunchedEffect
 +import androidx.compose.runtime.Stable
-+import androidx.compose.runtime.mutableStateOf
 +import androidx.compose.runtime.remember
-+import androidx.compose.runtime.mutableStateOf
 +import androidx.compose.runtime.rememberCoroutineScope
 +import androidx.compose.runtime.setValue
 +import androidx.compose.runtime.withFrameNanos
-+import androidx.compose.ui.Alignment
 +import androidx.compose.ui.Modifier
 +import androidx.compose.ui.focus.FocusDirection
 +import androidx.compose.ui.focus.FocusRequester
-+import androidx.compose.ui.focus.focusProperties
 +import androidx.compose.ui.focus.focusRequester
 +import androidx.compose.ui.focus.onFocusChanged
 +import androidx.compose.ui.input.key.Key
@@ -25471,7 +25789,8 @@ index 00000000..05778b02
 +            else -> return@onKeyEvent false
 +        }
 +        val forward = direction == FocusDirection.Down
-+        if (focusManager.moveFocus(direction)) return@onKeyEvent true
++        val moved = focusManager.moveFocus(direction)
++        if (moved) return@onKeyEvent true
 +        val canScroll = if (forward) scrollState.canScrollForward else scrollState.canScrollBackward
 +        if (!canScroll) {
 +            // 已经在端头（moveFocus 上面已经试过并失败，说明这个方向确实没有可聚焦项了）。
@@ -25489,86 +25808,51 @@ index 00000000..05778b02
 +private val TV_EDGE_SCROLL_STEP = 300.dp
 +
 +/**
-+ * 电视：同样的道理用 [androidx.compose.foundation.ScrollState]（普通 Column 滚动）。
-+ * 表头是固定的、内容在下面滚，光标回到表头按钮后按上，先把内容滚回顶部，
-+ * 把滚上去的那段文字露出来；已经到顶了才放行。
-+ */
-+/**
-+ * 电视：可滚动的文字面板 —— 一个修饰符管完三件事。
++ * 电视：可滚动的文字面板接管方向键（04:00 那版）。
 + *
-+ *  1. 内容比一屏长时，光标走到最后一个可聚焦项还能继续把剩下的内容挪出来（[tvEdgeScroll]）；
-+ *  2. 滚到底再按「下」，Compose 的方向搜索会回绕到页面顶部的返回键上。这里把这个出口掐掉，
-+ *     光标就停在底部不动；
-+ *  3. 整个面板当成一个焦点组，光标不会从中间某一行直接跳到组外的控件上。
-+ *
-+ * 说明：`focusProperties.onExit` 在当前版本拿不到方向，所以先用面板自己的按键监听
-+ * 把「这一下按的是不是下键」记在 [lastDown] 里，再在出口判断时用它。
++ * 规则：四个方向都在 Initial pass 接管 —— 面内能走就交给焦点搜索走，走不动就自己滚，
++ * 滚到头就停住。焦点因此不会跨出面板去找别的可聚焦元素。
 + */
 +@Composable
 +fun Modifier.tvScrollPane(scrollState: ScrollState): Modifier {
 +    if (!LocalIsTelevision.current) return this
-+    val lastDown = remember { mutableStateOf(false) }
-+    return this
-+        .onPreviewKeyEvent { event ->
-+            when (event.type) {
-+                KeyEventType.KeyDown -> lastDown.value = event.key == Key.DirectionDown
-+                // 标记「用完就清」：onExit 拦的是所有离开本节点的焦点变更，包括返回键
-+                // 把光标收回侧栏、程序化 requestFocus。只在上下键 down 时置位不够 ——
-+                // 按过下键再按返回，收回侧栏的请求会被一起取消。
-+                KeyEventType.KeyUp -> lastDown.value = false
-+                else -> Unit
++    val focusManager = LocalFocusManager.current
++    val scope = rememberCoroutineScope()
++    val stepPx = with(LocalDensity.current) { TV_EDGE_SCROLL_STEP.toPx() }
++    return this.onPreviewKeyEvent { event ->
++        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
++        when (event.key) {
++            Key.DirectionDown, Key.DirectionUp -> {
++                val forward = event.key == Key.DirectionDown
++                val moved = focusManager.moveFocus(
++                    if (forward) FocusDirection.Down else FocusDirection.Up
++                )
++                if (!moved) {
++                    val canScroll = if (forward) {
++                        scrollState.canScrollForward
++                    } else {
++                        scrollState.canScrollBackward
++                    }
++                    if (canScroll) {
++                        val delta = if (forward) stepPx else -stepPx
++                        scope.launch {
++                            runCatching { scrollState.animateScrollBy(delta) }
++                        }
++                    }
++                }
++                true
 +            }
-+            false
-+        }
-+        // 必须同时是焦点组：容器成为组边界后，组内搜不到候选时才会走 onExit；
-+        // 只挂 focusTarget 的话，二维搜索会直接跨组命中页面顶部的返回键，onExit 根本不触发。
-+        .focusGroup()
-+        .focusProperties {
-+            canFocus = false
-+            onExit = {
-+                // 按下键一律不许把焦点送出面板。
-+                //
-+                // 原先是「到底了才拦」（`&& !scrollState.canScrollForward`），但焦点按到
-+                // 最后一个可聚焦项时内容通常还剩一截没滚 —— 此时 canScrollForward 仍为 true，
-+                // 于是放行，二维搜索跨组命中页面顶部的返回键，光标直接飞上去；
-+                // 下面 tvEdgeScroll 的滚动兜底压根轮不到（焦点已经离开了原节点）。
-+                // 现在改成无条件取消：焦点留在原地，能滚就交给 tvEdgeScroll 滚，到头就停住。
-+                if (lastDown.value) cancelFocusChange()
-+                lastDown.value = false
++            Key.DirectionLeft, Key.DirectionRight -> {
++                focusManager.moveFocus(
++                    if (event.key == Key.DirectionLeft) FocusDirection.Left else FocusDirection.Right
++                )
++                true
 +            }
-+        }
-+        .focusTarget()
-+        // 文字面板都要「到底就停」：不夹边的话系统兜底搜索会回绕到页面顶部的返回键。
-+        .tvEdgeScroll(scrollState, clampDownAtEnd = true)
-+}
-+
-+/**
-+ * 电视方向键「最近一次按的是哪边」。
-+ *
-+ * 只用来区分两种「焦点落到顶部返回键」：用户自己按上键走过去，和焦点被方向搜索意外跳上去。
-+ * 前者应该把正文滚回顶部，后者不能 —— 否则看起来就是「按到底又回到了开头」。
-+ */
-+internal object TvInputTrace {
-+    @Volatile
-+    private var lastDownAt: Long = 0L
-+
-+    @Volatile
-+    private var lastUpAt: Long = 0L
-+
-+    fun onKeyDown(key: Key) {
-+        val now = android.os.SystemClock.uptimeMillis()
-+        when (key) {
-+            Key.DirectionDown -> lastDownAt = now
-+            Key.DirectionUp -> lastUpAt = now
-+            else -> Unit
++            else -> false
 +        }
 +    }
-+
-+    fun movedUpRecently(windowMs: Long = 400L): Boolean {
-+        val now = android.os.SystemClock.uptimeMillis()
-+        return lastUpAt > lastDownAt && now - lastUpAt <= windowMs
-+    }
 +}
++
 +
 +/**
 + * 电视：网格停在「第一屏内、但已经把顶部表头滚掉一截」时，按上先把网格拉回最顶端。
@@ -27251,6 +27535,189 @@ index cfa5d3e0..7c3c4ad8 100644
      fun refreshNeteaseHome() {
          if (offlineMode) return
  
+diff --git a/app/src/main/java/moe/ouom/neriplayer/update/AppUpdateRepository.kt b/app/src/main/java/moe/ouom/neriplayer/update/AppUpdateRepository.kt
+new file mode 100644
+index 00000000..69ecd517
+--- /dev/null
++++ b/app/src/main/java/moe/ouom/neriplayer/update/AppUpdateRepository.kt
+@@ -0,0 +1,177 @@
++/*
++ * NeriPlayer TV fork - update channel.
++ *
++ * This file is part of NeriPlayer (GPL-3.0-or-later).
++ */
++package moe.ouom.neriplayer.update
++
++import android.content.Context
++import android.content.Intent
++import androidx.core.content.FileProvider
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.withContext
++import java.io.File
++import java.net.HttpURLConnection
++import java.net.URL
++
++/**
++ * 更新通道：只认我们自己 fork 仓库的 Release。
++ *
++ * 版本比较不解析 `versionName`（那是 `<sha7>.<yyMMddHHmm>` 形式，没法比大小），
++ * 而是拿 Release tag 里的时间对 `versionCode` —— 构建脚本就是按 `yyMMddHH` 生成的
++ * （见 `build-logic/convention/Common.kt`），所以两边天然同序。
++ */
++internal object AppUpdateRepository {
++
++    private const val REPO = "tushoning/NeriPlayer"
++    private const val ASSET_NAME = "NeriPlayer-TV.apk"
++
++    /** 前两条是国内加速镜像，最后一条是原链接；下载时按实测延迟排序后再挑。 */
++    private val downloadBases = listOf(
++        "https://gh-proxy.com/",
++        "https://ghfast.top/",
++        ""
++    )
++
++    /**
++     * 探测版本只能用会把 302 原样抛回来的入口：
++     * gh-proxy 会自己跟到底并返回 HTML，拿不到 Location。
++     */
++    private val redirectBases = listOf("", "https://ghfast.top/")
++
++    data class Latest(val tag: String, val versionCode: Int)
++
++    suspend fun fetchLatest(): Latest? = withContext(Dispatchers.IO) {
++        for (base in redirectBases) {
++            val tag = runCatching {
++                resolveLatestTag("${base}https://github.com/$REPO/releases/latest")
++            }.getOrNull()
++            if (!tag.isNullOrBlank()) {
++                val code = versionCodeOfTag(tag)
++                if (code > 0) return@withContext Latest(tag, code)
++            }
++        }
++        null
++    }
++
++    /** `/releases/latest` 会 302 到 `/releases/tag/<tag>`，tag 直接从 Location 里取。 */
++    private fun resolveLatestTag(url: String): String? {
++        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
++            instanceFollowRedirects = false
++            connectTimeout = TIMEOUT_CONNECT
++            readTimeout = TIMEOUT_READ
++            requestMethod = "GET"
++        }
++        return try {
++            val location = conn.getHeaderField("Location") ?: return null
++            location.substringAfterLast("/releases/tag/", "").trim().ifBlank { null }
++        } finally {
++            conn.disconnect()
++        }
++    }
++
++    /** `tv-20261107-1730` → `26110717`，与构建脚本的 `yyMMddHH` 对齐。 */
++    fun versionCodeOfTag(tag: String): Int {
++        val match = TAG_PATTERN.find(tag) ?: return 0
++        val (year, month, day, hour) = match.destructured
++        return (year.takeLast(2) + month + day + hour).toIntOrNull() ?: 0
++    }
++
++    /**
++     * 下载到 `cacheDir/app_update/<tag>.apk`。
++     *
++     * 三条链接先各发一个 1KB 的 Range 请求测延迟，按快慢依次尝试；一条失败自动换下一条。
++     * 返回 null 表示全部失败。
++     */
++    suspend fun download(
++        context: Context,
++        tag: String,
++        onProgress: (Int) -> Unit
++    ): File? = withContext(Dispatchers.IO) {
++        val dir = File(context.cacheDir, UPDATE_DIR).apply { mkdirs() }
++        val target = File(dir, "$tag.apk")
++        val ordered = downloadBases.sortedBy { latencyMillis(assetUrl(it, tag)) }
++        for (base in ordered) {
++            val ok = runCatching { fetchToFile(assetUrl(base, tag), target, onProgress) }
++                .getOrDefault(false)
++            if (ok && target.length() > 0L) return@withContext target
++        }
++        runCatching { target.delete() }
++        null
++    }
++
++    private fun assetUrl(base: String, tag: String): String =
++        "${base}https://github.com/$REPO/releases/download/$tag/$ASSET_NAME"
++
++    private fun latencyMillis(url: String): Long {
++        val startedAt = System.nanoTime()
++        return runCatching {
++            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
++                connectTimeout = TIMEOUT_PROBE
++                readTimeout = TIMEOUT_PROBE
++                requestMethod = "GET"
++                setRequestProperty("Range", "bytes=0-1023")
++            }
++            try {
++                conn.inputStream.use { it.readBytes() }
++                (System.nanoTime() - startedAt) / 1_000_000L
++            } finally {
++                conn.disconnect()
++            }
++        }.getOrDefault(Long.MAX_VALUE)
++    }
++
++    private fun fetchToFile(url: String, target: File, onProgress: (Int) -> Unit): Boolean {
++        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
++            connectTimeout = TIMEOUT_CONNECT
++            readTimeout = TIMEOUT_DOWNLOAD_READ
++        }
++        return try {
++            if (conn.responseCode !in 200..299) return false
++            val total = conn.contentLengthLong
++            conn.inputStream.use { input ->
++                target.outputStream().use { output ->
++                    val buffer = ByteArray(BUFFER_SIZE)
++                    var written = 0L
++                    while (true) {
++                        val read = input.read(buffer)
++                        if (read <= 0) break
++                        output.write(buffer, 0, read)
++                        written += read
++                        if (total > 0L) {
++                            onProgress(((written * 100) / total).toInt().coerceIn(0, 100))
++                        }
++                    }
++                }
++            }
++            onProgress(100)
++            true
++        } finally {
++            conn.disconnect()
++        }
++    }
++
++    /** 交给系统安装器。文件必须在 FileProvider 暴露的 `app_update/` 目录下。 */
++    fun install(context: Context, apk: File) {
++        val uri = FileProvider.getUriForFile(
++            context,
++            "${context.packageName}.fileprovider",
++            apk
++        )
++        val intent = Intent(Intent.ACTION_VIEW).apply {
++            setDataAndType(uri, "application/vnd.android.package-archive")
++            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
++            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
++        }
++        context.startActivity(intent)
++    }
++
++    const val UPDATE_DIR = "app_update"
++
++    private val TAG_PATTERN = Regex("(\\d{4})(\\d{2})(\\d{2})-(\\d{2})(\\d{2})")
++    private const val TIMEOUT_PROBE = 4000
++    private const val TIMEOUT_CONNECT = 12000
++    private const val TIMEOUT_READ = 12000
++    private const val TIMEOUT_DOWNLOAD_READ = 30000
++    private const val BUFFER_SIZE = 64 * 1024
++}
 diff --git a/app/src/main/java/moe/ouom/neriplayer/util/media/ImageUtil.kt b/app/src/main/java/moe/ouom/neriplayer/util/media/ImageUtil.kt
 index ae717e90..538dc901 100644
 --- a/app/src/main/java/moe/ouom/neriplayer/util/media/ImageUtil.kt
@@ -27472,6 +27939,18 @@ index f8d7f27d..f156af57 100644
 +        <item name="android:windowBackground">@drawable/launch_background</item>
      </style>
  </resources>
+diff --git a/app/src/main/res/xml/file_paths.xml b/app/src/main/res/xml/file_paths.xml
+index 6162ca47..f153c1b0 100644
+--- a/app/src/main/res/xml/file_paths.xml
++++ b/app/src/main/res/xml/file_paths.xml
+@@ -12,4 +12,7 @@
+     <cache-path
+         name="lyric_share_cards"
+         path="lyric_share_cards/" />
++    <cache-path
++        name="app_update"
++        path="app_update/" />
+ </paths>
 diff --git a/app/src/test/java/moe/ouom/neriplayer/ui/navigation/MainTabTransitionRequestTest.kt b/app/src/test/java/moe/ouom/neriplayer/ui/navigation/MainTabTransitionRequestTest.kt
 deleted file mode 100644
 index 5c31ec1a..00000000
@@ -27949,6 +28428,21 @@ index 2ba8b47b..a7f384d8 100644
  # AndroidX package structure to make it clearer which packages are bundled with the
  # Android operating system, and which are packaged with your app's APK
  # https://developer.android.com/topic/libraries/support-library/androidx-rn
+diff --git a/modules/common/src/main/res/values-en/strings_common.xml b/modules/common/src/main/res/values-en/strings_common.xml
+index c6745b42..1243b910 100644
+--- a/modules/common/src/main/res/values-en/strings_common.xml
++++ b/modules/common/src/main/res/values-en/strings_common.xml
+@@ -93,4 +93,10 @@
+     <string name="cd_queue_quick_actions">Queue Quick Actions</string>
+     <string name="cd_close">Close</string>
+     <string name="cd_app_background">App background</string>
++    <string name="settings_update_latest">Already up to date</string>
++    <string name="settings_update_available">New version: %1$s</string>
++    <string name="settings_update_check_failed">Failed to check for updates</string>
++    <string name="settings_update_download_failed">Download failed</string>
++    <string name="settings_update_action_update">Update</string>
++    <string name="settings_update_action_install">Install</string>
+ </resources>
 diff --git a/modules/common/src/main/res/values-en/strings_home.xml b/modules/common/src/main/res/values-en/strings_home.xml
 index a3bc4b2a..a0630c9d 100644
 --- a/modules/common/src/main/res/values-en/strings_home.xml
@@ -27959,6 +28453,21 @@ index a3bc4b2a..a0630c9d 100644
      <string name="home_bili_music_open_original">Open original video</string>
 +    <string name="action_copy_video_link">Copy video link</string>
  </resources>
+diff --git a/modules/common/src/main/res/values-zh/strings_common.xml b/modules/common/src/main/res/values-zh/strings_common.xml
+index 142c5edf..3a228562 100644
+--- a/modules/common/src/main/res/values-zh/strings_common.xml
++++ b/modules/common/src/main/res/values-zh/strings_common.xml
+@@ -93,4 +93,10 @@
+     <string name="cd_queue_quick_actions">播放队列快捷操作</string>
+     <string name="cd_close">关闭</string>
+     <string name="cd_app_background">应用背景</string>
++    <string name="settings_update_latest">已是最新版本</string>
++    <string name="settings_update_available">有新版本：%1$s</string>
++    <string name="settings_update_check_failed">检查更新失败</string>
++    <string name="settings_update_download_failed">下载失败</string>
++    <string name="settings_update_action_update">更新</string>
++    <string name="settings_update_action_install">安装</string>
+ </resources>
 diff --git a/modules/common/src/main/res/values-zh/strings_home.xml b/modules/common/src/main/res/values-zh/strings_home.xml
 index 3273f8bd..32453606 100644
 --- a/modules/common/src/main/res/values-zh/strings_home.xml
@@ -27968,6 +28477,21 @@ index 3273f8bd..32453606 100644
      <string name="home_bili_music_source_note">榜单展示原唱信息，播放优先使用官方 MV，缺失时回退到榜单授权投稿视频</string>
      <string name="home_bili_music_open_original">打开原视频</string>
 +    <string name="action_copy_video_link">复制视频链接</string>
+ </resources>
+diff --git a/modules/common/src/main/res/values/strings_common.xml b/modules/common/src/main/res/values/strings_common.xml
+index 142c5edf..3a228562 100644
+--- a/modules/common/src/main/res/values/strings_common.xml
++++ b/modules/common/src/main/res/values/strings_common.xml
+@@ -93,4 +93,10 @@
+     <string name="cd_queue_quick_actions">播放队列快捷操作</string>
+     <string name="cd_close">关闭</string>
+     <string name="cd_app_background">应用背景</string>
++    <string name="settings_update_latest">已是最新版本</string>
++    <string name="settings_update_available">有新版本：%1$s</string>
++    <string name="settings_update_check_failed">检查更新失败</string>
++    <string name="settings_update_download_failed">下载失败</string>
++    <string name="settings_update_action_update">更新</string>
++    <string name="settings_update_action_install">安装</string>
  </resources>
 diff --git a/modules/common/src/main/res/values/strings_home.xml b/modules/common/src/main/res/values/strings_home.xml
 index 3273f8bd..32453606 100644
