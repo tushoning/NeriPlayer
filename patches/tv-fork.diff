@@ -1,6 +1,6 @@
 # NeriPlayer TV fork — 相对上游的完整改动（单个合并补丁）
 # 基线 upstream commit : 1ce32a4b  (fix(settings): 修复设置默认启动页后启动应用时需要从首页跳转到启动页 (#641))
-# 我方 tip             : 16a8f6d5  (fix(ci): 用 PAT(SYNC_TOKEN) checkout，GITHUB_TOKEN 无权推送 workflow 变更)
+# 我方 tip             : 5f17116a  (refactor(ci): CI 全程只读仓库，不再推任何 commit —— 彻底绕开 workflows 权限)
 # 生成命令             : bash fork-tools/make-patches.sh 1ce32a4b
 # 应用                 : git apply -3 patches/tv-fork.diff
 
@@ -18,25 +18,27 @@ index 00000000..94431c7a
 +patches/BASE -text
 diff --git a/.github/workflows/fork-sync.yml b/.github/workflows/fork-sync.yml
 new file mode 100644
-index 00000000..1a40cf61
+index 00000000..a13cf9d8
 --- /dev/null
 +++ b/.github/workflows/fork-sync.yml
-@@ -0,0 +1,415 @@
+@@ -0,0 +1,375 @@
 +name: 同步上游并发布 TV 版
 +
 +# 干什么：
 +#   定时（每小时）去上游 cwuom/NeriPlayer 看**有没有发布新 Release**。
-+#   有新 Release → 把我方补丁叠到上游 master 上 → 编译电视包（aerial 签名）
-+#                → 发 Release → 把结果推回 main → 打 seen/<上游 Release 名> 标记。
-+#   没有新 Release → 定时触发时直接退出，不编译（上游 master 天天有提交也不管）。
++#   有新 Release → 在临时工作区里拉上游最新代码 → 叠上我方补丁 → 编译
++#                → 发 Release（APK + 源码包）→ 打 seen/<上游 Release 名> 标记。
++#   没有新 Release → 几秒退出，不编译（上游 master 天天有提交也不管）。
 +#
 +#   手动触发（Run workflow）**总是出包**：不管有没有新 Release，都编一遍并发 Release。
 +#
-+#   为什么按 Release 而不是按提交：上游大约 3~5 天发一版，master 则天天动。
-+#   跟着 Release 走，出包节奏和上游一致，也不会把上游半成品带进来。
++# ★ 这个工作流**从不推送任何 commit**，只推 tag（tag 指向 main 上已有的提交）。
++#   所以它不需要 workflows 权限，也能永远保持原样不被自己改写：
++#   上游代码只在临时工作区出现，不进本仓库历史，main 分支保持不动。
++#   补丁基线要往前走时，在本地跑一次 fork-tools/sync-upstream.sh（用你自己的凭据推）。
 +#
-+# 合规：Release 的 tag 打在「实际编译的那个 commit」上，GitHub 自动给 tag 附源码包，
-+#       满足 GPLv3 §6「分发二进制必须能拿到对应源码」。
++# 合规：GPLv3 §6 —— 二进制和对应源码从同一个地方提供。
++#       所以 Release 里除了 APK，还附一份 source.tar.gz（含全部子模块，解压即可编译）。
 +
 +on:
 +  schedule:
@@ -46,7 +48,7 @@ index 00000000..1a40cf61
 +  workflow_dispatch:
 +
 +permissions:
-+  contents: write # 打 tag、发 Release、push 分支都要写权限
++  contents: write # 推 tag、建 Release
 +
 +concurrency:
 +  group: fork-sync
@@ -64,21 +66,12 @@ index 00000000..1a40cf61
 +  sync:
 +    runs-on: ubuntu-latest
 +    timeout-minutes: 60 # 卡死时早失败，而不是拖到 GitHub 默认的 6 小时
-+    # 显式声明 token 权限，不依赖仓库的默认设置（否则推分支/建 Release 会 403）
 +    permissions:
-+      contents: write # 推 main、打 tag、建 Release
++      contents: write # 打 tag、建 Release
 +    steps:
 +      - name: 拉取本仓库
 +        uses: actions/checkout@v4
 +        with:
-+          # 必须用 PAT（secret SYNC_TOKEN），不能用默认 GITHUB_TOKEN。
-+          # GITHUB_TOKEN 在设计上就拿不到 workflows 权限，推到 .github/workflows/ 的提交会被拒：
-+          #   ! [remote rejected] (refusing to allow a GitHub App to create or update workflow
-+          #    `.github/workflows/xxx.yml` without `workflows` permission)
-+          # 而我们的补丁必然会改 .github/workflows/fork-sync.yml，所以每次 rebase 都推不上去。
-+          # 注意：token 必须给 checkout，不能只给后面的 push —— checkout 会把凭据写进 git config，
-+          # 后续所有 git 命令都用它，单独给 push 设 token 是无效的。
-+          token: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
 +          fetch-depth: 0 # 需要完整历史：git am -3 要用到补丁的原始 blob
 +          submodules: recursive
 +
@@ -94,8 +87,13 @@ index 00000000..1a40cf61
 +        run: |
 +          set -euo pipefail
 +
++          # 记下 main 当前的 commit：tag 只打在这个已有的提交上，
++          # 推送时只有一个 tag 对象，不涉及任何提交内容。
++          MAIN_SHA=$(git rev-parse HEAD)
++          echo "main_sha=$MAIN_SHA" >> "$GITHUB_OUTPUT"
++
 +          # ---------- 1. 上游最新的正式 Release（忽略草稿和预发布）----------
-+          # 「已处理过」靠 tag 记：seen/<上游 Release 名>，构建全流程跑完后才打。
++          # 「已处理过」靠 tag 记：seen/<上游 Release 名>，整套流程跑完才打。
 +          REL_TAG=$(curl -fsSL \
 +            -H "Accept: application/vnd.github+json" \
 +            -H "Authorization: Bearer $GH_TOKEN" \
@@ -112,24 +110,12 @@ index 00000000..1a40cf61
 +            SEEN=true
 +          fi
 +
-+          # ---------- 2. 上游 master 有没有我们基线之后的新提交 ----------
++          # ---------- 2. 上游 master 最新的提交（编译用的就是它 + 补丁）----------
 +          git remote add upstream "$UPSTREAM_REPO" 2>/dev/null || git remote set-url upstream "$UPSTREAM_REPO"
 +          git fetch --quiet upstream master || { echo "::error::拉取上游 master 失败"; exit 1; }
 +          NEW=$(git rev-parse upstream/master)
-+          BASE=$(sed -n 's/^base_full_sha=//p' patches/BASE)
-+          if [ -z "$BASE" ]; then
-+            echo "::error::patches/BASE 里读不到 base_full_sha"
-+            exit 1
-+          fi
-+          if git merge-base --is-ancestor "$NEW" "$BASE"; then
-+            CHANGED=false
-+          else
-+            CHANGED=true
-+          fi
-+
 +          echo "new=$NEW" >> "$GITHUB_OUTPUT"
-+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
-+          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
++          echo "上游 master：$(git rev-parse --short "$NEW")"
 +
 +          # ---------- 3. 结论 ----------
 +          if [ -z "$REL_TAG" ]; then
@@ -143,9 +129,6 @@ index 00000000..1a40cf61
 +            REL_NEW=true
 +          fi
 +          echo "release_new=$REL_NEW" >> "$GITHUB_OUTPUT"
-+          [ "$CHANGED" = "true" ] \
-+            && echo "上游 master 也有新提交：$(git rev-parse --short "$BASE") → $(git rev-parse --short "$NEW")" \
-+            || echo "上游 master 相对基线没有新提交。"
 +
 +          if [ "$REL_NEW" = "true" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
 +            echo "build=true" >> "$GITHUB_OUTPUT"
@@ -155,45 +138,42 @@ index 00000000..1a40cf61
 +            echo "→ 没有新 Release，跳过（不编译）。"
 +          fi
 +
-+      - name: 准备要编译的代码
++      - name: 切到上游代码并叠上补丁
 +        id: apply
 +        if: steps.up.outputs.build == 'true'
 +        run: |
 +          set -uo pipefail
-+          if [ "${{ steps.up.outputs.changed }}" = "false" ]; then
-+            # 上游没变，当前分支就是最新代码，直接编
-+            echo "ok=true" >> "$GITHUB_OUTPUT"
-+            echo "rebased=false" >> "$GITHUB_OUTPUT"
-+            echo "不需要叠补丁：当前分支已包含全部改动。"
-+            exit 0
-+          fi
-+          echo "rebased=true" >> "$GITHUB_OUTPUT"
-+          # patches/ 是我方分支上的文件，切到上游分支后会被删掉，先挪到临时目录
++
++          # patches/ 是本仓库的文件，切到上游提交后会被删掉，先挪到临时目录
++          rm -rf /tmp/patches
 +          cp -r patches /tmp/patches
-+          git switch -c "sync/${GITHUB_RUN_ID}" upstream/master
++
++          # 切到上游最新提交（游离 HEAD，不会产生分支，也不会推任何东西）
++          git checkout --detach "${{ steps.up.outputs.new }}"
++          git submodule update --init --recursive
++
 +          if git am -3 --keep-cr /tmp/patches/series/*.patch; then
 +            echo "ok=true" >> "$GITHUB_OUTPUT"
-+            git submodule update --init --recursive
++            echo "补丁已叠上：$(git log --oneline -1)"
 +          else
 +            echo "ok=false" >> "$GITHUB_OUTPUT"
 +            {
-+              echo "上游 \`${{ steps.up.outputs.new }}\` 动到了我方补丁改过的代码，自动合并失败。"
++              echo "### ❌ 补丁叠不到上游 \`${{ steps.up.outputs.new }}\` 上"
 +              echo ""
-+              echo "**冲突文件：**"
++              echo "上游动到了我们改过的代码。冲突文件："
++              echo ""
 +              git diff --name-only --diff-filter=U | sed 's/^/- `/;s/$/`/'
 +              echo ""
-+              echo "**在本地怎么修：**"
++              echo "**在本地怎么修**（补丁基线往前走一次就行）："
 +              echo '```bash'
-+              echo 'git fetch upstream master'
 +              echo 'bash fork-tools/sync-upstream.sh'
-+              echo 'bash fork-tools/make-patches.sh   # 修好后重新生成补丁'
++              echo 'bash fork-tools/make-patches.sh'
++              echo 'git push origin main'
 +              echo '```'
 +              echo ""
 +              echo "处理原则：import 冲突取并集；上游只是改名就取我方再批量改名；"
 +              echo "上游真重构了就取上游，再把 TV 逻辑补回去。"
-+            } > conflict-report.md
-+            # 贴到本次运行的摘要页（Run 页面最上方），失败原因一眼可见
-+            cat conflict-report.md >> "$GITHUB_STEP_SUMMARY"
++            } >> "$GITHUB_STEP_SUMMARY"
 +            git am --abort || true
 +            exit 1
 +          fi
@@ -204,18 +184,10 @@ index 00000000..1a40cf61
 +          set -euo pipefail
 +          # np-submodule/accompanist-lyrics-ui 里的 KaraokeLyricsView.kt 被我方改过
 +          # （加 linesInteractive 参数、亚像素滚动容差）。submodule 是别人的仓库，
-+          # 我们的改动推不上去，本地一直是「工作区裸文件」状态，CI 按 .gitmodules
-+          # 拉到的上游原版没有这些改动，app 模块调用 linesInteractive 就编译失败。
-+          # 这里用主仓库随带的整份文件覆盖回去。
++          # 我们的改动推不上去，CI 按 .gitmodules 拉到的是上游原版，没有这些改动，
++          # app 模块调用 linesInteractive 就会编译失败。这里用备份里的整份文件覆盖回去。
 +          DEST=np-submodule/accompanist-lyrics-ui
-+          # 走 rebase 时工作区已经切到 upstream/master，本仓库的 patches/ 被删掉了，
-+          # apply 步骤开头曾把整份 patches 备份到 /tmp/patches。先把它搬回来（后面的
-+          # 「刷新补丁快照」要保留其中的 README.md 和 submodule/ 目录）。
-+          if [ ! -d patches ] && [ -d /tmp/patches ]; then
-+            cp -r /tmp/patches patches
-+            echo "已从 /tmp/patches 恢复 patches/ 目录"
-+          fi
-+          SRC=patches/submodule/accompanist-lyrics-ui
++          SRC=/tmp/patches/submodule/accompanist-lyrics-ui
 +          test -d "$DEST" || { echo "::error::找不到子模块 $DEST，检查 checkout 的 submodules: recursive"; exit 1; }
 +          test -d "$SRC"  || { echo "::error::找不到 $SRC"; exit 1; }
 +          cp -r "$SRC"/. "$DEST"/
@@ -223,16 +195,6 @@ index 00000000..1a40cf61
 +          grep -q "linesInteractive" "$TARGET" \
 +            || { echo "::error::覆盖后 $TARGET 里仍然没有 linesInteractive"; exit 1; }
 +          echo "子模块已覆盖：$(basename "$TARGET")"
-+
-+      - name: 刷新补丁快照（基线指向新上游）
-+        if: steps.apply.outputs.ok == 'true' && steps.apply.outputs.rebased == 'true'
-+        run: |
-+          set -euo pipefail
-+          bash fork-tools/make-patches.sh
-+          git add -A patches/
-+          if ! git diff --cached --quiet; then
-+            git commit -qm "chore: 同步上游 $(git rev-parse --short '${{ steps.up.outputs.new }}')，刷新补丁快照"
-+          fi
 +
 +      - name: 安装 JDK 21
 +        if: steps.apply.outputs.ok == 'true'
@@ -285,7 +247,7 @@ index 00000000..1a40cf61
 +        if: always()
 +        run: rm -f app/aerial.keystore
 +
-+      - name: 整理产物并写发版说明
++      - name: 整理产物、打包源码、写发版说明
 +        id: meta
 +        if: steps.apply.outputs.ok == 'true'
 +        env:
@@ -298,15 +260,30 @@ index 00000000..1a40cf61
 +          cp "$APK" "$APK_OUT"
 +          VERSION=$(basename "$APK" | sed 's/^NeriPlayer-//; s/-armeabi-v7a.*//; s/\.apk$//')
 +          # tag 带月日时分，手动重复触发也不会撞车（同一个 tag 只能对应一次构建）
-+          TAG="tv-$(date -u +%Y%m%d-%H%M)-$(git rev-parse --short=7 "$UPSTREAM_SHA")"
++          TAG="tv-$(date -u +%Y%m%d-%H%M)"
++          SRC_OUT="NeriPlayer-TV-${TAG}-source.tar.gz"
 +          REL_NOTE=""
 +          if [ -n "${UPSTREAM_RELEASE:-}" ]; then
 +            REL_NOTE="，由上游 Release \`${UPSTREAM_RELEASE}\` 触发"
 +          fi
++
++          # ---- 打包源码：当前工作区就是「上游 $UPSTREAM_SHA + 全部补丁」，
++          #      子模块内容也在里面，解压即可编译（GPLv3 §6 要求的对应源码） ----
++          tar -czf "$SRC_OUT" \
++            --exclude='./.git' \
++            --exclude='./.gradle' \
++            --exclude='./build' \
++            --exclude='*/build' \
++            --exclude='*/*/build' \
++            --exclude='*/*/*/build' \
++            --exclude='*/.git' \
++            .
++          echo "源码包：$SRC_OUT ($(du -h "$SRC_OUT" | cut -f1))"
++
 +          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 +          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-+          echo "sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
-+          echo "upstream_short=$(git rev-parse --short=7 "$UPSTREAM_SHA")" >> "$GITHUB_OUTPUT"
++          echo "src_out=$SRC_OUT" >> "$GITHUB_OUTPUT"
++
 +          cat > release-notes.md <<EOF
 +          ## 这是什么
 +
@@ -330,23 +307,18 @@ index 00000000..1a40cf61
 +          - 歌词页、正在播放页的电视布局
 +          - 数据库启动时的 WAL 热日志恢复
 +
-+          ## 源码
++          ## 源码（重要）
 +
-+          与本次 APK 完全对应的源码：**本仓库 tag \`${TAG}\`**，对应提交
-+          \`$(git rev-parse HEAD)\`（GitHub 已自动为该 tag 提供 Source code 压缩包）。
-+
-+          GitHub 的源码包**不包含子模块**。构建还需要下列子模块（仓库内 \`.gitmodules\` 有地址）：
-+
-+          \`\`\`
-+          $(git submodule status --recursive | sed 's/^[ +-]*//' | awk '{printf "%s @ %s\n", $2, $1}')
-+          \`\`\`
++          **本 Release 附带的 \`${SRC_OUT}\` 就是编出这个 APK 的完整源码**，
++          已包含全部子模块，解压后执行 \`./gradlew :app:assembleTvrelease\` 即可复现。
++          它对应上游 \`${UPSTREAM_SHA}\` 加上 \`patches/\` 里的电视适配改动。
 +
 +          上游项目：https://github.com/cwuom/NeriPlayer
 +
 +          ## 许可
 +
 +          本程序为自由软件，按 **GNU General Public License v3.0 或更高版本**发布，
-+          不提供任何担保。许可证全文见仓库根目录 LICENSE，修改声明见 NOTICE。
++          不提供任何担保。许可证全文见源码包内 LICENSE，修改声明见 NOTICE。
 +          本构建不是上游官方发布，也不代表上游作者的观点。
 +          EOF
 +
@@ -366,23 +338,13 @@ index 00000000..1a40cf61
 +          fi
 +          echo "APK 签名校验通过：$GOT"
 +
-+      # 先推 main 再打 tag：这样 tag 指向的 commit 一定已经在远端，
-+      # 推送时只需传一个 tag 对象，不会因为「要连带推整条提交链」被拒。
-+      - name: 把同步结果推回 main
-+        if: steps.apply.outputs.ok == 'true' && steps.apply.outputs.rebased == 'true'
-+        run: |
-+          set -uo pipefail
-+          OUT=$(git push --force-with-lease origin "HEAD:main" 2>&1) || {
-+            { echo "### ❌ 推送 main 失败"; echo; echo '```'; echo "$OUT" | tail -30; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-+            echo "::error::推送 main 失败"; exit 1; }
-+          echo "$OUT"
-+
 +      - name: 打 tag 并发布 Release
 +        if: steps.apply.outputs.ok == 'true'
 +        env:
-+          GH_TOKEN: ${{ secrets.SYNC_TOKEN || secrets.GITHUB_TOKEN }}
++          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 +          TAG: ${{ steps.meta.outputs.tag }}
-+          UP_SHA: ${{ steps.up.outputs.new }}
++          SRC_OUT: ${{ steps.meta.outputs.src_out }}
++          MAIN_SHA: ${{ steps.up.outputs.main_sha }}
 +        run: |
 +          set -uo pipefail
 +
@@ -395,36 +357,34 @@ index 00000000..1a40cf61
 +          }
 +
 +          [ -n "${TAG:-}" ] || fail "meta 步骤没有产出 tag" "TAG 为空"
-+          echo "目标 tag：$TAG"
-+          echo "HEAD：$(git rev-parse HEAD)"
-+          echo "远端是否已有该 commit：$(git ls-remote origin "refs/heads/main" | grep -c "$(git rev-parse HEAD)" || true)"
 +
-+          # 极端情况下（同一分钟重复触发）兜底加运行号，保证 tag 唯一
++          # tag 打在 main 已有的提交上：这样 push 只传一个 tag 对象，
++          # 不带任何提交内容，不会触发 workflows 权限检查。
 +          EXIST=$(git ls-remote --tags origin "refs/tags/$TAG" 2>&1) || fail "查询远端 tag 失败" "$EXIST"
 +          if [ -n "$EXIST" ]; then
 +            TAG="${TAG}-r${GITHUB_RUN_NUMBER}"
 +            echo "同名 tag 已存在，改用 $TAG"
 +          fi
 +
-+          OUT=$(git tag -a "$TAG" -m "基于上游 $UP_SHA 的电视适配构建" 2>&1) \
++          OUT=$(git tag -a "$TAG" "$MAIN_SHA" -m "基于上游 ${{ steps.up.outputs.new }} 的电视适配构建" 2>&1) \
 +            || fail "创建 tag 失败" "$OUT"
-+
 +          OUT=$(git push origin "$TAG" 2>&1) || fail "推送 tag 失败" "$OUT"
-+          echo "tag 已推送：$TAG"
++          echo "tag 已推送：$TAG → $MAIN_SHA"
 +
-+          # --repo 必须显式指定：仓库里多了一个 upstream remote（指向上游 cwuom/NeriPlayer），
-+          # gh 推断默认仓库时会挑错，报「tag exists locally but has not been pushed to cwuom/...」
-+          OUT=$(gh release create "$TAG" "$APK_OUT" \
++          # APK 和源码包一起发，GPLv3 §6 的「同一处提供对应源码」就满足了
++          OUT=$(gh release create "$TAG" "$APK_OUT" "$SRC_OUT" \
 +            --repo "${{ github.repository }}" \
 +            --title "TV 版 $TAG" \
 +            --notes-file release-notes.md 2>&1) \
 +            || fail "创建 Release 失败（tag $TAG 已在远端，可手动补建）" "$OUT"
 +          echo "Release 已发布：$TAG"
 +
-+      # 放在最后：只有编译、验签、推 main、发版全部成功才打标记，
++      # 放在最后：只有编译、验签、发版全部成功才打标记，
 +      # 中途失败的话下个小时还能重试，不会被误判成「已处理」。
 +      - name: 记录已处理的上游 Release
 +        if: steps.apply.outputs.ok == 'true' && steps.up.outputs.release_tag != ''
++        env:
++          MAIN_SHA: ${{ steps.up.outputs.main_sha }}
 +        run: |
 +          set -uo pipefail
 +          TAG="seen/${{ steps.up.outputs.release_tag }}"
@@ -432,10 +392,10 @@ index 00000000..1a40cf61
 +            echo "标记 $TAG 已存在，无需重复打。"
 +            exit 0
 +          fi
-+          git tag "$TAG" HEAD
++          git tag "$TAG" "$MAIN_SHA"
 +          OUT=$(git push origin "$TAG" 2>&1) || {
 +            echo "::error::推送标记 tag 失败"; echo "$OUT" | tail -20; exit 1; }
-+          echo "已标记：$TAG → $(git rev-parse --short=7 HEAD)"
++          echo "已标记：$TAG → $(git rev-parse --short=7 "$MAIN_SHA")"
 +          echo "下次定时任务看到这个标记就跳过，直到上游再发新 Release。"
 diff --git a/.gitignore b/.gitignore
 index d5a9de77..a636a321 100644
@@ -453,10 +413,10 @@ index d5a9de77..a636a321 100644
 +/local/
 diff --git a/FORK.md b/FORK.md
 new file mode 100644
-index 00000000..fd63e8d5
+index 00000000..a2b6c5b6
 --- /dev/null
 +++ b/FORK.md
-@@ -0,0 +1,419 @@
+@@ -0,0 +1,404 @@
 +# 这个 fork 怎么维护
 +
 +上游：[cwuom/NeriPlayer](https://github.com/cwuom/NeriPlayer)（Android 音乐播放器，手机版 UI）。
@@ -496,7 +456,7 @@ index 00000000..fd63e8d5
 +
 +> 为什么必须改：GitHub Actions 的定时任务（schedule）只在**默认分支**上生效。
 +
-+### 0.4 填 4 个 Secret
++### 0.4 填 3 个 Secret
 +
 +网页路径：`仓库主页` → **Settings** → 左侧 **Secrets and variables** → **Actions** →
 +右上 **New repository secret**，一个一个加：
@@ -506,7 +466,6 @@ index 00000000..fd63e8d5
 +| `AERIAL_KEYSTORE_B64` | 见下面 0.4.1 |
 +| `AERIAL_STORE_PASSWORD` | `C:/Users/Tushon/keystores/aerial/README.md` 里的 `storePassword` |
 +| `AERIAL_KEY_PASSWORD` | 同一个文件里的 `keyPassword` |
-+| `SYNC_TOKEN` | 见下面 0.4.2 —— **不配这个，CI 一定推不上去** |
 +
 +证书指纹（`4ca2921…581b5`）是公开信息、不是密钥，
 +已经写死在 workflow 的 `CERT_SHA256` 里，不用再配。
@@ -526,36 +485,15 @@ index 00000000..fd63e8d5
 +
 +> 注意：`.gitignore` 已经把 `*.keystore` / `*.b64` 挡住，这些文件不会被提交上去。
 +
-+#### 0.4.2 生成 `SYNC_TOKEN`（推送用的令牌）
++#### 0.4.2 不需要额外的推送令牌
 +
-+**为什么需要它**：CI 默认的 `GITHUB_TOKEN` 按设计**不能修改 `.github/workflows/` 下的文件**。
-+而我们的补丁必然要改 `.github/workflows/fork-sync.yml`，所以每次同步上游后
-+推 tag / 推 main 都会被 GitHub 拒绝：
++不需要。CI 只推 tag（tag 指向 `main` 上已有的提交），不推任何 commit，
++所以用默认的 `GITHUB_TOKEN` 就够，也不用管什么 `workflows` 权限。
 +
-+```
-+! [remote rejected] (refusing to allow a GitHub App to create or update workflow
-+ `.github/workflows/xxx.yml` without `workflows` permission)
-+```
-+
-+这个限制**无法**用 `permissions:` 打开，只能用个人令牌（PAT）。
-+
-+**步骤**（全是网页点击）：
-+
-+1. 打开 https://github.com/settings/tokens?type=beta
-+2. 右上 **Generate new token**
-+3. **Token name** 填 `neriplayer-ci`
-+4. **Expiration** 选 `1 year`（或更长）
-+5. **Repository access** 选 **Only select repositories** → 选 `NeriPlayer`
-+6. 展开 **Permissions** → **Repository permissions**，勾两个：
-+   - **Contents** → `Read and write`
-+   - **Workflows** → `Read and write` ← **最关键，只有这里能勾**
-+   - （`Metadata` 会自动变成 `Read-only`，不用管）
-+7. 底部 **Generate token**，复制出来的 `github_pat_...`（**只显示一次**）
-+8. 回到仓库 **Settings → Secrets and variables → Actions**，新建 secret
-+   `SYNC_TOKEN`，把刚才那串粘进去
-+
-+> 令牌到期后 CI 会失败（报 401 或同样的 rejected），回来重新生成一次、
-+> 更新 `SYNC_TOKEN` 的值即可，其它都不用动。
++> 背景：如果让 CI 把「上游代码 + 补丁」推回 `main`，那些提交里必然含
++> `.github/workflows/fork-sync.yml` 的改动，而 `GITHUB_TOKEN` 按设计**不能**改
++> `.github/workflows/` 下的文件，`permissions:` 里加也没用。现在改成 CI 只在临时
++> 目录编译、不写仓库，这个限制就完全绕开了。
 +
 +### 0.5 打开 Actions 的写权限
 +
@@ -605,7 +543,7 @@ index 00000000..fd63e8d5
 +| `archive/*` | 历史存档，只读 |
 +| `patches/` | 上游补丁快照，自动生成，**不要手改** |
 +| `fork-tools/` | 同步与生成补丁的脚本 |
-+| `.github/workflows/fork-sync.yml` | CI：定时检查上游 Release → 有新版才编译 → 发 Release |
++| `.github/workflows/fork-sync.yml` | CI：定时检查上游 Release → 有新版才编译 → 发 Release（**只读仓库，不推 commit**） |
 +
 +**`main` 必须保持线性**（不含 merge commit）。`patches/series/` 是靠逐个 `git am`
 +重放的，历史里一旦有 merge，merge 之后的提交其 diff 基准是合并结果而不是上游，
@@ -640,29 +578,35 @@ index 00000000..fd63e8d5
 +
 +| 情况 | 动作 |
 +| --- | --- |
-+| 有新 Release | 把我方补丁叠到上游 master → 编译 → 发 Release → 推回 `main` → 打 `seen/<Release 名>` 标记 |
++| 有新 Release | 临时切到上游最新代码 → 叠补丁 → 编译 → 发 Release（APK + 源码包）→ 打 `seen/<Release 名>` 标记 |
 +| 没有新 Release | 几秒钟退出，不编译（上游 master 中间那些提交不会触发打包） |
 +
 +所以出包节奏跟着上游发版走，大约 3～5 天一个。
 +
++> **CI 全程只读仓库**：上游代码只在临时目录里出现，不会推任何 commit 回 `main`，
++> 也不 force push。`main` 只有你自己推的时候才会变。这也意味着 workflow 文件
++> 永远不会被 CI 自己改写。
++
 +> ⚠️ `seen/*` 那些 tag 是「这个上游 Release 已经处理过」的记号，**千万别删**——删了下一次定时任务会当成新 Release，重复出一个包。`tv-*` 的 tag 更不能删（GPL 要求），详见第 4 节。
 +
-+**CI 红了（打不开 / 报错）** 说明上游动到了我们改过的地方。GitHub 会给仓库 owner
-+发一封「workflow 运行失败」的通知（手机 App 的 Inbox 也能收到），点进去那次运行，
-+**最上方的 Summary 区**会列出冲突文件。本地这样处理：
++### 3.1 补丁基线会不会过期
++
++会，但很慢。CI 用的是 `patches/` 里现成的补丁，直接往**最新的上游代码**上叠
++（`git am -3` 会做三方合并）。上游改的是别处代码时它自动就合上了；只有动到我们
++改过的同一段代码，才会冲突。
++
++那时候 CI 会红，Summary 区列出冲突文件。本地跑一次：
 +
 +```bash
-+bash fork-tools/sync-upstream.sh --build
++bash fork-tools/sync-upstream.sh
 +```
 +
-+- **没冲突**：分支变成「新上游 + 我方补丁」，然后
++它会：拉上游 → 叠补丁 → 冲突时停下让你处理 → 处理完用
++`bash fork-tools/make-patches.sh` 重新生成补丁 → `git push origin main`。
 +
-+  ```bash
-+  bash fork-tools/make-patches.sh
-+  git checkout main && git reset --hard sync/<日期>
-+  git push -f origin main
-+  ```
++这一趟走完，补丁基线就往前挪了，之后又能稳定很长一段时间。**这就是"偶尔要手动同步一次"的全部内容。**
 +
++- **没冲突**：脚本直接把 `main` 换成「新上游 + 我方补丁」
 +- **有冲突**：脚本停下并保留 `<<<<<<<` 标记，按这个表处理
 +
 +  | 冲突类型 | 处理 |
@@ -690,24 +634,23 @@ index 00000000..fd63e8d5
 +| --- | --- | --- |
 +| §5a | 修改版要有醒目改动声明 + 日期 | 根目录 `NOTICE`，README 顶部那段，Release 说明 |
 +| §5c | 整个作品整体继续按 GPL 授权 | 保留 `LICENSE`，不加任何额外限制 |
-+| §6 | 发二进制要给**对应源码** | Release 的 tag 打在编译的那个 commit 上，GitHub 自动给 tag 附源码包 |
++| §6 | 发二进制要给**对应源码** | 每个 Release 同时附 `*-source.tar.gz`（含全部子模块，解压即编译），二进制和源码在同一个页面 |
 +| §5d | 保留原版权声明与无担保声明 | 文件头不动 |
 +| §10 | 不得追加额外限制 | 不写「禁止商用/转载」之类 |
 +| §7 | 保留上游署名 | README、NOTICE 都指向上游 |
 +
 +### 四个真正容易踩的坑
 +
-+1. **别删 tag、别删 Release。** 删了 tag，GitHub 的源码包跟着没了，已经发出去的 APK 就失去
-+   对应源码——这是唯一会真正造成违规的操作。`tv-*` 的 tag 一个都别动。
++1. **别删 Release。** 源码包是 Release 的附件，Release 一删，已经发出去的 APK 就失去
++   对应源码——这是唯一会真正造成违规的操作。`tv-*`、`seen/*` 的 tag 也一个都别动。
 +
 +2. **别加任何额外限制。** 国内安卓圈习惯写「仅供学习交流，禁止转载/商用/二次分发」、
 +   「下载即视为同意本协议」——这些话和 GPLv3 §10（不得对接收者施加额外限制）**直接冲突**，
 +   写了就等于自己把授权变成非自由许可。可以写的是：这是 fork、不是官方、无担保。
 +
-+3. **GitHub 的源码包不含子模块。** 这个项目构建依赖 `np-submodule/accompanist-lyrics-core`
-+   和 `accompanist-lyrics-ui`，GitHub 给 tag 自动打的 zip 里它们是空目录。
-+   所以 Release 说明里必须列出子模块地址和 commit（CI 已经自动写进去），
-+   别人才能真的复现出这个 APK。
++3. **源码包必须连子模块一起给。** 这个项目构建依赖 `np-submodule/accompanist-lyrics-core`
++   和 `accompanist-lyrics-ui`，而 GitHub 给 tag 自动打的 zip 里它们是**空目录**，根本编不出来。
++   所以对外一律以 Release 附件里的 `*-source.tar.gz` 为准——它是连子模块内容一起打的。
 +
 +4. **GPL 不可撤回。** 一旦发布了某个版本，任何人拿到后都可以按 GPL 继续分发，
 +   你之后想收回、想改成闭源都做不到。发之前想清楚。
@@ -717,7 +660,7 @@ index 00000000..fd63e8d5
 +- ✅ 公开仓库、发 Releases、发网盘、发群里 —— 只要同时能看到源码
 +- ✅ 换应用名、换图标、改包名
 +- ✅ 收费（GPL 允许卖二进制），但买了的人有权拿到源码并再分发
-+- ✅ 只发 APK 不附源码文件本身 —— 前提是**同一个地方**能拿到源码（本仓库 tag 即可）
++- ✅ 只发 APK 不附源码文件本身 —— 前提是**同一个地方**能拿到源码（Release 附件里的 `*-source.tar.gz` 就是干这个的）
 +- ❌ 只发 APK 且不提供任何源码获取方式
 +- ❌ 在 Release 里写「禁止转载」「版权归我所有」
 +
@@ -837,11 +780,13 @@ index 00000000..fd63e8d5
 +定时任务靠它判断「有没有新 Release」。**不要删**，删了会重复出一个包。
 +它和 `tv-*` 是两回事，后者是真正发布用的版本 tag（GPL 要求必须留）。
 +
-+**Q：CI 报 `refusing to allow a GitHub App to create or update workflow ... without `workflows` permission`**
-+A：`GITHUB_TOKEN` 按设计就**不能**改 `.github/workflows/` 下的文件，`permissions:` 里加也没用，
-+这是 GitHub 的硬边界。只能换成 PAT：按 0.4.2 配好 `SYNC_TOKEN` 即可，workflow 已改成用它 checkout。
-+> 这个检查针对「推送的 commit 有没有改 workflow 文件」。我们不 rebase、直接编现有代码时
-+> 什么都不用推，所以那种运行一直是好的；一旦上游有新提交要 rebase，就必然踩到。
++**Q：CI 报 `refusing to allow a GitHub App to create or update workflow ...` 怎么办？**
++A：**现在的流程不会报这个了**。以前 CI 会把「上游代码 + 补丁」推回 `main`，那些提交里必然含
++`.github/workflows/fork-sync.yml` 的改动，而 `GITHUB_TOKEN` 按设计**不能**改 `.github/workflows/`
++下的文件（`permissions:` 里加也没用，是 GitHub 的硬边界）。
++现在 CI 全程不推任何 commit，只推 tag（指向已有提交），所以用默认 token 就够了。
++> 如果你看到 CI 真的在推分支，说明 workflow 被改回旧版本了，`git checkout` 一下本仓库的
++> `.github/workflows/fork-sync.yml` 即可。
 +
 +**Q：CI 失败怎么通知我？会往 Issues 里发东西吗？**
 +A：**不会开 Issue**，仓库里一个 Issue 都不会有。失败通知只走 GitHub 自己的渠道
@@ -874,8 +819,8 @@ index 00000000..fd63e8d5
 +要做得在 `app` 里加更新检查逻辑指向 `tushoning/NeriPlayer/releases/latest`。
 +
 +**Q：`git push` 提示 rejected**
-+A：CI 会用 `--force-with-lease` 推 `main`，你本地落后了。先 `git pull --rebase`，
-+或者从 CI 那个 commit 重新开始。
++A：远端有你本地没有的提交，先 `git pull --rebase`。
++> 现在 CI 不再改 `main`，所以这种情况只会发生在你换机器、或者在网页上改过东西之后。
 diff --git a/NOTICE b/NOTICE
 new file mode 100644
 index 00000000..4921337e
