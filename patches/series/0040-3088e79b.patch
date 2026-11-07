@@ -1,0 +1,49 @@
+From 3088e79b8134fec39c31969101edcd7c4b802c84 Mon Sep 17 00:00:00 2001
+From: neri-fork <local@neri.fork>
+Date: Sat, 7 Nov 2026 20:31:23 +0800
+Subject: [PATCH] =?UTF-8?q?fix(ci):=20=E6=BA=90=E7=A0=81=E5=8C=85=E5=85=88?=
+ =?UTF-8?q?=E5=86=99=E5=88=B0=20/tmp=20=E5=86=8D=E6=8C=AA=E5=9B=9E?=
+ =?UTF-8?q?=EF=BC=8C=E9=81=BF=E5=85=8D=20tar=20=E8=AF=BB=E5=88=B0=E6=AD=A3?=
+ =?UTF-8?q?=E5=9C=A8=E5=A2=9E=E9=95=BF=E7=9A=84=E8=87=AA=E5=B7=B1?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+日志：tar: .: file changed as we read it / exit 1
+
+原因：tar -czf 的输出文件就在被打包的目录里，tar 边走边把正在变大的自己塞进包里。
+顺带 APK（工作区里的 NeriPlayer-TV.apk）也会被一起打包。
+
+修复：-czf /tmp/$SRC_OUT 先打出去，打完 mv 回当前目录；同时 exclude 掉 APK。
+本地已复现验证：exit 0、包 15MB、不含 APK / build/ / .git。
+
+其余步骤本次已全部通过：39 个补丁零冲突叠到上游 7e1b657，编译 BUILD SUCCESSFUL 8m11s。
+---
+ .github/workflows/fork-sync.yml | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/.github/workflows/fork-sync.yml b/.github/workflows/fork-sync.yml
+index a13cf9d8..75960e68 100644
+--- a/.github/workflows/fork-sync.yml
++++ b/.github/workflows/fork-sync.yml
+@@ -245,7 +245,9 @@ jobs:
+ 
+           # ---- 打包源码：当前工作区就是「上游 $UPSTREAM_SHA + 全部补丁」，
+           #      子模块内容也在里面，解压即可编译（GPLv3 §6 要求的对应源码） ----
+-          tar -czf "$SRC_OUT" \
++          # 输出必须写到 /tmp：直接写当前目录的话，tar 会读到正在增长的自己，
++          # 报 "file changed as we read it" 并以 1 退出。打完再挪回来。
++          tar -czf "/tmp/$SRC_OUT" \
+             --exclude='./.git' \
+             --exclude='./.gradle' \
+             --exclude='./build' \
+@@ -253,7 +255,9 @@ jobs:
+             --exclude='*/*/build' \
+             --exclude='*/*/*/build' \
+             --exclude='*/.git' \
++            --exclude="./$APK_OUT" \
+             .
++          mv "/tmp/$SRC_OUT" "./$SRC_OUT"
+           echo "源码包：$SRC_OUT ($(du -h "$SRC_OUT" | cut -f1))"
+ 
+           echo "version=$VERSION" >> "$GITHUB_OUTPUT"

@@ -1,6 +1,6 @@
 # NeriPlayer TV fork — 相对上游的完整改动（单个合并补丁）
 # 基线 upstream commit : 1ce32a4b  (fix(settings): 修复设置默认启动页后启动应用时需要从首页跳转到启动页 (#641))
-# 我方 tip             : 5f17116a  (refactor(ci): CI 全程只读仓库，不再推任何 commit —— 彻底绕开 workflows 权限)
+# 我方 tip             : 3088e79b  (fix(ci): 源码包先写到 /tmp 再挪回，避免 tar 读到正在增长的自己)
 # 生成命令             : bash fork-tools/make-patches.sh 1ce32a4b
 # 应用                 : git apply -3 patches/tv-fork.diff
 
@@ -18,10 +18,10 @@ index 00000000..94431c7a
 +patches/BASE -text
 diff --git a/.github/workflows/fork-sync.yml b/.github/workflows/fork-sync.yml
 new file mode 100644
-index 00000000..a13cf9d8
+index 00000000..75960e68
 --- /dev/null
 +++ b/.github/workflows/fork-sync.yml
-@@ -0,0 +1,375 @@
+@@ -0,0 +1,379 @@
 +name: 同步上游并发布 TV 版
 +
 +# 干什么：
@@ -269,7 +269,9 @@ index 00000000..a13cf9d8
 +
 +          # ---- 打包源码：当前工作区就是「上游 $UPSTREAM_SHA + 全部补丁」，
 +          #      子模块内容也在里面，解压即可编译（GPLv3 §6 要求的对应源码） ----
-+          tar -czf "$SRC_OUT" \
++          # 输出必须写到 /tmp：直接写当前目录的话，tar 会读到正在增长的自己，
++          # 报 "file changed as we read it" 并以 1 退出。打完再挪回来。
++          tar -czf "/tmp/$SRC_OUT" \
 +            --exclude='./.git' \
 +            --exclude='./.gradle' \
 +            --exclude='./build' \
@@ -277,7 +279,9 @@ index 00000000..a13cf9d8
 +            --exclude='*/*/build' \
 +            --exclude='*/*/*/build' \
 +            --exclude='*/.git' \
++            --exclude="./$APK_OUT" \
 +            .
++          mv "/tmp/$SRC_OUT" "./$SRC_OUT"
 +          echo "源码包：$SRC_OUT ($(du -h "$SRC_OUT" | cut -f1))"
 +
 +          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
