@@ -37,7 +37,7 @@ git push -f fork main:main
 
 > 为什么必须改：GitHub Actions 的定时任务（schedule）只在**默认分支**上生效。
 
-### 0.4 填 3 个签名 Secret
+### 0.4 填 4 个 Secret
 
 网页路径：`仓库主页` → **Settings** → 左侧 **Secrets and variables** → **Actions** →
 右上 **New repository secret**，一个一个加：
@@ -47,8 +47,9 @@ git push -f fork main:main
 | `AERIAL_KEYSTORE_B64` | 见下面 0.4.1 |
 | `AERIAL_STORE_PASSWORD` | `C:/Users/Tushon/keystores/aerial/README.md` 里的 `storePassword` |
 | `AERIAL_KEY_PASSWORD` | 同一个文件里的 `keyPassword` |
+| `SYNC_TOKEN` | 见下面 0.4.2 —— **不配这个，CI 一定推不上去** |
 
-只需要这 3 个。证书指纹（`4ca2921…581b5`）是公开信息、不是密钥，
+证书指纹（`4ca2921…581b5`）是公开信息、不是密钥，
 已经写死在 workflow 的 `CERT_SHA256` 里，不用再配。
 
 #### 0.4.1 把密钥库转成 base64 文本
@@ -65,6 +66,37 @@ cat aerial.b64
 粘贴到 `AERIAL_KEYSTORE_B64` 的 Value 里。粘完可以删掉 `aerial.b64`。
 
 > 注意：`.gitignore` 已经把 `*.keystore` / `*.b64` 挡住，这些文件不会被提交上去。
+
+#### 0.4.2 生成 `SYNC_TOKEN`（推送用的令牌）
+
+**为什么需要它**：CI 默认的 `GITHUB_TOKEN` 按设计**不能修改 `.github/workflows/` 下的文件**。
+而我们的补丁必然要改 `.github/workflows/fork-sync.yml`，所以每次同步上游后
+推 tag / 推 main 都会被 GitHub 拒绝：
+
+```
+! [remote rejected] (refusing to allow a GitHub App to create or update workflow
+ `.github/workflows/xxx.yml` without `workflows` permission)
+```
+
+这个限制**无法**用 `permissions:` 打开，只能用个人令牌（PAT）。
+
+**步骤**（全是网页点击）：
+
+1. 打开 https://github.com/settings/tokens?type=beta
+2. 右上 **Generate new token**
+3. **Token name** 填 `neriplayer-ci`
+4. **Expiration** 选 `1 year`（或更长）
+5. **Repository access** 选 **Only select repositories** → 选 `NeriPlayer`
+6. 展开 **Permissions** → **Repository permissions**，勾两个：
+   - **Contents** → `Read and write`
+   - **Workflows** → `Read and write` ← **最关键，只有这里能勾**
+   - （`Metadata` 会自动变成 `Read-only`，不用管）
+7. 底部 **Generate token**，复制出来的 `github_pat_...`（**只显示一次**）
+8. 回到仓库 **Settings → Secrets and variables → Actions**，新建 secret
+   `SYNC_TOKEN`，把刚才那串粘进去
+
+> 令牌到期后 CI 会失败（报 401 或同样的 rejected），回来重新生成一次、
+> 更新 `SYNC_TOKEN` 的值即可，其它都不用动。
 
 ### 0.5 打开 Actions 的写权限
 
@@ -345,6 +377,12 @@ A：**这是设计如此**。定时任务只看上游有没有**发 Release**，
 A：**「这条上游 Release 已经打包过」的记号**，由 CI 在整条流程全部成功后自动打。
 定时任务靠它判断「有没有新 Release」。**不要删**，删了会重复出一个包。
 它和 `tv-*` 是两回事，后者是真正发布用的版本 tag（GPL 要求必须留）。
+
+**Q：CI 报 `refusing to allow a GitHub App to create or update workflow ... without `workflows` permission`**
+A：`GITHUB_TOKEN` 按设计就**不能**改 `.github/workflows/` 下的文件，`permissions:` 里加也没用，
+这是 GitHub 的硬边界。只能换成 PAT：按 0.4.2 配好 `SYNC_TOKEN` 即可，workflow 已改成用它 checkout。
+> 这个检查针对「推送的 commit 有没有改 workflow 文件」。我们不 rebase、直接编现有代码时
+> 什么都不用推，所以那种运行一直是好的；一旦上游有新提交要 rebase，就必然踩到。
 
 **Q：CI 失败怎么通知我？会往 Issues 里发东西吗？**
 A：**不会开 Issue**，仓库里一个 Issue 都不会有。失败通知只走 GitHub 自己的渠道
