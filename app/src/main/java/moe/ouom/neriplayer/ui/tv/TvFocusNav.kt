@@ -393,8 +393,13 @@ fun Modifier.tvScrollPane(scrollState: ScrollState): Modifier {
     val lastDown = remember { mutableStateOf(false) }
     return this
         .onPreviewKeyEvent { event ->
-            if (event.type == KeyEventType.KeyDown) {
-                lastDown.value = event.key == Key.DirectionDown
+            when (event.type) {
+                KeyEventType.KeyDown -> lastDown.value = event.key == Key.DirectionDown
+                // 标记「用完就清」：onExit 拦的是所有离开本节点的焦点变更，包括返回键
+                // 把光标收回侧栏、程序化 requestFocus。只在上下键 down 时置位不够 ——
+                // 按过下键再按返回，收回侧栏的请求会被一起取消。
+                KeyEventType.KeyUp -> lastDown.value = false
+                else -> Unit
             }
             false
         }
@@ -404,7 +409,15 @@ fun Modifier.tvScrollPane(scrollState: ScrollState): Modifier {
         .focusProperties {
             canFocus = false
             onExit = {
-                if (lastDown.value && !scrollState.canScrollForward) cancelFocusChange()
+                // 按下键一律不许把焦点送出面板。
+                //
+                // 原先是「到底了才拦」（`&& !scrollState.canScrollForward`），但焦点按到
+                // 最后一个可聚焦项时内容通常还剩一截没滚 —— 此时 canScrollForward 仍为 true，
+                // 于是放行，二维搜索跨组命中页面顶部的返回键，光标直接飞上去；
+                // 下面 tvEdgeScroll 的滚动兜底压根轮不到（焦点已经离开了原节点）。
+                // 现在改成无条件取消：焦点留在原地，能滚就交给 tvEdgeScroll 滚，到头就停住。
+                if (lastDown.value) cancelFocusChange()
+                lastDown.value = false
             }
         }
         .focusTarget()

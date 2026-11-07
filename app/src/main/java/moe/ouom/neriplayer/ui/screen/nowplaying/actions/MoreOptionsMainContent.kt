@@ -28,7 +28,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.verticalScroll
 import moe.ouom.neriplayer.ui.tv.tvScrollPane
 import androidx.compose.material.icons.Icons
@@ -57,6 +57,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -102,7 +103,10 @@ import moe.ouom.neriplayer.data.model.stableKey
 import moe.ouom.neriplayer.data.model.stats.TrackStat
 import moe.ouom.neriplayer.ui.component.sheet.bottomSheetScrollGuard
 import moe.ouom.neriplayer.ui.component.download.downloadStageLabelResource
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import moe.ouom.neriplayer.ui.screen.nowplaying.LocalMoreOptionsOwner
 import moe.ouom.neriplayer.ui.screen.nowplaying.TvMoreOptionsFocus
 import moe.ouom.neriplayer.ui.haptic.HapticTextButton
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
@@ -131,6 +135,13 @@ internal fun MoreOptionsMainContent(
     translationFontScale: Float,
     currentPlaybackAudioInfo: PlaybackAudioInfo?,
     isDismissing: Boolean,
+    /**
+     * 由 [moe.ouom.neriplayer.ui.screen.nowplaying.MoreOptionsSheetOwner] 持有。
+     *
+     * 不在这里 `rememberScrollState()`：切到二级页时本 composable 整棵离开组合，
+     * 内部记住的滚动位置会一起销毁，返回时归零 —— 就是「二级菜单返回后回到一级菜单顶部」。
+     */
+    scrollState: ScrollState,
     snackbarHostState: SnackbarHostState,
     onOpenSearch: () -> Unit,
     onOpenEditInfo: () -> Unit,
@@ -145,7 +156,6 @@ internal fun MoreOptionsMainContent(
     onEnterAlbum: (AlbumSummary) -> Unit,
     onDismissSheet: (() -> Unit) -> Unit
 ) {
-    val scrollState = rememberScrollState()
     Column(
         Modifier
             .bottomSheetScrollGuard { scrollState.value == 0 }
@@ -189,13 +199,15 @@ internal fun MoreOptionsMainContent(
                     title = stringResource(CoreCommonR.string.bili_video_skip_manage),
                     icon = Icons.Outlined.SkipNext,
                     hue = MoreHuePink,
-                    onClick = onOpenBiliVideoSkip
+                    onClick = onOpenBiliVideoSkip,
+                    focusKey = "bili_skip"
                 )
                 MoreOptionsItem(
                     title = stringResource(AppR.string.bili_cc_subtitle_manage),
                     icon = Icons.Outlined.Subtitles,
                     hue = MoreHuePink,
-                    onClick = onOpenBiliCcSubtitle
+                    onClick = onOpenBiliCcSubtitle,
+                    focusKey = "bili_cc"
                 )
             }
             ShareSongAction(
@@ -209,12 +221,14 @@ internal fun MoreOptionsMainContent(
                 title = stringResource(AppR.string.encyclopedia_title),
                 icon = Icons.AutoMirrored.Outlined.MenuBook,
                 hue = MoreHueViolet,
-                onClick = onOpenEncyclopedia
+                onClick = onOpenEncyclopedia,
+                focusKey = "encyclopedia"
             )
             MoreOptionsItem(
                 title = stringResource(CoreCommonR.string.listen_together_title),
                 icon = Icons.Outlined.Headphones,
                 hue = MoreHueIndigo,
+                focusKey = "listen_together",
                 enabled = !originalSong.isServerSong(),
                 subtitle = if (originalSong.isServerSong()) {
                     stringResource(CoreCommonR.string.server_listen_together_unavailable)
@@ -239,14 +253,18 @@ private fun MetadataAndPlaybackActions(
         hue = MoreHueBlue,
         enabled = !isDismissing,
         onClick = onOpenSearch,
-        // 电视上弹出面板后光标就落在这里（面板第一个按钮）
+        focusKey = "get_info",
+        // 电视上弹出面板后光标就落在这里（面板第一个按钮）。
+        // 这里已经有全局 requester，别再让条目自己建一个。
+        ownFocusRequester = false,
         modifier = Modifier.focusRequester(TvMoreOptionsFocus.firstItem)
     )
     MoreOptionsItem(
         title = stringResource(CoreCommonR.string.music_edit_info),
         icon = Icons.Outlined.Edit,
         hue = MoreHueOrange,
-        onClick = onOpenEditInfo
+        onClick = onOpenEditInfo,
+        focusKey = "edit_info"
     )
     if (audioInfo?.qualityOptions.orEmpty().size > 1) {
         MoreOptionsItem(
@@ -254,7 +272,8 @@ private fun MetadataAndPlaybackActions(
             icon = Icons.Outlined.MusicNote,
             hue = MoreHueRed,
             subtitle = audioInfo?.qualityLabel?.takeIf { it.isNotBlank() },
-            onClick = onShowQualitySwitch
+            onClick = onShowQualitySwitch,
+            focusKey = "quality"
         )
     }
 }
@@ -271,7 +290,8 @@ private fun DownloadOrDetailsAction(
             title = stringResource(CoreCommonR.string.local_song_open_details),
             icon = Icons.Outlined.Info,
             hue = MoreHueTeal,
-            onClick = onShowSongDetails
+            onClick = onShowSongDetails,
+            focusKey = "details"
         )
         return
     }
@@ -302,6 +322,7 @@ private fun DownloadOrDetailsAction(
         title = stringResource(downloadActionLabel(currentTask)),
         icon = Icons.Outlined.Download,
         hue = MoreHueGreen,
+        focusKey = "download",
         enabled = canClick,
         supporting = if (currentTask != null) {
             { DownloadProgressContent(currentTask) }
@@ -435,12 +456,14 @@ private fun LyricsActions(
         title = stringResource(CoreCommonR.string.lyrics_adjust_behavior),
         icon = Icons.Outlined.Timer,
         hue = MoreHueViolet,
-        onClick = onOpenLyricBehavior
+        onClick = onOpenLyricBehavior,
+        focusKey = "lyric_behavior"
     )
     MoreOptionsItem(
         title = stringResource(CoreCommonR.string.lyrics_font_size),
         icon = Icons.Outlined.FormatSize,
         hue = MoreHueMint,
+        focusKey = "font_size",
         subtitle = stringResource(
             CoreCommonR.string.settings_lyrics_font_scale_pair_value,
             (lyricFontScale * 100).roundToInt(),
@@ -485,6 +508,7 @@ private fun NeteaseAlbumAction(
         title = stringResource(CoreCommonR.string.music_view_album, albumName),
         icon = Icons.Outlined.LibraryMusic,
         hue = MoreHuePurple,
+        focusKey = "album",
         enabled = !resolvingAlbum,
         busy = resolvingAlbum,
         onClick = {
@@ -508,6 +532,7 @@ private fun ShareSongAction(
         title = stringResource(CoreCommonR.string.action_share),
         icon = Icons.Outlined.Share,
         hue = MoreHueBlue,
+        focusKey = "share",
         onClick = share@{
             if (song.isLocalSong()) {
                 coroutineScope.launch {
@@ -561,7 +586,8 @@ private fun PlaybackStatsAction(song: SongItem) {
         title = stringResource(AppR.string.stats_title),
         icon = Icons.Outlined.BarChart,
         hue = MoreHueOrange,
-        onClick = { showDialog = true }
+        onClick = { showDialog = true },
+        focusKey = "stats"
     )
     if (!showDialog) return
 
@@ -665,8 +691,34 @@ private fun MoreOptionsItem(
     busy: Boolean = false,
     subtitle: String? = null,
     supporting: (@Composable () -> Unit)? = null,
+    /** 稳定的动作名：一级菜单进二级页再返回时，靠它把光标放回原来那一项 */
+    focusKey: String? = null,
+    /** 调用方已经用 modifier 挂了自己的 FocusRequester 时置 false，避免同一节点挂两个 */
+    ownFocusRequester: Boolean = true,
     modifier: Modifier = Modifier
 ) {
+    // 焦点 requester 注册到面板 owner，返回一级菜单时由 owner.restoreMainFocus() 找回
+    val focusOwner = LocalMoreOptionsOwner.current
+    val key = focusKey
+    val focusRequester = if (focusOwner != null && key != null && ownFocusRequester) {
+        remember(key) { FocusRequester() }
+    } else {
+        null
+    }
+    if (focusOwner != null && key != null && focusRequester != null) {
+        DisposableEffect(focusOwner, key) {
+            focusOwner.registerMainFocus(key, focusRequester)
+            onDispose { focusOwner.unregisterMainFocus(key) }
+        }
+    }
+    // focusRequester / onFocusChanged 必须排在 clickable 左边：要观察的是 clickable
+    // 自己生成的那个 focusable 节点
+    val itemModifier = if (focusOwner != null && key != null) {
+        val base = if (focusRequester != null) modifier.focusRequester(focusRequester) else modifier
+        base.onFocusChanged { state -> if (state.isFocused) focusOwner.noteMainFocus(key) }
+    } else {
+        modifier
+    }
     if (!NeriDesign.isClean) {
         ListItem(
             headlineContent = { Text(title) },
@@ -678,13 +730,13 @@ private fun MoreOptionsItem(
                 }
             },
             supportingContent = supporting ?: subtitle?.let { text -> { Text(text) } },
-            modifier = modifier.clickable(enabled = enabled, onClick = onClick)
+            modifier = itemModifier.clickable(enabled = enabled, onClick = onClick)
         )
         return
     }
     val colors = MaterialTheme.colorScheme
     Row(
-        modifier = modifier
+        modifier = itemModifier
             .fillMaxWidth()
             .clip(MoreRowShape)
             .clickable(enabled = enabled, onClick = onClick)

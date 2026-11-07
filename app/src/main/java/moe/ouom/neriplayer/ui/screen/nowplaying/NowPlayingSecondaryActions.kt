@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -49,6 +50,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.NonRestartableComposable
@@ -60,6 +62,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -406,6 +409,45 @@ internal class MoreOptionsSheetOwner(
     var sheetImeVisible by mutableStateOf(false)
         private set
 
+    /**
+     * 一级（MAIN）菜单的滚动位置。
+     *
+     * 必须放在 owner 里，不能留在 [MoreOptionsMainContent] 内部：切到二级页时
+     * `MoreOptionsMainPage` 会直接 return，一级内容整棵离开组合，内部 `remember` 的
+     * ScrollState 随之销毁，返回时重建归零 —— 表现就是「二级页返回后一级菜单回到顶部」。
+     */
+    val mainScrollState = ScrollState(0)
+
+    /** 一级菜单各条目的焦点 requester，key 是固定的动作名 */
+    private val mainFocusRequesters = mutableMapOf<String, FocusRequester>()
+
+    /** 一级菜单最后一次聚焦的条目，返回主页时据此把光标放回去 */
+    private var lastMainFocusKey: String? = null
+
+    fun registerMainFocus(key: String, requester: FocusRequester) {
+        mainFocusRequesters[key] = requester
+    }
+
+    fun unregisterMainFocus(key: String) {
+        mainFocusRequesters.remove(key)
+        if (lastMainFocusKey == key) lastMainFocusKey = null
+    }
+
+    fun noteMainFocus(key: String) {
+        lastMainFocusKey = key
+    }
+
+    /**
+     * 返回一级菜单时优先回到离开前那一项。
+     *
+     * 不能只靠「请求第一个可聚焦项」：那会把光标和滚动一起拽回顶部，
+     * 就算 ScrollState 被保住了也白搭（requestFocus 会 bring-into-view）。
+     */
+    fun restoreMainFocus(): Boolean {
+        val requester = lastMainFocusKey?.let(mainFocusRequesters::get) ?: return false
+        return runCatching { requester.requestFocus() }.isSuccess
+    }
+
     val sheetGesturesEnabled: Boolean
         get() = page != MoreOptionsPage.LISTEN_TOGETHER && !isEditSongSaving && !isMetadataApplicationBusy
 
@@ -708,6 +750,14 @@ private fun MoreOptionsPages(
 }
 
 /**
+ * 让一级菜单的每个条目自己注册焦点 requester（配合 [MoreOptionsSheetOwner.restoreMainFocus]）。
+ *
+ * 走 CompositionLocal 而不是层层传参：[MoreOptionsMainContent] 的条目在很深的调用链下面，
+ * 再加一个参数会把那条原本就很长的签名继续撑长。
+ */
+internal val LocalMoreOptionsOwner = staticCompositionLocalOf<MoreOptionsSheetOwner?> { null }
+
+/**
  * 播放页「更多」面板的焦点入口：面板打开后光标落在第一个按钮（获取歌曲信息）上。
  * 和播放页主控制区一样，改由面板里真实存在的按钮承接焦点请求。
  */
@@ -761,7 +811,7 @@ internal fun MoreOptionsSheetSurface(
             showDragHandle = presentation.showDragHandle,
             onDismissRequest = owner.onDismissRequest
         ) {
-            MoreOptionsSheetBody(owner.page, snackbarHostState, content)
+            MoreOptionsSheetBody(owner, snackbarHostState, content)
         }
     }
 }
@@ -833,7 +883,7 @@ private fun TvMoreOptionsSurface(
             shape = RoundedCornerShape(20.dp),
             color = MaterialTheme.colorScheme.surface
         ) {
-            MoreOptionsSheetBody(owner.page, snackbarHostState, content)
+            MoreOptionsSheetBody(owner, snackbarHostState, content)
         }
     }
 }
@@ -877,13 +927,13 @@ private fun MoreOptionsBackHandlers(owner: MoreOptionsSheetOwner) {
 
 @Composable
 private fun MoreOptionsSheetBody(
-    page: MoreOptionsPage,
+    owner: MoreOptionsSheetOwner,
     snackbarHostState: SnackbarHostState,
     content: @Composable () -> Unit
 ) {
     Box(modifier = Modifier.fillMaxWidth()) {
-        content()
-        MoreOptionsFeedbackHost(page, snackbarHostState)
+        CompositionLocalProvider(LocalMoreOptionsOwner provides owner) { content() }
+        MoreOptionsFeedbackHost(owner.page, snackbarHostState)
     }
 }
 
@@ -917,6 +967,12 @@ internal fun MoreOptionsAnimatedPage(
     val tvPageFirstFocus = remember { FocusRequester() }
     if (tvNoPageAnimation) {
         LaunchedEffect(owner.page) {
+            // 从二级页回到一级菜单：先回到离开前那一项。
+            // 滚动位置由 owner.mainScrollState 一直留着，光标也放回原位，
+            // 这样「返回」不会再变成「回到顶部」。
+            if (owner.page == MoreOptionsPage.MAIN && owner.restoreMainFocus()) {
+                return@LaunchedEffect
+            }
             // 先立刻试一次，别上来就先等一帧
             if (runCatching { tvPageFirstFocus.requestFocus() }.getOrDefault(false)) {
                 return@LaunchedEffect
@@ -1345,6 +1401,8 @@ private fun MoreOptionsMainPageContent(
         translationFontScale = translationFontScale,
         currentPlaybackAudioInfo = currentPlaybackAudioInfo,
         isDismissing = owner.isDismissing,
+        // 提到 owner 上：切二级页时一级内容会离开组合，留在里面的 ScrollState 会被销毁
+        scrollState = owner.mainScrollState,
         snackbarHostState = snackbarHostState,
         onOpenSearch = actions.onOpenSearch,
         onOpenEditInfo = actions.onOpenEditInfo,
