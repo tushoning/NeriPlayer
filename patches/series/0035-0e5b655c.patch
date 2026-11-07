@@ -1,0 +1,264 @@
+From 0e5b655ce6079c868ac39469944a12b65a7f0f7e Mon Sep 17 00:00:00 2001
+From: neri-fork <local@neriplayer.fork>
+Date: Sat, 7 Nov 2026 19:21:11 +0800
+Subject: [PATCH] =?UTF-8?q?ci:=20=E5=AE=9A=E6=97=B6=E5=87=BA=E5=8C=85?=
+ =?UTF-8?q?=E6=94=B9=E4=B8=BA=E3=80=8C=E4=B8=8A=E6=B8=B8=E5=8F=91=E6=96=B0?=
+ =?UTF-8?q?=20Release=20=E6=89=8D=E6=89=93=E3=80=8D=EF=BC=8C=E4=B8=8D?=
+ =?UTF-8?q?=E5=86=8D=E8=B7=9F=E7=9D=80=20master=20=E6=AF=8F=E4=B8=AA?=
+ =?UTF-8?q?=E6=8F=90=E4=BA=A4=E8=B5=B0?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 检查步骤改读上游 releases API，取最新非 draft / 非 prerelease 的 tag
+- 「已处理」用 tag seen/<上游 Release 名> 记录，最后一步才打：
+  编译、验签、发版、推 main 全成功才标记，中途失败下次还能重试
+- 定时：有新 Release 才编译；没新 Release 几秒退出
+- 手动 Run workflow 仍然总是出包
+- 发版说明里带上「由上游 Release xxx 触发」
+- JSON 解析用 python3（不依赖 jq），并加了 tag 兜底 fetch
+---
+ .github/workflows/fork-sync.yml | 104 ++++++++++++++++++++++++++------
+ FORK.md                         |  33 +++++++---
+ 2 files changed, 110 insertions(+), 27 deletions(-)
+
+diff --git a/.github/workflows/fork-sync.yml b/.github/workflows/fork-sync.yml
+index 9b11ff3f..c7a47567 100644
+--- a/.github/workflows/fork-sync.yml
++++ b/.github/workflows/fork-sync.yml
+@@ -1,18 +1,22 @@
+ name: 同步上游并发布 TV 版
+ 
+ # 干什么：
+-#   定时（每小时）去上游 cwuom/NeriPlayer 看 master 有没有新提交。
+-#   有 → 把我方补丁叠上去 → 编译电视包（aerial 签名）→ 发 Release → 把结果推回 main。
+-#   没有 → 定时触发时直接退出，不编译。
++#   定时（每小时）去上游 cwuom/NeriPlayer 看**有没有发布新 Release**。
++#   有新 Release → 把我方补丁叠到上游 master 上 → 编译电视包（aerial 签名）
++#                → 发 Release → 把结果推回 main → 打 seen/<上游 Release 名> 标记。
++#   没有新 Release → 定时触发时直接退出，不编译（上游 master 天天有提交也不管）。
+ #
+-#   手动触发（Run workflow）**总是出包**：不管上游有没有更新，都在当前代码上编一遍并发 Release。
++#   手动触发（Run workflow）**总是出包**：不管有没有新 Release，都编一遍并发 Release。
++#
++#   为什么按 Release 而不是按提交：上游大约 3~5 天发一版，master 则天天动。
++#   跟着 Release 走，出包节奏和上游一致，也不会把上游半成品带进来。
+ #
+ # 合规：Release 的 tag 打在「实际编译的那个 commit」上，GitHub 自动给 tag 附源码包，
+ #       满足 GPLv3 §6「分发二进制必须能拿到对应源码」。
+ 
+ on:
+   schedule:
+-    # 每小时检查一次。没新上游提交时几秒就 exit，不编译，几乎零成本；
++    # 每小时看一次上游 Release。没新 Release 时几秒就 exit，不编译，几乎零成本；
+     # 跑得勤是为了对冲 GitHub schedule 的「best effort」——高峰期会延迟甚至整班跳过。
+     - cron: '23 * * * *'
+   workflow_dispatch:
+@@ -26,6 +30,7 @@ concurrency:
+ 
+ env:
+   UPSTREAM_REPO: https://github.com/cwuom/NeriPlayer.git
++  UPSTREAM_API: https://api.github.com/repos/cwuom/NeriPlayer
+   KEY_ALIAS: aerial
+   APK_OUT: NeriPlayer-TV.apk
+   # aerial 证书的 SHA-256（公开信息，不是密钥）。传错密钥 / 没生效签名都会在这里失败。
+@@ -50,34 +55,72 @@ jobs:
+           git config user.name  "github-actions[bot]"
+           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+ 
+-      - name: 检查上游有没有新提交
++      - name: 检查上游有没有新 Release
+         id: up
++        env:
++          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+         run: |
+           set -euo pipefail
++
++          # ---------- 1. 上游最新的正式 Release（忽略草稿和预发布）----------
++          # 「已处理过」靠 tag 记：seen/<上游 Release 名>，构建全流程跑完后才打。
++          REL_TAG=$(curl -fsSL \
++            -H "Accept: application/vnd.github+json" \
++            -H "Authorization: Bearer $GH_TOKEN" \
++            "$UPSTREAM_API/releases?per_page=30" \
++            | python3 -c 'import json,sys; rs=json.load(sys.stdin); print(next((r["tag_name"] for r in rs if not r.get("draft") and not r.get("prerelease")), ""))') \
++            || { echo "::error::读取上游 Release 列表失败"; exit 1; }
++          echo "release_tag=$REL_TAG" >> "$GITHUB_OUTPUT"
++
++          # tag 可能没被 checkout 拉全（fetch-depth: 0 通常够，这里再兜一次）
++          git fetch --quiet origin '+refs/tags/seen/*:refs/tags/seen/*' 2>/dev/null || true
++
++          SEEN=false
++          if [ -n "$REL_TAG" ] && git rev-parse -q --verify "refs/tags/seen/$REL_TAG" >/dev/null; then
++            SEEN=true
++          fi
++
++          # ---------- 2. 上游 master 有没有我们基线之后的新提交 ----------
+           git remote add upstream "$UPSTREAM_REPO" 2>/dev/null || git remote set-url upstream "$UPSTREAM_REPO"
+           git fetch --quiet upstream master
+           NEW=$(git rev-parse upstream/master)
+           BASE=$(sed -n 's/^base_full_sha=//p' patches/BASE)
+-          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+-          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+           if [ -z "$BASE" ]; then
+             echo "::error::patches/BASE 里读不到 base_full_sha"
+             exit 1
+           fi
+           if git merge-base --is-ancestor "$NEW" "$BASE"; then
+-            echo "changed=false" >> "$GITHUB_OUTPUT"
+-            echo "上游没有新提交（当前基线 $(git rev-parse --short "$BASE")）。"
+-            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+-              echo "build=true" >> "$GITHUB_OUTPUT"
+-              echo "→ 手动触发，仍然用当前代码编译出包。"
+-            else
+-              echo "build=false" >> "$GITHUB_OUTPUT"
+-              echo "→ 定时触发，跳过（不编译）。"
+-            fi
++            CHANGED=false
+           else
+-            echo "changed=true" >> "$GITHUB_OUTPUT"
++            CHANGED=true
++          fi
++
++          echo "new=$NEW" >> "$GITHUB_OUTPUT"
++          echo "base=$BASE" >> "$GITHUB_OUTPUT"
++          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
++
++          # ---------- 3. 结论 ----------
++          if [ -z "$REL_TAG" ]; then
++            echo "上游还没有正式 Release。"
++            REL_NEW=false
++          elif [ "$SEEN" = "true" ]; then
++            echo "上游最新 Release 已处理过：$REL_TAG"
++            REL_NEW=false
++          else
++            echo "上游有新 Release：$REL_TAG"
++            REL_NEW=true
++          fi
++          echo "release_new=$REL_NEW" >> "$GITHUB_OUTPUT"
++          [ "$CHANGED" = "true" ] \
++            && echo "上游 master 也有新提交：$(git rev-parse --short "$BASE") → $(git rev-parse --short "$NEW")" \
++            || echo "上游 master 相对基线没有新提交。"
++
++          if [ "$REL_NEW" = "true" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+             echo "build=true" >> "$GITHUB_OUTPUT"
+-            echo "上游有新提交：$(git rev-parse --short "$BASE") → $(git rev-parse --short "$NEW")"
++            echo "→ 本次编译出包。"
++          else
++            echo "build=false" >> "$GITHUB_OUTPUT"
++            echo "→ 没有新 Release，跳过（不编译）。"
+           fi
+ 
+       - name: 准备要编译的代码
+@@ -215,6 +258,7 @@ jobs:
+         if: steps.apply.outputs.ok == 'true'
+         env:
+           UPSTREAM_SHA: ${{ steps.up.outputs.new }}
++          UPSTREAM_RELEASE: ${{ steps.up.outputs.release_tag }}
+         run: |
+           set -euo pipefail
+           APK=$(ls app/build/outputs/apk/tvrelease/*.apk | head -1)
+@@ -223,6 +267,10 @@ jobs:
+           VERSION=$(basename "$APK" | sed 's/^NeriPlayer-//; s/-armeabi-v7a.*//; s/\.apk$//')
+           # tag 带月日时分，手动重复触发也不会撞车（同一个 tag 只能对应一次构建）
+           TAG="tv-$(date -u +%Y%m%d-%H%M)-$(git rev-parse --short=7 "$UPSTREAM_SHA")"
++          REL_NOTE=""
++          if [ -n "${UPSTREAM_RELEASE:-}" ]; then
++            REL_NOTE="，由上游 Release \`${UPSTREAM_RELEASE}\` 触发"
++          fi
+           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+           echo "sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+@@ -230,7 +278,7 @@ jobs:
+           cat > release-notes.md <<EOF
+           ## 这是什么
+ 
+-          **电视适配版** NeriPlayer（本 fork 的唯一用途），基于上游 \`${UPSTREAM_SHA}\` 构建。
++          **电视适配版** NeriPlayer（本 fork 的唯一用途），基于上游 \`${UPSTREAM_SHA}\` 构建${REL_NOTE}。
+ 
+           - 包名 \`moe.ouom.neriplayer.tv\`（独立包名，可与手机版 / 调试版共存）
+           - 签名：aerial
+@@ -309,3 +357,19 @@ jobs:
+       - name: 把同步结果推回 main
+         if: steps.apply.outputs.ok == 'true' && steps.apply.outputs.rebased == 'true'
+         run: git push --force-with-lease origin "HEAD:main"
++
++      # 放在最后：只有编译、验签、发版、推 main 全部成功才打标记，
++      # 中途失败的话下个小时还能重试，不会被误判成「已处理」。
++      - name: 记录已处理的上游 Release
++        if: steps.apply.outputs.ok == 'true' && steps.up.outputs.release_tag != ''
++        run: |
++          set -euo pipefail
++          TAG="seen/${{ steps.up.outputs.release_tag }}"
++          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
++            echo "标记 $TAG 已存在，无需重复打。"
++            exit 0
++          fi
++          git tag "$TAG" HEAD
++          git push origin "$TAG"
++          echo "已标记：$TAG → $(git rev-parse --short=7 HEAD)"
++          echo "下次定时任务看到这个标记就跳过，直到上游再发新 Release。"
+diff --git a/FORK.md b/FORK.md
+index 5eab06f9..c292898c 100644
+--- a/FORK.md
++++ b/FORK.md
+@@ -81,8 +81,8 @@ cat aerial.b64
+ 网页路径：仓库顶部 **Actions** → 左侧 **「同步上游并发布 TV 版」** →
+ 右边 **Run workflow** → 绿色 **Run workflow** 按钮。
+ 
+-**手动触发总是出包**：不管上游有没有更新，都会用当前 `main` 的代码编一遍并发 Release。
+-定时触发才是「上游没更新就跳过」。
++**手动触发总是出包**：不管有没有新 Release，都会用当前 `main` 的代码编一遍并发 Release。
++定时触发只在**上游发了新 Release** 时才出包（上游 master 天天有提交也不管）。
+ 
+ 等 15～25 分钟（第一次要下依赖、编 native），跑完去 **Releases** 看，应该有一个
+ `NeriPlayer-TV.apk`。tag 形如 `tv-20261107-0205-1ce32a4`（日期-时分-上游短哈希），
+@@ -114,7 +114,7 @@ adb install -r NeriPlayer-TV.apk          # 装新的 .tv 包
+ | `archive/*` | 历史存档，只读 |
+ | `patches/` | 上游补丁快照，自动生成，**不要手改** |
+ | `fork-tools/` | 同步与生成补丁的脚本 |
+-| `.github/workflows/fork-sync.yml` | CI：定时同步上游 → 编译 → 发 Release |
++| `.github/workflows/fork-sync.yml` | CI：定时检查上游 Release → 有新版才编译 → 发 Release |
+ 
+ **`main` 必须保持线性**（不含 merge commit）。`patches/series/` 是靠逐个 `git am`
+ 重放的，历史里一旦有 merge，merge 之后的提交其 diff 基准是合并结果而不是上游，
+@@ -145,8 +145,16 @@ git push origin main
+ 
+ ## 3. 上游更新了怎么办
+ 
+-**正常情况下什么都不用做** —— CI 每小时看一次上游，有新提交就自动叠补丁、
+-编译、发 Release、把结果推回 `main`。你只要去 Releases 下载。
++**正常情况下什么都不用做** —— CI 每小时去上游看**有没有发新 Release**：
++
++| 情况 | 动作 |
++| --- | --- |
++| 有新 Release | 把我方补丁叠到上游 master → 编译 → 发 Release → 推回 `main` → 打 `seen/<Release 名>` 标记 |
++| 没有新 Release | 几秒钟退出，不编译（上游 master 中间那些提交不会触发打包） |
++
++所以出包节奏跟着上游发版走，大约 3～5 天一个。
++
++> ⚠️ `seen/*` 那些 tag 是「这个上游 Release 已经处理过」的记号，**千万别删**——删了下一次定时任务会当成新 Release，重复出一个包。`tv-*` 的 tag 更不能删（GPL 要求），详见第 4 节。
+ 
+ **CI 红了（打不开 / 报错）** 说明上游动到了我们改过的地方。GitHub 会给仓库 owner
+ 发一封「workflow 运行失败」的通知（手机 App 的 Inbox 也能收到），点进去那次运行，
+@@ -324,8 +332,19 @@ A：建议改。fork 出来的 About 默认抄的上游描述，别人搜到会
+ - 本地手动：`bash fork-tools/sync-upstream.sh`
+ 
+ **Q：为什么手动跑的时候上游没更新就不出包？**
+-A：已经改了。现在**手动触发（Run workflow）总是出包**，不管上游有没有新提交，
+-都会用当前 `main` 的代码编一遍并发 Release；只有定时触发才遵守「没更新就跳过」。
++A：已经改了。现在**手动触发（Run workflow）总是出包**，不管有没有新 Release，
++都会用当前 `main` 的代码编一遍并发 Release；只有定时触发才遵守「没新 Release 就跳过」。
++
++**Q：为什么上游明明有新提交，CI 却一直绿着不出包？**
++A：**这是设计如此**。定时任务只看上游有没有**发 Release**，不看 master 提交数。
++上游大约 3～5 天发一版，中间天天有提交也不出包——避免把上游半成品打成电视包，
++也省 CI 时间。上游发新版后最多 1 小时就会自动出包。
++想立刻要一个包，手动点 **Run workflow** 即可。
++
++**Q：仓库里那些 `seen/xxx` 的 tag 是什么？**
++A：**「这条上游 Release 已经打包过」的记号**，由 CI 在整条流程全部成功后自动打。
++定时任务靠它判断「有没有新 Release」。**不要删**，删了会重复出一个包。
++它和 `tv-*` 是两回事，后者是真正发布用的版本 tag（GPL 要求必须留）。
+ 
+ **Q：CI 失败怎么通知我？会往 Issues 里发东西吗？**
+ A：**不会开 Issue**，仓库里一个 Issue 都不会有。失败通知只走 GitHub 自己的渠道

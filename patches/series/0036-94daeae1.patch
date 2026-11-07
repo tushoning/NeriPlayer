@@ -1,0 +1,27 @@
+From 94daeae1b927de2dd57269aeab9987cc40af41b9 Mon Sep 17 00:00:00 2001
+From: neri-fork <local@neriplayer.fork>
+Date: Sat, 7 Nov 2026 19:22:04 +0800
+Subject: [PATCH] =?UTF-8?q?ci:=20=E6=8B=89=E5=8F=96=E4=B8=8A=E6=B8=B8=20ma?=
+ =?UTF-8?q?ster=20=E5=A4=B1=E8=B4=A5=E6=97=B6=E7=BB=99=E5=87=BA=E6=98=8E?=
+ =?UTF-8?q?=E7=A1=AE=E6=8A=A5=E9=94=99?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ .github/workflows/fork-sync.yml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/.github/workflows/fork-sync.yml b/.github/workflows/fork-sync.yml
+index c7a47567..d9757a36 100644
+--- a/.github/workflows/fork-sync.yml
++++ b/.github/workflows/fork-sync.yml
+@@ -82,7 +82,7 @@ jobs:
+ 
+           # ---------- 2. 上游 master 有没有我们基线之后的新提交 ----------
+           git remote add upstream "$UPSTREAM_REPO" 2>/dev/null || git remote set-url upstream "$UPSTREAM_REPO"
+-          git fetch --quiet upstream master
++          git fetch --quiet upstream master || { echo "::error::拉取上游 master 失败"; exit 1; }
+           NEW=$(git rev-parse upstream/master)
+           BASE=$(sed -n 's/^base_full_sha=//p' patches/BASE)
+           if [ -z "$BASE" ]; then
