@@ -245,7 +245,9 @@ jobs:
 
           # ---- 打包源码：当前工作区就是「上游 $UPSTREAM_SHA + 全部补丁」，
           #      子模块内容也在里面，解压即可编译（GPLv3 §6 要求的对应源码） ----
-          tar -czf "$SRC_OUT" \
+          # 输出必须写到 /tmp：直接写当前目录的话，tar 会读到正在增长的自己，
+          # 报 "file changed as we read it" 并以 1 退出。打完再挪回来。
+          tar -czf "/tmp/$SRC_OUT" \
             --exclude='./.git' \
             --exclude='./.gradle' \
             --exclude='./build' \
@@ -253,7 +255,9 @@ jobs:
             --exclude='*/*/build' \
             --exclude='*/*/*/build' \
             --exclude='*/.git' \
+            --exclude="./$APK_OUT" \
             .
+          mv "/tmp/$SRC_OUT" "./$SRC_OUT"
           echo "源码包：$SRC_OUT ($(du -h "$SRC_OUT" | cut -f1))"
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
