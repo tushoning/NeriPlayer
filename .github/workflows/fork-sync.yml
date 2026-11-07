@@ -82,7 +82,7 @@ jobs:
 
           # ---------- 2. 上游 master 有没有我们基线之后的新提交 ----------
           git remote add upstream "$UPSTREAM_REPO" 2>/dev/null || git remote set-url upstream "$UPSTREAM_REPO"
-          git fetch --quiet upstream master
+          git fetch --quiet upstream master || { echo "::error::拉取上游 master 失败"; exit 1; }
           NEW=$(git rev-parse upstream/master)
           BASE=$(sed -n 's/^base_full_sha=//p' patches/BASE)
           if [ -z "$BASE" ]; then
