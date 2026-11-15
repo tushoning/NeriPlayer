@@ -382,8 +382,9 @@ internal fun MainTabLayerHost(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            // 电视：侧栏按右键的落点 = 这个场景里第一个可聚焦元素。
-                            // focusRequester 挂在容器上时 requestFocus 会向下找第一个可聚焦后代。
+                            // 电视：侧栏按右键的「页面第一个落点」= 这个场景里第一个可聚焦元素。
+                            // focusRequester 挂在容器上时 requestFocus 会向下按组合顺序找，
+                            // 与屏幕位置无关，所以只在刚切标签那一次用（见 TvTopBarFocus.requestTabEntry）。
                             .focusRequester(
                                 TvTopBarFocus.contentEntryRequesterFor(scene.route)
                             )

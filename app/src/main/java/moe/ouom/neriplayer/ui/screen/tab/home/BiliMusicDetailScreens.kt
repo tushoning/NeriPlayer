@@ -1,104 +1,38 @@
 package moe.ouom.neriplayer.ui.screen.tab.home
 
-import androidx.compose.foundation.LocalIndication
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import moe.ouom.neriplayer.ui.i18n.asString
-import moe.ouom.neriplayer.ui.tv.rememberTvDeferredImage
-import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
 import android.app.Application
-import android.content.Intent
-import android.net.Uri
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
-import androidx.compose.material.icons.automirrored.outlined.PlaylistPlay
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material.icons.outlined.FavoriteBorder
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import moe.ouom.neriplayer.ui.haptic.performHapticFeedback
-import moe.ouom.neriplayer.ui.haptic.HapticFilledIconButton
-import moe.ouom.neriplayer.ui.screen.tab.library.LibrarySecondaryTabs
-import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
-import moe.ouom.neriplayer.ui.tv.tvClampLeft
-import android.content.ClipData
-import android.content.ClipboardManager
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import moe.ouom.neriplayer.ui.component.playlist.NeriSongRow
-import moe.ouom.neriplayer.ui.haptic.HapticIconButton
-import moe.ouom.neriplayer.ui.component.playlist.PlaylistChromeTopBar
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.text.style.TextAlign
-import moe.ouom.neriplayer.ui.feedback.AppFeedback
-import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
-import moe.ouom.neriplayer.ui.tv.TvRowMenuKeyState
-import moe.ouom.neriplayer.ui.tv.TvRowMenuKeyEffect
-import moe.ouom.neriplayer.ui.tv.rememberTvMenuFirstItemFocus
-import moe.ouom.neriplayer.ui.tv.rememberTvRowMenuKeyState
-import moe.ouom.neriplayer.ui.tv.tvRowMenuKeyPress
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.runtime.collectAsState
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlin.random.Random
-import moe.ouom.neriplayer.core.player.PlayerManager
-import moe.ouom.neriplayer.ui.screen.playlist.FavoriteSongLookup
-import moe.ouom.neriplayer.ui.screen.playlist.PlaylistActionSheetBleed
-import moe.ouom.neriplayer.ui.screen.playlist.PlaylistChromeTopBarHeight
-import moe.ouom.neriplayer.ui.screen.playlist.playlistTopBarBleed
-import moe.ouom.neriplayer.ui.screen.playlist.PlaylistTopBarCoverBackdrop
-import moe.ouom.neriplayer.ui.screen.playlist.PlaylistModernActionSheet
-import moe.ouom.neriplayer.ui.screen.playlist.PlaylistModernHeroHeader
-import moe.ouom.neriplayer.ui.screen.playlist.PlaylistModernHeroHeight
-import moe.ouom.neriplayer.ui.screen.playlist.PlaylistModernListItemSurface
-import moe.ouom.neriplayer.ui.screen.playlist.PlaylistModernPlaybackActions
-import moe.ouom.neriplayer.ui.screen.playlist.PlaylistModernVisualColorsProvider
-import moe.ouom.neriplayer.ui.screen.playlist.tvPlaylistTopBarShape
-import moe.ouom.neriplayer.ui.theme.LocalHasCustomBackground
-import moe.ouom.neriplayer.ui.tv.tvScrollToTopOnUp
-
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -112,7 +46,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import coil.compose.AsyncImage
+import kotlin.random.Random
 import moe.ouom.neriplayer.common.R as CoreCommonR
+import moe.ouom.neriplayer.core.player.PlayerManager
 import moe.ouom.neriplayer.data.local.playlist.LocalPlaylistRepository
 import moe.ouom.neriplayer.data.local.playlist.launchLocalPlaylistMutation
 import moe.ouom.neriplayer.data.local.playlist.system.FavoritesPlaylist
@@ -125,17 +61,34 @@ import moe.ouom.neriplayer.data.model.bilibili.music.toPlayableHotVideoItems
 import moe.ouom.neriplayer.data.model.bilibili.music.toPlayableRankVideoItems
 import moe.ouom.neriplayer.platform.bilibili.api.image.buildBiliThumbnailUrl
 import moe.ouom.neriplayer.platform.bilibili.playback.resolver.buildBiliSongAlbum
-import moe.ouom.neriplayer.ui.component.common.NeriChoiceChip
+import moe.ouom.neriplayer.ui.component.playlist.NeriSongRow
+import moe.ouom.neriplayer.ui.component.playlist.PlaylistChromeTopBar
+import moe.ouom.neriplayer.ui.feedback.AppFeedback
+import moe.ouom.neriplayer.ui.haptic.HapticIconButton
+import moe.ouom.neriplayer.ui.i18n.asString
 import moe.ouom.neriplayer.ui.navigation.LocalMiniPlayerHeight
-import moe.ouom.neriplayer.ui.theme.NeriDesign
+import moe.ouom.neriplayer.ui.screen.playlist.FavoriteSongLookup
+import moe.ouom.neriplayer.ui.screen.playlist.PlaylistActionSheetBleed
+import moe.ouom.neriplayer.ui.screen.playlist.PlaylistModernActionSheet
+import moe.ouom.neriplayer.ui.screen.playlist.PlaylistModernHeroHeader
+import moe.ouom.neriplayer.ui.screen.playlist.PlaylistModernHeroHeight
+import moe.ouom.neriplayer.ui.screen.playlist.PlaylistModernListItemSurface
+import moe.ouom.neriplayer.ui.screen.playlist.PlaylistModernPlaybackActions
+import moe.ouom.neriplayer.ui.screen.playlist.PlaylistModernVisualColorsProvider
+import moe.ouom.neriplayer.ui.screen.playlist.playlistTopBarBleed
+import moe.ouom.neriplayer.ui.screen.tab.library.LibrarySecondaryTabs
+import moe.ouom.neriplayer.ui.theme.LocalHasCustomBackground
 import moe.ouom.neriplayer.ui.theme.neriRoundedShape
+import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
+import moe.ouom.neriplayer.ui.tv.rememberTvDeferredImage
+import moe.ouom.neriplayer.ui.tv.tvRowStart
+import moe.ouom.neriplayer.ui.tv.tvScrollToTopOnUp
 import moe.ouom.neriplayer.ui.viewmodel.playlist.BiliVideoItem
 import moe.ouom.neriplayer.ui.viewmodel.tab.HomeViewModel
 import moe.ouom.neriplayer.util.format.formatDate
 import moe.ouom.neriplayer.util.format.formatDurationSec
 import moe.ouom.neriplayer.util.format.formatPlayCount
 import moe.ouom.neriplayer.util.media.offlineCachedImageRequest
-import moe.ouom.neriplayer.util.platform.tryStartActivity
 
 /**
  * 「Bilibili 音乐榜」查看全部页面。
@@ -147,9 +100,8 @@ import moe.ouom.neriplayer.util.platform.tryStartActivity
  * 同步给共享 ViewModel，刷新、切榜等入口才会走仅缓存分支而不是继续发网络请求。
  *
  * 返回手势由 [moe.ouom.neriplayer.ui.screen.host.HomeHostScreen] 的预测性返回转场统一接管，
- * 此处不注册 [BackHandler]，只保留 toolbar 导航用的 [onBack]。
+ * 此处不注册 BackHandler，只保留 toolbar 导航用的 [onBack]。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun BiliMusicRankDetailScreen(
     onBack: () -> Unit,
@@ -158,15 +110,7 @@ internal fun BiliMusicRankDetailScreen(
     activeRankType: BiliMusicRankType,
     onRankTypeSelected: (BiliMusicRankType) -> Unit = {}
 ) {
-    val context = LocalContext.current
-    val appContext = remember(context) { context.applicationContext }
-    val vm: HomeViewModel = viewModel(
-        factory = viewModelFactory {
-            initializer {
-                HomeViewModel(appContext as Application)
-            }
-        }
-    )
+    val vm = rememberBiliMusicDetailViewModel()
     val ui by vm.uiState.collectAsStateWithLifecycle()
     val state = ui.biliMusicRank
     // 头图 / 玻璃卡片 / 顶栏背景都拿第一首的封面（顶栏要用，所以提到 Scaffold 外面）
@@ -176,209 +120,104 @@ internal fun BiliMusicRankDetailScreen(
             ?.let { buildBiliThumbnailUrl(imageUrl = it, width = 640, height = 360) }
             .orEmpty()
     }
-    // 顶栏要跟着头图滚动状态变化，列表状态提到这里
-    val listState = rememberLazyListState()
-    // 播放中时详情页会被常驻迷你播放器遮住底部，列表末尾需要额外预留它的高度
-    val miniPlayerHeight = LocalMiniPlayerHeight.current
-    // 详情页打开时首页不再组合，HomeScreen 的 wasOffline 恢复刷新不会抵达这个目的地；因此这里
-    // 自己负责同步 offlineMode，并在从离线切回在线时重启一次因离线被跳过而遗留的空加载。
-    var wasOffline by remember { mutableStateOf(false) }
-    LaunchedEffect(offlineMode) {
-        val cameBackOnline = wasOffline && !offlineMode
-        vm.setOfflineMode(offlineMode)
-        if (cameBackOnline) {
-            wasOffline = false
+    rememberBiliMusicOfflineSync(
+        vm = vm,
+        offlineMode = offlineMode,
+        // lambda 只读 ViewModel 的实时状态，不依赖组合快照，因此不需要 rememberUpdatedState
+        isEmpty = {
             val current = vm.uiState.value.biliMusicRank
-            if (current.songs.isEmpty() && !current.loading) {
-                vm.loadBiliMusicRank(force = true)
-            }
-        } else if (offlineMode) {
-            wasOffline = true
-        }
-    }
+            current.songs.isEmpty() && !current.loading
+        },
+        onReload = { vm.loadBiliMusicRank(force = true) }
+    )
     // 榜单类型由宿主持有（首页「查看全部」时记住的选中项，进程恢复后同样带回），而共享
     // HomeViewModel 可能已被重建回默认 HOT；这里把它对齐一次，避免展示与用户选择不一致的榜单。
     LaunchedEffect(activeRankType) {
-        if (activeRankType != state.type) {
+        if (vm.uiState.value.biliMusicRank.type != activeRankType) {
             vm.selectBiliMusicRankType(activeRankType)
         }
     }
+    val playableVideos = remember(state.songs) { state.songs.toPlayableRankVideoItems() }
+    val titleText = stringResource(CoreCommonR.string.home_bili_music_rank)
+    val periodText = state.period?.let {
+        stringResource(CoreCommonR.string.home_bili_music_rank_period, it.periodNumber)
+    }
+    val updatedText = state.period?.takeIf { it.publishTimeSec > 0L }?.let {
+        stringResource(
+            CoreCommonR.string.home_bili_music_rank_updated,
+            formatDate(it.publishTimeSec * 1000L)
+        )
+    }
+    val heroSubtitle = listOfNotNull(
+        periodText,
+        updatedText,
+        stringResource(CoreCommonR.string.home_bili_music_source_note)
+    ).joinToString(" · ")
 
-    Scaffold(
-        containerColor = Color.Transparent,
-        topBar = {
-            PlaylistChromeTopBar(
-                title = stringResource(CoreCommonR.string.home_bili_music_rank),
-                coverUrl = heroCoverUrl,
-                offlineMode = offlineMode,
-                heroHeight = PlaylistModernHeroHeight,
-                listState = listState,
-                onBack = onBack,
-                actions = {
-                    HapticIconButton(
-                        enabled = !offlineMode,
-                        onClick = { vm.loadBiliMusicRank(force = true) }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Refresh,
-                            contentDescription = stringResource(CoreCommonR.string.recommend_refresh)
-                        )
+    BiliMusicDetailLayout(
+        title = titleText,
+        heroCoverUrl = heroCoverUrl,
+        heroSubtitle = heroSubtitle,
+        offlineMode = offlineMode,
+        loading = state.loading,
+        errorText = state.error?.asString(),
+        isEmpty = state.songs.isEmpty(),
+        playableCount = playableVideos.size,
+        onBack = onBack,
+        onRefresh = { vm.loadBiliMusicRank(force = true) },
+        onPlayInOrder = { if (playableVideos.isNotEmpty()) onPlay(playableVideos, 0) },
+        onShufflePlay = {
+            if (playableVideos.isNotEmpty()) {
+                onPlay(playableVideos, Random.nextInt(playableVideos.size))
+            }
+        },
+        itemKeyPrefix = "bili-music-rank",
+        headerContent = {
+            item(key = "bili-music-rank-types") {
+                BiliMusicRankTypeRow(
+                    selected = state.type,
+                    onTypeSelected = { type ->
+                        // 详情页内切换榜单时同步回宿主，保证退出再进入或进程恢复后仍是这个榜单
+                        onRankTypeSelected(type)
+                        vm.selectBiliMusicRankType(type)
                     }
-                }
-            )
+                )
+            }
         }
-    ) { padding ->
-            PullToRefreshBox(
-                isRefreshing = state.loading,
-                onRefresh = {
-                    if (!offlineMode) {
-                        vm.loadBiliMusicRank(force = true)
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
+    ) {
+        itemsIndexed(
+            items = state.songs,
+            key = { index, song ->
+                song.musicId.ifBlank { "rank-row-$index-${song.creationBvid}" }
+            }
+        ) { _, song ->
+            val playableItem = remember(song) { song.toPlayableBiliVideoItem() }
+            PlaylistModernListItemSurface(
+                coverUrl = heroCoverUrl,
+                offlineMode = offlineMode
             ) {
-                val playableVideos = remember(state.songs) {
-                    state.songs.toPlayableRankVideoItems()
-                }
-                // 头图 / 玻璃卡片都拿第一首的封面当底图（和歌单详情页同一套）
-                val heroTitle = stringResource(CoreCommonR.string.home_bili_music_rank)
-                val periodText = state.period?.let {
-                    stringResource(CoreCommonR.string.home_bili_music_rank_period, it.periodNumber)
-                }
-                val updatedText = state.period?.takeIf { it.publishTimeSec > 0L }?.let {
-                    stringResource(
-                        CoreCommonR.string.home_bili_music_rank_updated,
-                        formatDate(it.publishTimeSec * 1000L)
-                    )
-                }
-                val heroSubtitle = listOfNotNull(
-                    periodText,
-                    updatedText,
-                    stringResource(CoreCommonR.string.home_bili_music_source_note)
-                ).joinToString(" · ")
-                val shuffleEnabled by PlayerManager.shuffleModeFlow.collectAsState()
-                val repeatMode by PlayerManager.repeatModeFlow.collectAsState()
-                val hasCustomBackground = LocalHasCustomBackground.current
-                when {
-                    state.songs.isNotEmpty() -> {
-                        PlaylistModernVisualColorsProvider(
-                            coverUrl = heroCoverUrl,
-                            offlineMode = offlineMode
-                        ) {
-                            LazyColumn(
-                                state = listState,
-                                // 和歌单详情页完全一致的边距：外层不缩进，各行自带内边距
-                                contentPadding = PaddingValues(
-                                    start = pageSidePaddingOr(0.dp),
-                                    end = pageSidePaddingOr(0.dp),
-                                    bottom = 24.dp + miniPlayerHeight
-                                ),
-                                modifier = Modifier.fillMaxSize()
-                            ) {
-                                item(key = "bili-music-rank-hero") {
-                                    PlaylistModernHeroHeader(
-                                        displayName = heroTitle,
-                                        coverUrl = heroCoverUrl,
-                                        subtitle = heroSubtitle,
-                                        offlineMode = offlineMode,
-                                        height = PlaylistModernHeroHeight,
-                                        // 头图继续铺到「全部播放」那一行下面
-                                        topBleed = playlistTopBarBleed(),
-                                            backgroundBleed = PlaylistActionSheetBleed
-                                    )
-                                }
-                                item(key = "bili-music-rank-actions") {
-                                    PlaylistModernActionSheet(
-                                        coverUrl = heroCoverUrl,
-                                        offlineMode = offlineMode,
-                                        hasCustomBackground = hasCustomBackground,
-                                        overHeroImage = true
-                                    ) {
-                                        PlaylistModernPlaybackActions(
-                                            // 头图不是可聚焦节点：在第一屏内容上按上键先滚到顶
-                                            modifier = Modifier.tvScrollToTopOnUp(listState),
-                                            songCount = playableVideos.size,
-                                            shuffleEnabled = shuffleEnabled,
-                                            repeatMode = repeatMode,
-                                            showExport = false,
-                                            onPlayInOrder = {
-                                                if (playableVideos.isNotEmpty()) {
-                                                    onPlay(playableVideos, 0)
-                                                }
-                                            },
-                                            onShufflePlay = {
-                                                if (playableVideos.isNotEmpty()) {
-                                                    onPlay(
-                                                        playableVideos,
-                                                        Random.nextInt(playableVideos.size)
-                                                    )
-                                                }
-                                            },
-                                            onToggleShuffle = {
-                                                PlayerManager.setShuffle(!shuffleEnabled)
-                                            },
-                                            onCycleRepeatMode = {
-                                                PlayerManager.cycleRepeatMode()
-                                            },
-                                            onExportToLocalPlaylist = {}
-                                        )
-                                    }
-                                }
-                                item(key = "bili-music-rank-types") {
-                                    BiliMusicRankTypeRow(
-                                        selected = state.type,
-                                        onTypeSelected = { type ->
-                                            // 详情页内切换榜单时同步回宿主，保证退出再进入或进程恢复后仍是这个榜单
-                                            onRankTypeSelected(type)
-                                            vm.selectBiliMusicRankType(type)
-                                        }
-                                    )
-                                }
-                                itemsIndexed(
-                                    items = state.songs,
-                                    key = { index, song ->
-                                        song.musicId.ifBlank { "rank-row-$index-${song.creationBvid}" }
-                                    }
-                                ) { _, song ->
-                                    PlaylistModernListItemSurface(
-                                        coverUrl = heroCoverUrl,
-                                        offlineMode = offlineMode
-                                    ) {
-                                        BiliMusicRankDetailRow(
-                                            song = song,
-                                            offlineMode = offlineMode,
-                                            onClick = {
-                                                val target = song.toPlayableBiliVideoItem()
-                                                val index = if (target == null) {
-                                                    -1
-                                                } else {
-                                                    playableVideos.indexOfFirst {
-                                                        it.id == target.id && it.bvid == target.bvid
-                                                    }
-                                                }
-                                                if (index >= 0) {
-                                                    onPlay(playableVideos, index)
-                                                }
-                                            }
-                                        )
-                                    }
-                                }
+                BiliMusicDetailRow(
+                    index = song.rank,
+                    title = song.title.ifBlank { song.album },
+                    uploader = song.singer.ifBlank { song.uploader },
+                    coverUrl = song.videoCover,
+                    durationSec = song.displayDurationSec,
+                    playableItem = playableItem,
+                    metaLabel = song.playbackSourceLabel(),
+                    offlineMode = offlineMode,
+                    onClick = {
+                        val index = playableItem?.let { target ->
+                            playableVideos.indexOfFirst {
+                                it.id == target.id && it.bvid == target.bvid
                             }
+                        } ?: -1
+                        if (index >= 0) {
+                            onPlay(playableVideos, index)
                         }
                     }
-
-                    state.loading -> BiliMusicDetailHint(text = stringResource(CoreCommonR.string.home_loading))
-
-                    state.error != null -> BiliMusicDetailError(
-                        detail = state.error.asString(),
-                        onRetry = { vm.loadBiliMusicRank(force = true) }
-                    )
-
-                    else -> BiliMusicDetailHint(text = stringResource(CoreCommonR.string.home_bili_music_empty))
-                }
+                )
             }
+        }
     }
 }
 
@@ -386,9 +225,8 @@ internal fun BiliMusicRankDetailScreen(
  * 「Bilibili 音乐热门」查看全部页面（音乐分区视频榜）。
  *
  * 与 [BiliMusicRankDetailScreen] 一样共用首页的 [HomeViewModel]，因此同样需要把 [offlineMode]
- * 同步给 ViewModel，并且不注册根级 [BackHandler]，让宿主的预测性返回转场继续生效。
+ * 同步给 ViewModel，并且不注册根级 BackHandler，让宿主的预测性返回转场继续生效。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun BiliMusicHotDetailScreen(
     onBack: () -> Unit,
@@ -396,49 +234,122 @@ internal fun BiliMusicHotDetailScreen(
     offlineMode: Boolean
 ) {
     val context = LocalContext.current
-    val appContext = remember(context) { context.applicationContext }
-    val vm: HomeViewModel = viewModel(
-        factory = viewModelFactory {
-            initializer {
-                HomeViewModel(appContext as Application)
-            }
-        }
-    )
+    val vm = rememberBiliMusicDetailViewModel()
     val ui by vm.uiState.collectAsStateWithLifecycle()
     val state = ui.biliMusicHot
-                val heroCoverUrl = remember(state.items) {
-                    state.items.firstOrNull()?.coverUrl
-                        ?.takeIf { it.isNotBlank() }
-                        ?.let { buildBiliThumbnailUrl(imageUrl = it, width = 640, height = 360) }
-                        .orEmpty()
-                }
-                // 顶栏要跟着头图滚动状态变化，列表状态提到这里
-                val listState = rememberLazyListState()
-    // 播放中时详情页会被常驻迷你播放器遮住底部，列表末尾需要额外预留它的高度
-    val miniPlayerHeight = LocalMiniPlayerHeight.current
-    // 与 [BiliMusicRankDetailScreen] 同理：详情页打开时首页不再组合，HomeScreen 的 wasOffline
-    // 恢复刷新不会抵达这个目的地；这里自己同步 offlineMode，并在从离线切回在线时重启一次因离线
-    // 被跳过而遗留的空加载，否则会一直停在「暂无内容」直到手动刷新。
-    var wasOffline by remember { mutableStateOf(false) }
-    LaunchedEffect(offlineMode) {
-        val cameBackOnline = wasOffline && !offlineMode
-        vm.setOfflineMode(offlineMode)
-        if (cameBackOnline) {
-            wasOffline = false
+    val heroCoverUrl = remember(state.items) {
+        state.items.firstOrNull()?.coverUrl
+            ?.takeIf { it.isNotBlank() }
+            ?.let { buildBiliThumbnailUrl(imageUrl = it, width = 640, height = 360) }
+            .orEmpty()
+    }
+    rememberBiliMusicOfflineSync(
+        vm = vm,
+        offlineMode = offlineMode,
+        isEmpty = {
             val current = vm.uiState.value.biliMusicHot
-            if (current.items.isEmpty() && !current.loading) {
-                vm.loadBiliMusicHot(force = true)
+            current.items.isEmpty() && !current.loading
+        },
+        onReload = { vm.loadBiliMusicHot(force = true) }
+    )
+    val playableVideos = remember(state.items) { state.items.toPlayableHotVideoItems() }
+
+    BiliMusicDetailLayout(
+        title = stringResource(CoreCommonR.string.home_bili_music_hot),
+        heroCoverUrl = heroCoverUrl,
+        heroSubtitle = stringResource(CoreCommonR.string.home_bili_music_source_note),
+        offlineMode = offlineMode,
+        loading = state.loading,
+        errorText = state.error?.asString(),
+        isEmpty = state.items.isEmpty(),
+        playableCount = playableVideos.size,
+        onBack = onBack,
+        onRefresh = { vm.loadBiliMusicHot(force = true) },
+        onPlayInOrder = { if (playableVideos.isNotEmpty()) onPlay(playableVideos, 0) },
+        onShufflePlay = {
+            if (playableVideos.isNotEmpty()) {
+                onPlay(playableVideos, Random.nextInt(playableVideos.size))
             }
-        } else if (offlineMode) {
-            wasOffline = true
+        },
+        itemKeyPrefix = "bili-music-hot"
+    ) {
+        itemsIndexed(
+            items = state.items,
+            key = { index, video ->
+                video.bvid.ifBlank { "hot-row-$index-${video.aid}" }
+            }
+        ) { index, video ->
+            val playableItem = remember(video) { video.toPlayableBiliVideoItem() }
+            PlaylistModernListItemSurface(
+                coverUrl = heroCoverUrl,
+                offlineMode = offlineMode
+            ) {
+                BiliMusicDetailRow(
+                    index = index + 1,
+                    title = video.title,
+                    uploader = video.uploader,
+                    coverUrl = video.coverUrl,
+                    durationSec = video.durationSec,
+                    playableItem = playableItem,
+                    metaLabel = listOf(video.tname, formatPlayCount(context, video.viewCount))
+                        .filter { it.isNotBlank() }
+                        .joinToString(" · "),
+                    offlineMode = offlineMode,
+                    onClick = {
+                        val target = playableVideos.indexOfFirst {
+                            it.id == video.aid && it.bvid == video.bvid
+                        }
+                        if (target >= 0) {
+                            onPlay(playableVideos, target)
+                        }
+                    }
+                )
+            }
         }
     }
+}
+
+/**
+ * 榜单 / 热门详情页共用的骨架：顶栏 + 下拉刷新 + 头图 + 「全部播放」行 + 列表。
+ *
+ * 两个页面除了数据来源不同，滚动结构、头图铺法、列表行样式完全一致，合并在这里以免
+ * 改一处漏一处（此前两套实现就出现过一边补了 `tvScrollToTopOnUp` 另一边漏掉的情况）。
+ *
+ * @param headerContent 插在「全部播放」行和列表之间的额外内容（榜单页的类型切换标签栏）
+ * @param rows 列表内容；调用方自己在里面写 `itemsIndexed`
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BiliMusicDetailLayout(
+    title: String,
+    heroCoverUrl: String,
+    heroSubtitle: String,
+    offlineMode: Boolean,
+    loading: Boolean,
+    errorText: String?,
+    isEmpty: Boolean,
+    playableCount: Int,
+    onBack: () -> Unit,
+    onRefresh: () -> Unit,
+    onPlayInOrder: () -> Unit,
+    onShufflePlay: () -> Unit,
+    itemKeyPrefix: String,
+    headerContent: (LazyListScope.() -> Unit)? = null,
+    rows: LazyListScope.() -> Unit
+) {
+    // 顶栏要跟着头图滚动状态变化，列表状态提到这里
+    val listState = rememberLazyListState()
+    // 播放中时详情页会被常驻迷你播放器遮住底部，列表末尾需要额外预留它的高度
+    val miniPlayerHeight = LocalMiniPlayerHeight.current
+    val shuffleEnabled by PlayerManager.shuffleModeFlow.collectAsState()
+    val repeatMode by PlayerManager.repeatModeFlow.collectAsState()
+    val hasCustomBackground = LocalHasCustomBackground.current
 
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
             PlaylistChromeTopBar(
-                title = stringResource(CoreCommonR.string.home_bili_music_hot),
+                title = title,
                 coverUrl = heroCoverUrl,
                 offlineMode = offlineMode,
                 heroHeight = PlaylistModernHeroHeight,
@@ -447,7 +358,7 @@ internal fun BiliMusicHotDetailScreen(
                 actions = {
                     HapticIconButton(
                         enabled = !offlineMode,
-                        onClick = { vm.loadBiliMusicHot(force = true) }
+                        onClick = onRefresh
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Refresh,
@@ -459,124 +370,128 @@ internal fun BiliMusicHotDetailScreen(
         }
     ) { padding ->
         PullToRefreshBox(
-            isRefreshing = state.loading,
+            isRefreshing = loading,
             onRefresh = {
                 if (!offlineMode) {
-                    vm.loadBiliMusicHot(force = true)
+                    onRefresh()
                 }
             },
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            val playableVideos = remember(state.items) {
-                state.items.toPlayableHotVideoItems()
-            }
-            val heroTitle = stringResource(CoreCommonR.string.home_bili_music_hot)
-            val shuffleEnabled by PlayerManager.shuffleModeFlow.collectAsState()
-            val repeatMode by PlayerManager.repeatModeFlow.collectAsState()
-            val hasCustomBackground = LocalHasCustomBackground.current
             when {
-                state.items.isNotEmpty() -> {
-                    PlaylistModernVisualColorsProvider(
-                        coverUrl = heroCoverUrl,
-                        offlineMode = offlineMode
+                !isEmpty -> PlaylistModernVisualColorsProvider(
+                    coverUrl = heroCoverUrl,
+                    offlineMode = offlineMode
+                ) {
+                    LazyColumn(
+                        state = listState,
+                        // 和歌单详情页完全一致的边距：外层不缩进，各行自带内边距
+                        contentPadding = PaddingValues(
+                            start = pageSidePaddingOr(0.dp),
+                            end = pageSidePaddingOr(0.dp),
+                            bottom = 24.dp + miniPlayerHeight
+                        ),
+                        modifier = Modifier.fillMaxSize()
                     ) {
-                        LazyColumn(
-                            state = listState,
-                            contentPadding = PaddingValues(
-                                start = pageSidePaddingOr(0.dp),
-                                end = pageSidePaddingOr(0.dp),
-                                bottom = 24.dp + miniPlayerHeight
-                            ),
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            item(key = "bili-music-hot-hero") {
-                                PlaylistModernHeroHeader(
-                                    displayName = heroTitle,
-                                    coverUrl = heroCoverUrl,
-                                    subtitle = stringResource(CoreCommonR.string.home_bili_music_source_note),
-                                    offlineMode = offlineMode,
-                                    height = PlaylistModernHeroHeight,
-                                    // 头图继续铺到「全部播放」那一行下面
-                                    topBleed = playlistTopBarBleed(),
-                                            backgroundBleed = PlaylistActionSheetBleed
+                        item(key = "$itemKeyPrefix-hero") {
+                            PlaylistModernHeroHeader(
+                                displayName = title,
+                                coverUrl = heroCoverUrl,
+                                subtitle = heroSubtitle,
+                                offlineMode = offlineMode,
+                                height = PlaylistModernHeroHeight,
+                                // 头图继续铺到「全部播放」那一行下面
+                                topBleed = playlistTopBarBleed(),
+                                backgroundBleed = PlaylistActionSheetBleed
+                            )
+                        }
+                        item(key = "$itemKeyPrefix-actions") {
+                            PlaylistModernActionSheet(
+                                coverUrl = heroCoverUrl,
+                                offlineMode = offlineMode,
+                                hasCustomBackground = hasCustomBackground,
+                                overHeroImage = true
+                            ) {
+                                PlaylistModernPlaybackActions(
+                                    // 头图不是可聚焦节点：在第一屏内容上按上键先滚到顶
+                                    modifier = Modifier.tvScrollToTopOnUp(listState),
+                                    songCount = playableCount,
+                                    shuffleEnabled = shuffleEnabled,
+                                    repeatMode = repeatMode,
+                                    showExport = false,
+                                    onPlayInOrder = onPlayInOrder,
+                                    onShufflePlay = onShufflePlay,
+                                    onToggleShuffle = {
+                                        PlayerManager.setShuffle(!shuffleEnabled)
+                                    },
+                                    onCycleRepeatMode = {
+                                        PlayerManager.cycleRepeatMode()
+                                    },
+                                    onExportToLocalPlaylist = {}
                                 )
                             }
-                            item(key = "bili-music-hot-actions") {
-                                PlaylistModernActionSheet(
-                                    coverUrl = heroCoverUrl,
-                                    offlineMode = offlineMode,
-                                    hasCustomBackground = hasCustomBackground,
-                                    overHeroImage = true
-                                ) {
-                                    PlaylistModernPlaybackActions(
-                                        modifier = Modifier.tvScrollToTopOnUp(listState),
-                                        songCount = playableVideos.size,
-                                        shuffleEnabled = shuffleEnabled,
-                                        repeatMode = repeatMode,
-                                        showExport = false,
-                                        onPlayInOrder = {
-                                            if (playableVideos.isNotEmpty()) {
-                                                onPlay(playableVideos, 0)
-                                            }
-                                        },
-                                        onShufflePlay = {
-                                            if (playableVideos.isNotEmpty()) {
-                                                onPlay(
-                                                    playableVideos,
-                                                    Random.nextInt(playableVideos.size)
-                                                )
-                                            }
-                                        },
-                                        onToggleShuffle = {
-                                            PlayerManager.setShuffle(!shuffleEnabled)
-                                        },
-                                        onCycleRepeatMode = {
-                                            PlayerManager.cycleRepeatMode()
-                                        },
-                                        onExportToLocalPlaylist = {}
-                                    )
-                                }
-                            }
-                            itemsIndexed(
-                                items = state.items,
-                                key = { index, video ->
-                                    video.bvid.ifBlank { "hot-row-$index-${video.aid}" }
-                                }
-                            ) { index, video ->
-                                PlaylistModernListItemSurface(
-                                    coverUrl = heroCoverUrl,
-                                    offlineMode = offlineMode
-                                ) {
-                                    BiliMusicHotDetailRow(
-                                        rank = index + 1,
-                                        video = video,
-                                        offlineMode = offlineMode,
-                                        onClick = {
-                                            val target = playableVideos.indexOfFirst {
-                                                it.id == video.aid && it.bvid == video.bvid
-                                            }
-                                            if (target >= 0) {
-                                                onPlay(playableVideos, target)
-                                            }
-                                        }
-                                    )
-                                }
-                            }
                         }
+                        headerContent?.invoke(this)
+                        rows()
                     }
                 }
 
-                state.loading -> BiliMusicDetailHint(text = stringResource(CoreCommonR.string.home_loading))
+                loading -> BiliMusicDetailHint(text = stringResource(CoreCommonR.string.home_loading))
 
-                state.error != null -> BiliMusicDetailError(
-                    detail = state.error.asString(),
-                    onRetry = { vm.loadBiliMusicHot(force = true) }
+                errorText != null -> BiliMusicDetailError(
+                    detail = errorText,
+                    onRetry = onRefresh
                 )
 
                 else -> BiliMusicDetailHint(text = stringResource(CoreCommonR.string.home_bili_music_empty))
             }
+        }
+    }
+}
+
+/**
+ * 详情页与首页共用同一个 ViewModel 实例（同一 ViewModelStoreOwner），这里只是把构造样板收起来。
+ */
+@Composable
+private fun rememberBiliMusicDetailViewModel(): HomeViewModel {
+    val context = LocalContext.current
+    val appContext = remember(context) { context.applicationContext }
+    return viewModel(
+        factory = viewModelFactory {
+            initializer {
+                HomeViewModel(appContext as Application)
+            }
+        }
+    )
+}
+
+/**
+ * 把 [offlineMode] 同步给共享 ViewModel，并在从离线切回在线时重启一次因离线被跳过而遗留的空加载。
+ *
+ * 详情页打开时首页不再组合，[HomeScreen] 的 wasOffline 恢复刷新不会抵达这个目的地，
+ * 所以这一页必须自己负责。留空不处理的话会一直停在「暂无内容」直到手动刷新。
+ */
+@Composable
+private fun rememberBiliMusicOfflineSync(
+    vm: HomeViewModel,
+    offlineMode: Boolean,
+    isEmpty: () -> Boolean,
+    onReload: () -> Unit
+) {
+    var wasOffline by remember { mutableStateOf(false) }
+    // isEmpty / onReload 内部只读 ViewModel 的实时状态，闭包捕获的是稳定的 vm 引用，不会读到过期快照
+    LaunchedEffect(offlineMode) {
+        val cameBackOnline = wasOffline && !offlineMode
+        vm.setOfflineMode(offlineMode)
+        if (cameBackOnline) {
+            wasOffline = false
+            if (isEmpty()) {
+                onReload()
+            }
+        } else if (offlineMode) {
+            wasOffline = true
         }
     }
 }
@@ -607,71 +522,31 @@ private fun BiliMusicRankTypeRow(
 }
 
 /**
- * 「全部播放」：左边一个可聚焦的圆形播放图标按钮，右边是**不可点击**的纯文字标签。
+ * 榜单 / 热门详情行：名次、100x60 缩略图、标题、上传者、第三行元信息与时长。
  *
- * 和歌单详情页 `PlaylistModernPlaybackActions` 的播放那一段完全同构：
- * 44dp 的实心圆形图标按钮 + titleMedium 文字，外层边距 start 18 / end 22 / 上下 8。
- * 原来是一颗 FilledTonalButton，图标和文字都是同一个点击区、边距也和别处对不上。
+ * 两个页面只有第三行文字不同（榜单是播放来源，热门是分区 + 播放量），其余完全同构，
+ * 所以第三行由调用方算好 [metaLabel] 传进来。
+ *
+ * @param index 展示用名次（榜单用接口返回的 rank，热门用 index + 1）
+ * @param playableItem 可播放条目；为 null 表示该条没有可播放音源，行置灰
  */
 @Composable
-private fun BiliMusicPlayAllButton(
-    enabled: Boolean,
-    onClick: () -> Unit
-) {
-    val colors = MaterialTheme.colorScheme
-    val label = stringResource(CoreCommonR.string.player_play_all)
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 18.dp, top = 8.dp, end = 22.dp, bottom = 8.dp)
-            // 电视：这一行在最左边，再按左不能再往上跳到主标签栏
-            .tvClampLeft(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        HapticFilledIconButton(
-            onClick = onClick,
-            enabled = enabled,
-            modifier = Modifier.size(44.dp),
-            shape = RoundedCornerShape(50),
-            colors = IconButtonDefaults.filledIconButtonColors(
-                containerColor = colors.primary,
-                contentColor = colors.onPrimary
-            )
-        ) {
-            Icon(
-                imageVector = Icons.Filled.PlayArrow,
-                contentDescription = label,
-                modifier = Modifier.size(26.dp)
-            )
-        }
-        Text(
-            text = label,
-            style = MaterialTheme.typography.titleMedium,
-            color = if (enabled) colors.onSurface else colors.onSurface.copy(alpha = 0.38f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-}
-
-/**
- * 榜单详情行：名次、100x60 缩略图、标题、歌手、播放来源与时长，右侧可跳转原视频页。
- */
-@Composable
-private fun BiliMusicRankDetailRow(
-    song: BiliMusicRankSong,
+private fun BiliMusicDetailRow(
+    index: Int,
+    title: String,
+    uploader: String,
+    coverUrl: String,
+    durationSec: Int,
+    playableItem: BiliVideoItem?,
+    metaLabel: String,
     offlineMode: Boolean,
     onClick: () -> Unit
 ) {
     val context = LocalContext.current
     val favoriteActions = rememberBiliSongFavoriteActions()
-    val playableItem = remember(song) { song.toPlayableBiliVideoItem() }
     val songItem = remember(playableItem) { playableItem?.toSongItem() }
-    val title = song.title.ifBlank { song.album }
-    val uploader = song.singer.ifBlank { song.uploader }
-    val thumbnailUrl = remember(song.videoCover) {
-        buildBiliThumbnailUrl(imageUrl = song.videoCover, width = 192, height = 108)
+    val thumbnailUrl = remember(coverUrl) {
+        buildBiliThumbnailUrl(imageUrl = coverUrl, width = 192, height = 108)
     }
     val coverRequest = remember(context, thumbnailUrl, offlineMode) {
         offlineCachedImageRequest(
@@ -691,19 +566,20 @@ private fun BiliMusicRankDetailRow(
         artist = uploader,
         album = "",
         albumId = 0L,
-        durationMs = song.displayDurationSec * 1000L,
-        coverUrl = song.videoCover,
+        durationMs = durationSec * 1000L,
+        coverUrl = coverUrl,
         channelId = "bilibili",
         audioId = null
     )
-    val sourceLabel = song.playbackSourceLabel()
 
     NeriSongRow(
-        index = song.rank,
+        index = index,
         song = rowSong,
         onClick = onClick,
-        // 整行在最左边，按左不能再往上跳到主标签栏
-        modifier = Modifier.tvClampLeft(),
+        // 整行在最左边 = 第 0 列，按左直接回侧栏本页标签。
+        // 注意必须挂在 NeriSongRow 这个自己可聚焦的节点上：挂到外层 Row / IconButton(modifier=)
+        // 只会成为祖先观察者，isFocused 恒为 false，静默失效。
+        modifier = Modifier.tvRowStart(),
         title = title,
         subtitleContent = {
             Column {
@@ -715,8 +591,8 @@ private fun BiliMusicRankDetailRow(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    // 时长挪到行尾三点前面了（和歌单页一致），这里只留来源
-                    text = sourceLabel,
+                    // 时长挪到行尾三点前面了（和歌单页一致），这里只留来源 / 分区
+                    text = metaLabel,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
                     maxLines = 1,
@@ -742,115 +618,16 @@ private fun BiliMusicRankDetailRow(
             )
         },
         offlineMode = offlineMode,
-        durationText = formatDurationSec(song.displayDurationSec),
+        durationText = formatDurationSec(durationSec),
         indexTextStyle = MaterialTheme.typography.titleSmall,
-        enabled = song.isPlayable,
+        // 两个模型的 isPlayable 与「能否转成 BiliVideoItem」等价，因此直接用 playableItem 判定
+        enabled = playableItem != null,
         isFavorite = songItem != null && favoriteActions.lookup?.contains(songItem) == true,
         onFavoriteToggle = if (songItem != null) favoriteActions.toggle else null,
         onPlayNext = songItem?.let { item -> { PlayerManager.addToQueueNext(item) } },
         onAddToQueueEnd = songItem?.let { item -> { PlayerManager.addToQueueEnd(item) } }
     )
 }
-
-/**
- * 音乐热门详情行：与榜单详情行同构，第三行改为分区名、播放量与时长。
- *
- * @param rank 展示用名次（调用方传 index + 1）
- */
-@Composable
-private fun BiliMusicHotDetailRow(
-    rank: Int,
-    video: BiliMusicHotVideo,
-    offlineMode: Boolean,
-    onClick: () -> Unit
-) {
-    val context = LocalContext.current
-    val favoriteActions = rememberBiliSongFavoriteActions()
-    val playableItem = remember(video) { video.toPlayableBiliVideoItem() }
-    val songItem = remember(playableItem) { playableItem?.toSongItem() }
-    val thumbnailUrl = remember(video.coverUrl) {
-        buildBiliThumbnailUrl(imageUrl = video.coverUrl, width = 192, height = 108)
-    }
-    val coverRequest = remember(context, thumbnailUrl, offlineMode) {
-        offlineCachedImageRequest(
-            context = context,
-            data = thumbnailUrl,
-            sizePx = 192,
-            allowHardware = false,
-            offlineMode = offlineMode
-        )
-    }
-    // 电视：遥控器连续操作期间先不发起新加载（和首页卡片、歌曲行同一套）
-    val deferredCover = rememberTvDeferredImage(key = thumbnailUrl) { coverRequest }
-    // 不可播放的视频没有 SongItem，这里造一份只用于展示的占位
-    val rowSong = songItem ?: SongItem(
-        id = 0L,
-        name = video.title,
-        artist = video.uploader,
-        album = "",
-        albumId = 0L,
-        durationMs = video.durationSec * 1000L,
-        coverUrl = video.coverUrl,
-        channelId = "bilibili",
-        audioId = null
-    )
-    val metaLabel = listOf(video.tname, formatPlayCount(context, video.viewCount))
-        .filter { it.isNotBlank() }
-        .joinToString(" · ")
-
-    NeriSongRow(
-        index = rank,
-        song = rowSong,
-        onClick = onClick,
-        modifier = Modifier.tvClampLeft(),
-        title = video.title,
-        subtitleContent = {
-            Column {
-                Text(
-                    text = video.uploader,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = metaLabel,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        },
-        titleStyle = MaterialTheme.typography.bodyLarge,
-        coverWidth = 100.dp,
-        coverHeight = 60.dp,
-        coverCornerRadius = 8.dp,
-        coverContent = {
-            AsyncImage(
-                model = deferredCover.model,
-                contentDescription = video.title,
-                contentScale = ContentScale.Crop,
-                onSuccess = { deferredCover.markLoaded() },
-                modifier = Modifier
-                    .width(100.dp)
-                    .height(60.dp)
-                    .clip(neriRoundedShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-            )
-        },
-        offlineMode = offlineMode,
-        durationText = formatDurationSec(video.durationSec),
-        indexTextStyle = MaterialTheme.typography.titleSmall,
-        enabled = video.isPlayable,
-        isFavorite = songItem != null && favoriteActions.lookup?.contains(songItem) == true,
-        onFavoriteToggle = if (songItem != null) favoriteActions.toggle else null,
-        onPlayNext = songItem?.let { item -> { PlayerManager.addToQueueNext(item) } },
-        onAddToQueueEnd = songItem?.let { item -> { PlayerManager.addToQueueEnd(item) } }
-    )
-}
-
-
 
 /**
  * 榜单/热门页的收藏状态与切换。
@@ -948,11 +725,4 @@ private fun BiliMusicDetailError(
         }
         Spacer(modifier = Modifier.height(4.dp))
     }
-}
-
-/** 在浏览器或 B 站客户端打开视频页，便于核对榜单曲目的实际来源 */
-private fun openBiliVideoPage(context: android.content.Context, bvid: String) {
-    if (bvid.isBlank()) return
-    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.bilibili.com/video/$bvid"))
-    context.tryStartActivity(intent)
 }

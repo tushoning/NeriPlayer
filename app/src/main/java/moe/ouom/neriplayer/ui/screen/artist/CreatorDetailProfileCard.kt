@@ -19,6 +19,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,9 +48,18 @@ internal fun CreatorDetailProfileCard(
         if (artwork != null) {
             artwork(coverModifier)
         } else if (!coverUrl.isNullOrBlank()) {
+            // 请求对象只在封面地址变化时重建（详情页重组频繁）
+            val coverRequest = remember(coverUrl, offlineMode, tabletProfile) {
+                offlineCachedImageRequest(
+                    context = context,
+                    data = coverUrl,
+                    sizePx = if (tabletProfile) 512 else 256,
+                    allowHardware = false,
+                    offlineMode = offlineMode
+                )
+            }
             AsyncImage(
-                model = offlineCachedImageRequest(context = context, data = coverUrl,
-                    sizePx = if (tabletProfile) 512 else 256, allowHardware = false, offlineMode = offlineMode),
+                model = coverRequest,
                 contentDescription = title, contentScale = ContentScale.Crop, modifier = coverModifier
             )
         } else {

@@ -73,8 +73,23 @@ fun Modifier.tvLeftEdgeToNavigation(onLeftEdge: () -> Unit): Modifier {
         // 这一项已经声明自己是「行首（第 0 列）」：直接交给侧栏本页标签。
         // 否则几何左搜索会先跳到上方那排更靠左的文字标签（归集里要按 3 下才到得了侧栏）。
         if (TvFocusEdge.isAtRowStart()) {
-            TvFocusEdge.clear()
+            // 只清行首那一个标记：hold / leftTarget 要留着，否则「按左不动」只生效一次
+            TvFocusEdge.clearRowStart()
             currentOnLeftEdge()
+            return@onPreviewKeyEvent true
+        }
+        // 「按左到此为止」：这一项两边都没有属于它的邻居（典型是区块标题右侧的「查看全部」，
+        // 它左边是空白），直接吃掉，既不 moveFocus 也不再往外走。
+        // 这类需求以前写在 item 上用 tvClampLeft，永远拿不到事件，等于没写。
+        if (TvFocusEdge.isHeld()) {
+            return@onPreviewKeyEvent true
+        }
+        // 这一项自己声明了「按左去哪」（见 [tvExitLeftTo]）：直接送过去，不走几何搜索。
+        // 几何搜索按矩形位置选点，同一个按钮上按左，落点会随「上一区块露没露出来」而变。
+        val leftTarget = TvFocusEdge.leftTargetRequester()
+        if (leftTarget != null &&
+            runCatching { leftTarget.requestFocus() }.getOrDefault(false)
+        ) {
             return@onPreviewKeyEvent true
         }
         if (focusManager.moveFocus(FocusDirection.Left)) {
@@ -95,10 +110,32 @@ fun Modifier.tvLeftEdgeToNavigation(onLeftEdge: () -> Unit): Modifier {
  * 必须是 @Volatile 普通字段，不能包 `mutableStateOf`：根节点在按键回调里读它，
  * 同一快照内读 State 可能拿到旧值（同 [moe.ouom.neriplayer.ui.component.navigation.TvTopBarFocus.focusedTabRoute]
  * 踩过的坑）。
+ *
+ * ## 三个标记的契约（改动前必读）
+ *
+ * 1. **互相独立**：行首 / 「按左到此为止」/ 「按左固定去哪」是三份互不影响的声明，
+ *    同一个 item 可以同时具备（比如既是第 0 列、又要求原地不动）。
+ * 2. **各自只允许一个 owner**：字段是单槽，后写的覆盖先写的。所以同一个屏幕上
+ *    不能有两个「查看全部」同时挂 `tvHoldLeft` 且都拿到焦点（键盘焦点本来就只有一个，
+ *    正常情况下成立，但程序化 requestFocus 连续跳两处时会出现瞬时的两份声明）。
+ * 3. **`holdOwner` / `leftTargetOwner` 只能靠各修饰符里的 `DisposableEffect` 清**，
+ *    不要在别处「顺手清一下」：[clearRowStart] 只清行首标记是**刻意**的 ——
+ *    如果它把 hold 也清了，「在查看全部上按左不动」就只生效一次，按第二下就跳走了。
  */
 object TvFocusEdge {
     @Volatile
     private var rowStartOwner: Any? = null
+
+    /** 声明「按左到此为止」的 owner（见 [tvHoldLeft]） */
+    @Volatile
+    private var holdOwner: Any? = null
+
+    /** 声明「按左固定去哪」的 owner 与落点（见 [tvExitLeftTo]） */
+    @Volatile
+    private var leftTargetOwner: Any? = null
+
+    @Volatile
+    private var leftTarget: FocusRequester? = null
 
     fun setRowStart(owner: Any, atRowStart: Boolean) {
         if (atRowStart) {
@@ -108,9 +145,34 @@ object TvFocusEdge {
         }
     }
 
+    fun setHold(owner: Any, hold: Boolean) {
+        if (hold) {
+            holdOwner = owner
+        } else if (holdOwner === owner) {
+            holdOwner = null
+        }
+    }
+
+    fun setLeftTarget(owner: Any, target: FocusRequester) {
+        leftTargetOwner = owner
+        leftTarget = target
+    }
+
+    fun clearLeftTarget(owner: Any) {
+        if (leftTargetOwner === owner) {
+            leftTargetOwner = null
+            leftTarget = null
+        }
+    }
+
+    fun leftTargetRequester(): FocusRequester? = leftTarget
+
     fun isAtRowStart(): Boolean = rowStartOwner != null
 
-    fun clear() {
+    fun isHeld(): Boolean = holdOwner != null
+
+    /** 只清「行首」标记。名字带 RowStart 是刻意的：hold / leftTarget 由各自的 DisposableEffect 负责。 */
+    fun clearRowStart() {
         rowStartOwner = null
     }
 }
@@ -144,6 +206,15 @@ object TvUserInput {
  * 必须和它的 `clickable` 挂在同一条修饰符链上，`isFocused` 才精确等于「这一项自己有焦点」，
  * 不会把卡片内部的「更多」按钮误判成行首。
  *
+ * ⚠️ 下面两种写法都是**静默失效**（标记永远置不上，按左退回几何搜索，
+ * 典型表现是落到页面左上角的返回按钮）：
+ *  - 挂在不可聚焦的容器上（外层 `Row` / `Column`）—— 这类节点 `isFocused` 恒为 false；
+ *  - 通过 `IconButton(modifier = …)` / `HapticFilledIconButton(modifier = …)` 传进去 ——
+ *    它们的 `clickable` 在内部、接在我们这条链**之后**，我们的 `onFocusChanged`
+ *    只是祖先观察者，`isFocused` 同样为 false。
+ *
+ * 只有「clickable 写在本条链里、且排在本修饰符后面」时才真正生效（见各页 `NeriSongRow` 的用法）。
+ *
  * 非电视、非行首直接返回原 Modifier（不影响手机平板，也不影响行内其它格子）。
  */
 @Composable
@@ -156,6 +227,51 @@ fun Modifier.tvRowStart(atRowStart: Boolean = true): Modifier {
         onDispose { TvFocusEdge.setRowStart(owner, false) }
     }
     return this.onFocusChanged { state -> TvFocusEdge.setRowStart(owner, state.isFocused) }
+}
+
+/**
+ * 把这个可聚焦项标记为「按左到此为止」。
+ *
+ * 和 [tvRowStart] 的区别是目的地：行首按左是「回侧栏本页标签」，这里是「什么都不做」。
+ * 用在那种左边本来就没有邻居的控件上 —— 比如区块标题行右侧的「查看全部」，
+ * 它左边是一片空白，不拦的话几何搜索会把光标送到上一区块最右下那张卡上。
+ *
+ * ⚠️ 不能用 `tvClampLeft` 实现这件事：左键在 Initial pass 就被内容区根节点
+ * （[tvLeftEdgeToNavigation]）消费掉了，item 上的按键监听永远收不到左键。
+ */
+@Composable
+fun Modifier.tvHoldLeft(): Modifier {
+    if (!LocalIsTelevision.current) return this
+    val owner = remember { Any() }
+    // 列表回收这一项时不会再补一次失焦事件，自己清掉，否则会留下陈旧标记
+    DisposableEffect(owner) {
+        onDispose { TvFocusEdge.setHold(owner, false) }
+    }
+    return this.onFocusChanged { state -> TvFocusEdge.setHold(owner, state.isFocused) }
+}
+
+/**
+ * 把这个可聚焦项标记为「按左固定去 [target]」。
+ *
+ * 用在「按左有一个明确归属、但几何搜索会乱选」的控件上：比如区块标题行右侧的
+ * 「查看全部」，它自己的分类芯片在左下，但左搜索会先把光标送到上一区块最右下那张卡上
+ * （这一区块露没露出来，落点还不一样）。这里把落点钉死。
+ */
+@Composable
+fun Modifier.tvExitLeftTo(target: FocusRequester): Modifier {
+    if (!LocalIsTelevision.current) return this
+    val owner = remember { Any() }
+    val currentTarget by rememberUpdatedState(target)
+    DisposableEffect(owner) {
+        onDispose { TvFocusEdge.clearLeftTarget(owner) }
+    }
+    return this.onFocusChanged { state ->
+        if (state.isFocused) {
+            TvFocusEdge.setLeftTarget(owner, currentTarget)
+        } else {
+            TvFocusEdge.clearLeftTarget(owner)
+        }
+    }
 }
 
 /**

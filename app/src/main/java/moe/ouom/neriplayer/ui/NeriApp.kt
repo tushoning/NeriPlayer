@@ -24,7 +24,6 @@ package moe.ouom.neriplayer.ui
  */
 
 import moe.ouom.neriplayer.data.identity.stableKey
-import android.app.Activity
 import android.app.Application
 import android.net.Uri
 import android.os.Build
@@ -39,6 +38,7 @@ import androidx.compose.foundation.layout.padding
 import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 import moe.ouom.neriplayer.ui.tv.LocalTvInputTracker
 import moe.ouom.neriplayer.ui.tv.TvInputActivityTracker
+import moe.ouom.neriplayer.ui.tv.TvPagerPageMemory
 import moe.ouom.neriplayer.ui.tv.TvReturnFocus
 import moe.ouom.neriplayer.ui.tv.isTvDirectionKey
 import androidx.compose.foundation.layout.fillMaxSize
@@ -126,6 +126,7 @@ import moe.ouom.neriplayer.core.startup.player.PlayerStartupHistoryRecorder
 import moe.ouom.neriplayer.core.startup.player.PlayerStartupServicePlanner
 import moe.ouom.neriplayer.core.startup.player.PlayerStartupServiceSyncCoordinator
 import moe.ouom.neriplayer.core.startup.theme.StartupThemeResolver
+import moe.ouom.neriplayer.core.system.AppExit
 import moe.ouom.neriplayer.data.identity.playbackVisualKey
 import moe.ouom.neriplayer.data.identity.playbackVisualKeyAliases
 import moe.ouom.neriplayer.data.model.stableKey
@@ -144,8 +145,11 @@ import moe.ouom.neriplayer.ui.component.navigation.TvTopBarFocus
 import moe.ouom.neriplayer.ui.tv.rememberIsTelevision
 import moe.ouom.neriplayer.ui.tv.TvTabRootBus
 import moe.ouom.neriplayer.data.model.navigation.LauncherShortcutAction
+import moe.ouom.neriplayer.common.R as CoreCommonR
 import moe.ouom.neriplayer.data.model.navigation.LauncherShortcutRequest
 import moe.ouom.neriplayer.navigation.launcherShortcutMainTabRoute
+import moe.ouom.neriplayer.update.LaunchUpdateCheckResult
+import moe.ouom.neriplayer.update.UpdateCheckController
 import moe.ouom.neriplayer.ui.effect.glass.AdvancedGlassController
 import moe.ouom.neriplayer.ui.effect.glass.AdvancedGlassHost
 import moe.ouom.neriplayer.ui.effect.glass.AdvancedGlassNavigationHandoff
@@ -154,6 +158,7 @@ import moe.ouom.neriplayer.ui.effect.glass.isAdvancedGlassBackendSupported
 import moe.ouom.neriplayer.ui.effect.glass.rememberAdvancedGlassBackdrop
 import moe.ouom.neriplayer.ui.feedback.AppFeedback
 import moe.ouom.neriplayer.ui.screen.nowplaying.NowPlayingScreen
+import moe.ouom.neriplayer.ui.screen.tab.settings.about.UpdateCheckDialogHost
 import moe.ouom.neriplayer.ui.screen.debug.DebugHomeScreen
 import moe.ouom.neriplayer.ui.screen.host.ExploreHostScreen
 import moe.ouom.neriplayer.ui.screen.host.HomeHostScreen
@@ -758,6 +763,23 @@ private fun NeriAppContent(
     LaunchedEffect(Unit) {
         GlobalDownloadManager.trafficRiskDownloadRequests.collect { request ->
             pendingTrafficRiskDownloadRequest = request
+        }
+    }
+    // 启动时检查一次更新：同一自然日只查一次。查到新版本直接弹窗（由 UpdateCheckDialogHost 显示），
+    // 已是最新版本和请求失败都 Toast 明确告知。
+    LaunchedEffect(Unit) {
+        // 等首帧稳定再查，避免和启动时的主题、封面等请求抢网络
+        delay(2500)
+        when (UpdateCheckController.checkOnLaunch(context)) {
+            LaunchUpdateCheckResult.UpToDate -> AppFeedback.showToast(
+                context = context,
+                message = context.getString(CoreCommonR.string.settings_update_latest)
+            )
+            LaunchUpdateCheckResult.Failed -> AppFeedback.showToast(
+                context = context,
+                message = context.getString(CoreCommonR.string.settings_update_check_failed)
+            )
+            else -> Unit
         }
     }
 
@@ -1409,6 +1431,8 @@ private fun NeriAppContent(
                 // 「销毁时别保存」，用户看不到任何变化。
                 mainTabSaveableStateHolder.removeState(route)
                 TvReturnFocus.clear()
+                // 点标签 = 回根：分页横条的页码记忆也一起清掉，下次从头开始
+                TvPagerPageMemory.clear()
                 SettingsEntryFocus.clearLastFocused()
                 if (resetHomeRuntime && route == Destinations.Home.route) {
                     homeHostRuntimeState.resetForTabBarClick()
@@ -1641,6 +1665,22 @@ private fun NeriAppContent(
                     showNowPlaying = true
                 }
             }
+            /**
+             * 用户主动操作标签栏（点标签 / 电视侧栏确认）= 明确要离开当前页。
+             *
+             * 必须把「从播放页进详情页、返回时盖回播放页」那套状态清掉：
+             * 那套逻辑只认路由，而「在歌手页点首页」和「在歌手页按返回」都会让路由变回首页，
+             * 分不出来 —— 结果就是点首页反而弹回播放页。
+             */
+            fun cancelPendingNowPlayingRestore() {
+                if (!restoreNowPlayingAfterDetail) return
+                restoreNowPlayingAfterDetail = false
+                nowPlayingDetailRouteObserved = false
+                nowPlayingReturnRoute = null
+                // 去程压住的标签底板没人恢复了，这里补上，否则切完标签选中态不亮
+                TvTopBarFocus.suppressSelectionPill = false
+            }
+
             val bottomBarItems = remember(showHomeTab, devModeEnabled) {
                 appMainTabItems(showHomeTab, devModeEnabled)
             }
@@ -1947,11 +1987,17 @@ private fun NeriAppContent(
                         snackbarHostState = snackbarHostState,
                         onMainTabSelected = { route ->
                             // 点标签 = 那个标签回到根：不记得上次开着哪个歌单
+                            cancelPendingNowPlayingRestore()
+                            // 电视：切标签后第一次进内容区要落在页首（见 TvTopBarFocus.requestTabEntry）
+                            TvTopBarFocus.markTabSwitch(route)
                             navigateToMainTab(route, resetTabMemory = true)
                         },
                         onTabConfirm = { route ->
                             // 侧栏只知道 route：详情态和根态都发这一条，由各标签宿主自己分流。
                             // 详情态 = 回根 + 回顶，根态 = 原来的刷新逻辑。
+                            cancelPendingNowPlayingRestore()
+                            // 刷新本标签 = 页面回到顶部重新开始，下一次进内容区也落在页首
+                            TvTopBarFocus.markTabSwitch(route)
                             TvTabRootBus.request(route)
                         },
                         onOpenNowPlaying = {
@@ -2102,7 +2148,10 @@ private fun NeriAppContent(
                                 }
                                 val nowMs = SystemClock.elapsedRealtime()
                                 if (tvLastBackAt != 0L && nowMs - tvLastBackAt <= TV_EXIT_BACK_WINDOW_MS) {
-                                    (context as? Activity)?.finish()
+                                    // 彻底退出：光 finish() 只销毁界面，播放服务（stopWithTask=false）
+                                    // 会留在后台把歌继续放下去。AppExit 先停播放链路再关整个任务栈。
+                                    tvLastBackAt = 0L
+                                    AppExit.quit(context)
                                 } else {
                                     tvLastBackAt = nowMs
                                     AppFeedback.showToast(context, "再按一次返回键退出")
@@ -2305,6 +2354,11 @@ private fun NeriAppContent(
                             }
                         },
                         onDismiss = { showUsbExclusiveBackgroundPermissionDialog = false }
+                    )
+
+                    UpdateCheckDialogHost(
+                        blocked = showUsbExclusiveBackgroundPermissionDialog ||
+                            pendingTrafficRiskDownloadRequest != null
                     )
 
             }

@@ -63,6 +63,7 @@ internal fun YouTubePlaybackSourceSetting(
     if (!showDialog) return
 
     MiuixSettingsDialog(
+        textScrollable = false,
         onDismissRequest = { showDialog = false },
         title = { Text(stringResource(CoreCommonR.string.settings_youtube_playback_source)) },
         text = {

@@ -420,11 +420,21 @@ fun Modifier.tvScrollPane(scrollState: ScrollState): Modifier {
 @Composable
 fun Modifier.tvBringGridToTopOnUp(gridState: LazyGridState): Modifier {
     if (!LocalIsTelevision.current) return this
+    val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     return this.onPreviewKeyEvent { event ->
         if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionUp) {
             return@onPreviewKeyEvent false
         }
+        // 焦点优先：网格里上面还有东西可去（分类芯片、「查看全部」、上一行卡片）时，
+        // 先按正常的焦点上移走掉，绝不能整页回顶。
+        //
+        // 以前这里无条件吃掉上键 —— 首页没有「继续播放」、B 站音乐榜的卡片正好停在
+        // 屏幕下边缘时，按上只是把页面滚到顶部，光标纹丝不动，紧接着按下又整页跳一次。
+        // moveFocus 成功之后必须把这次按键消费掉：不消费的话系统会从新位置再搜一次，
+        // 一次按键走两格。
+        if (focusManager.moveFocus(FocusDirection.Up)) return@onPreviewKeyEvent true
+        // 上面确实没有可聚焦节点了，才轮到「把不可聚焦的表头滚出来」这条规则
         if (!gridState.canScrollBackward) return@onPreviewKeyEvent false
         // 首页第一屏的 item 布局：0 = 「继续播放」表头（不可聚焦）、1 = 继续播放卡片行。
         // 电视的最小滚动余量 12dp 叠加卡片内边距后，表头会被整块推出视口 —— 此时
@@ -505,9 +515,16 @@ fun Modifier.tvBringIntoViewOnFocus(): Modifier {
 /**
  * 电视：这一项不允许用左键离开（等价于「这一行最左边」）。
  *
- * 用在整行占满宽度的列表项上：它们左边没有兄弟节点，Compose 的方向搜索会一路
- * 往上找到页面顶部的标签栏，于是「按左就跳到最近播放/首页标签」。
- * 只吞左键，右键不吞 —— 行内右侧往往还有菜单按钮要走。
+ * ⚠️ **只在内容区根节点之外有效**。主标签页的内容区根节点
+ * （[moe.ouom.neriplayer.ui.tv.tvLeftEdgeToNavigation]）在 Initial pass 就无条件
+ * 消费了左键，preview 是 root → leaf 派发，所以挂在主标签页 item 上的左键监听
+ * **永远收不到事件**，等于没写。现在仍有效的场景是对话框 / 浮层内部
+ * （它们不在那个根节点下，例如设置页里弹出的各类对话框）。
+ *
+ * 主标签页里想表达语义请用：
+ *  - 按左回侧栏本页标签 → [tvRowStart]
+ *  - 按左原地不动 → [tvHoldLeft]
+ *  - 按左固定去某一项 → [tvExitLeftTo]
  */
 @Composable
 fun Modifier.tvClampLeft(): Modifier {

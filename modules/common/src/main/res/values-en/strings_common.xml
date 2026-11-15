@@ -97,6 +97,10 @@
     <string name="settings_update_available">New version: %1$s</string>
     <string name="settings_update_check_failed">Failed to check for updates</string>
     <string name="settings_update_download_failed">Download failed</string>
-    <string name="settings_update_action_update">Update</string>
+    <string name="settings_update_checking">Checking for updates</string>
+    <string name="settings_update_none">No new version</string>
+    <string name="settings_update_action_check">Check for updates</string>
+    <string name="settings_update_action_download">Download update</string>
+    <string name="settings_update_action_close">Close</string>
     <string name="settings_update_action_install">Install</string>
 </resources>

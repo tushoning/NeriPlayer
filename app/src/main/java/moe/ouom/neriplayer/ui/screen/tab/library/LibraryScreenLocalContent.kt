@@ -713,13 +713,18 @@ internal fun LocalPlaylistList(
                                     resolveLocalFallback = true
                                 )
                                 if (!cover.isNullOrEmpty()) {
-                                    AsyncImage(
-                                        model = fastScrollableImageRequest(
+                                    // 请求对象只在封面地址变化时重建：归集页是长列表，
+                                    // 滚动时持续重组，逐帧 new ImageRequest 只会给 GC 添压力。
+                                    val coverRequest = remember(cover, offlineMode) {
+                                        fastScrollableImageRequest(
                                             context = context,
                                             data = cover,
                                             sizePx = 160,
                                             offlineMode = offlineMode
-                                        ),
+                                        )
+                                    }
+                                    AsyncImage(
+                                        model = coverRequest,
                                         contentDescription = null,
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier
@@ -835,13 +840,18 @@ internal fun LocalPlaylistList(
                                     resolveLocalFallback = true
                                 )
                                 if (!cover.isNullOrEmpty()) {
-                                    AsyncImage(
-                                        model = fastScrollableImageRequest(
+                                    // 请求对象只在封面地址变化时重建：归集页是长列表，
+                                    // 滚动时持续重组，逐帧 new ImageRequest 只会给 GC 添压力。
+                                    val coverRequest = remember(cover, offlineMode) {
+                                        fastScrollableImageRequest(
                                             context = context,
                                             data = cover,
                                             sizePx = 160,
                                             offlineMode = offlineMode
-                                        ),
+                                        )
+                                    }
+                                    AsyncImage(
+                                        model = coverRequest,
                                         contentDescription = null,
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier
@@ -1015,13 +1025,18 @@ internal fun LocalPlaylistList(
                                     resolveLocalFallback = true
                                 )
                                 if (!cover.isNullOrEmpty()) {
-                                    AsyncImage(
-                                        model = fastScrollableImageRequest(
+                                    // 请求对象只在封面地址变化时重建：归集页是长列表，
+                                    // 滚动时持续重组，逐帧 new ImageRequest 只会给 GC 添压力。
+                                    val coverRequest = remember(cover, offlineMode) {
+                                        fastScrollableImageRequest(
                                             context = context,
                                             data = cover,
                                             sizePx = 160,
                                             offlineMode = offlineMode
-                                        ),
+                                        )
+                                    }
+                                    AsyncImage(
+                                        model = coverRequest,
                                         contentDescription = null,
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier
@@ -1099,13 +1114,17 @@ private fun LocalPlaylistGridCard(
             resolveLocalFallback = true
         )
         if (!cover.isNullOrEmpty()) {
-            AsyncImage(
-                model = fastScrollableImageRequest(
+            // 请求对象只在封面地址变化时重建（同列表里那几处的原因）
+            val coverRequest = remember(cover, offlineMode) {
+                fastScrollableImageRequest(
                     context = context,
                     data = cover,
                     sizePx = 384,
                     offlineMode = offlineMode
-                ),
+                )
+            }
+            AsyncImage(
+                model = coverRequest,
                 contentDescription = displayName,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier

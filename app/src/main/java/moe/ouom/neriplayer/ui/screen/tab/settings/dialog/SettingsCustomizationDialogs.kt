@@ -106,6 +106,7 @@ internal fun ColorPickerDialog(
         pickerState.commitPendingInput()?.uppercase(Locale.ROOT) ?: pickedHex
 
     MiuixSettingsDialog(
+        textScrollable = false,
         onDismissRequest = onDismiss,
         title = { Text(stringResource(CoreCommonR.string.settings_select_color)) },
         text = {
@@ -330,6 +331,7 @@ internal fun DpiSettingDialog(
     var hasEdited by remember(currentScale, scaleRange.maximumScale) { mutableStateOf(false) }
 
     MiuixSettingsDialog(
+        textScrollable = false,
         onDismissRequest = onDismiss,
         title = { Text(stringResource(CoreCommonR.string.settings_ui_scale)) },
         text = {

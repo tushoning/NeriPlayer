@@ -27,6 +27,7 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.layout.onGloballyPositioned
 import moe.ouom.neriplayer.ui.component.navigation.TvTopBarFocus
 
 /**
@@ -200,16 +201,40 @@ object TvReturnFocus {
         return ok
     }
 
+    /**
+     * 正在归还的那个锚点。
+     *
+     * 目标卡一落到布局里就由 [claimPendingRestore] 抢回焦点 —— 这样焦点在**同一帧的绘制之前**
+     * 就已经在目标卡上，用户看不到「先亮在上一行第一张卡、再跳回来」。
+     * 只靠逐帧重试做不到这一点：重试的第一拍通常早于卡片 attach，会失败一次，
+     * 那一帧画出来的就是 Compose 的兜底焦点（树里第一个可聚焦节点）。
+     */
+    @Volatile
+    private var pendingAnchor: TvReturnAnchor? = null
+
+    /** 卡片在布局阶段调用：是不是该由我接住这次归还？ */
+    fun claimPendingRestore(scope: String, key: String): Boolean {
+        val pending = pendingAnchor as? TvReturnAnchor.Item ?: return false
+        return pending.scope == scope && pending.key == key
+    }
+
     /** 逐帧重试把光标送回某个锚点；用户中途按键则让给他。 */
     suspend fun restoreAnchor(anchor: TvReturnAnchor?, maxFrames: Int = 24): Boolean {
         if (anchor == null) return false
         val startEpoch = inputEpoch
-        repeat(maxFrames) {
-            if (requestAnchorFocus(anchor)) return true
-            if (inputEpoch != startEpoch) return false
-            withFrameNanos { }
+        // 先登记，让目标卡在 placed 的那一刻就能同步抢回焦点（见 claimPendingRestore）
+        pendingAnchor = anchor
+        try {
+            repeat(maxFrames) {
+                if (requestAnchorFocus(anchor)) return true
+                if (inputEpoch != startEpoch) return false
+                withFrameNanos { }
+            }
+            return false
+        } finally {
+            // 必须无条件清：留着会让之后任何一次布局回调都误抢焦点
+            pendingAnchor = null
         }
-        return false
     }
 
     /** 退出到第 [depth] 层后调用 */
@@ -232,6 +257,17 @@ fun Modifier.tvReturnFocus(key: String): Modifier = composed {
         this
             .focusRequester(requester)
             .onFocusChanged { TvReturnFocus.onItemFocusChanged(scope, key, it.isFocused) }
+            // 归还焦点期间，本卡片一被摆进布局就立刻把焦点抢过来。
+            //
+            // `onGloballyPositioned` 在 layout 阶段末尾、draw 之前回调，所以抢到之后
+            // 这一帧画出来的就是本卡片 —— 不会先亮一下兜底焦点（上一行第一张卡）再跳回来。
+            // 逐帧重试那条路仍然保留：卡片晚几帧才出现时（比如要等分页器回到某一页），
+            // 它也会在出现的那一帧走这里，同样不闪。
+            .onGloballyPositioned {
+                if (TvReturnFocus.claimPendingRestore(scope, key)) {
+                    runCatching { requester.requestFocus() }
+                }
+            }
     }
 }
 

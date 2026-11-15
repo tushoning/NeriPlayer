@@ -568,15 +568,19 @@ private fun QueueRowArtwork(song: SongItem, offlineMode: Boolean) {
     val context = LocalContext.current
     val coverUrl = queueArtworkUrl(rememberSongDisplayCoverUrl(song))
     if (coverUrl != null) {
-        AsyncImage(
-            model = offlineCachedImageRequest(
+        // 请求对象只在封面地址变化时重建（队列列表很长，滚动会持续重组）
+        val coverRequest = remember(coverUrl, offlineMode) {
+            offlineCachedImageRequest(
                 context = context,
                 data = coverUrl,
                 sizePx = 128,
                 allowHardware = false,
                 crossfade = true,
                 offlineMode = offlineMode
-            ),
+            )
+        }
+        AsyncImage(
+            model = coverRequest,
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier.size(52.dp).clip(neriRoundedShape(14.dp))

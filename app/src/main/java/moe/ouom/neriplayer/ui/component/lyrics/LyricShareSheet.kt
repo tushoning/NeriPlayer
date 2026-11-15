@@ -303,13 +303,18 @@ private fun LyricShareHeader(
                 else MaterialTheme.colorScheme.surfaceVariant
         ) {
             if (!coverUrl.isNullOrBlank()) {
-                AsyncImage(
-                    model = offlineCachedImageRequest(
-                        context = LocalContext.current,
+                // 请求对象只在封面地址变化时重建（分享面板尺寸/配色变化会触发重组）
+                val coverContext = LocalContext.current
+                val coverRequest = remember(coverUrl) {
+                    offlineCachedImageRequest(
+                        context = coverContext,
                         data = coverUrl,
                         sizePx = 192,
                         allowHardware = false
-                    ),
+                    )
+                }
+                AsyncImage(
+                    model = coverRequest,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.size(58.dp)

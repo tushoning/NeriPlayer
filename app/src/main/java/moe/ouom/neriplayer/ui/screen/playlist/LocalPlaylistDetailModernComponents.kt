@@ -777,12 +777,18 @@ private fun rememberResolvedPlaylistHeroVisualColors(
         animationSpec = heroColorSpec,
         label = "playlist-readable-accent"
     )
-    return PlaylistHeroVisualColors(
-        background = backgroundColor,
-        accent = accentColor,
-        readableAccent = readableAccentColor,
-        controlContent = playlistHeroControlContentColor(isDarkTheme)
-    )
+    // 颜色真变了才换实例：`LocalPlaylistHeroVisualColors` 是 staticCompositionLocalOf，
+    // 值实例一变就会 invalidate 整棵子树（页头 + 操作条 + 超滚动底色）。
+    // 每次重组都新建实例的话，滚动、列表加载这些无关的重组都会连带把整块重画一遍。
+    val controlContent = playlistHeroControlContentColor(isDarkTheme)
+    return remember(backgroundColor, accentColor, readableAccentColor, controlContent) {
+        PlaylistHeroVisualColors(
+            background = backgroundColor,
+            accent = accentColor,
+            readableAccent = readableAccentColor,
+            controlContent = controlContent
+        )
+    }
 }
 
 private fun loadPlaylistHeroColorSample(
@@ -1236,19 +1242,49 @@ internal fun PlaylistModernHeroHeader(
     )
 
     val density = LocalDensity.current
+    // 图片请求只在封面地址变化时建一次。
+    //
+    // 这个页头在「封面取色 → 360ms 颜色渐变」期间会被连续重组（约 22 帧），
+    // 每帧都新建 ImageRequest 就是每帧都换一个 model 实例；请求对象稳定后，
+    // 这些重组只重绘、不重复走请求管线。
+    // allowHardware 用默认的 true：这张图只用于显示，没有任何像素读取 /
+    // BlurTransformation，软位图白白多占一份堆内存，绘制时还要从软件位图往纹理上传。
+    // （取色走的是 loadPlaylistHeroColorSample 里那条独立的小图请求，不受影响。）
+    val heroBackgroundRequest = remember(coverUrl, offlineMode) {
+        coverUrl?.takeIf(String::isNotBlank)?.let { url ->
+            offlineCachedImageRequest(
+                context = context,
+                data = url,
+                sizePx = 720,
+                offlineMode = offlineMode
+            )
+        }
+    }
+    val heroCoverRequest = remember(normalizedCoverModel, offlineMode) {
+        offlineCachedImageRequest(
+            context = context,
+            data = normalizedCoverModel,
+            sizePx = 320,
+            crossfade = true,
+            offlineMode = offlineMode
+        )
+    }
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = height)
             .onGloballyPositioned { coords ->
-                // 排查用，别删：头图顶边应该正好等于顶栏的 y + h。
-                android.util.Log.i(
-                    "NERI_TV_H",
-                    "hero y=${coords.positionInWindow().y.toInt()} h=${coords.size.height} " +
-                        "param=${with(density) { height.toPx() }.toInt()} " +
-                        "w=${coords.size.width}"
-                )
+                // 排查用：`adb shell settings put global neri_tv_hero_trace 1` 打开。
+                // 默认关 —— 这些日志挂在 onGloballyPositioned 里，滚一下就是几十条同步 IO。
+                if (TvTuning.heroLayoutTrace) {
+                    android.util.Log.i(
+                        "NERI_TV_H",
+                        "hero y=${coords.positionInWindow().y.toInt()} h=${coords.size.height} " +
+                            "param=${with(density) { height.toPx() }.toInt()} " +
+                            "w=${coords.size.width}"
+                    )
+                }
             }
     ) {
         // 底色垫在最下面：内容（标题 + 搜索框）撑得比 height 高时，图片只按 height 算，
@@ -1262,7 +1298,7 @@ internal fun PlaylistModernHeroHeader(
         // 这样它不影响头图自身高度，又能在父布局不裁剪的情况下画到自己范围之外。
         BoxWithConstraints(modifier = Modifier.matchParentSize()) {
             val containerHeightPx = constraints.maxHeight
-            if (!coverUrl.isNullOrBlank()) {
+            if (heroBackgroundRequest != null) {
                 // 把「顶栏 + 头图 + 圆角缺口」当成一整块来裁这张图：
                 // 顶栏里画的是这一块最上面那一段，头图里画的是它下面那一段。
                 // 两处必须用**同一个**高度来裁，否则缩放不一样，接缝处就成两张图了 ——
@@ -1276,13 +1312,7 @@ internal fun PlaylistModernHeroHeader(
                 // 谁也不用去测对方的高度。
                 val topPx = -with(density) { topBleed.toPx() }.roundToInt()
                 AsyncImage(
-                    model = offlineCachedImageRequest(
-                        context = context,
-                        data = coverUrl,
-                        sizePx = 720,
-                        allowHardware = false,
-                        offlineMode = offlineMode
-                    ),
+                    model = heroBackgroundRequest,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
@@ -1293,15 +1323,16 @@ internal fun PlaylistModernHeroHeader(
                             containerHeightPx = containerHeightPx
                         )
                         .onGloballyPositioned { coords ->
-                            // 排查用，别删：底边应该 = 头图下边界 + backgroundBleed，
-                            // 顶边应该和顶栏那张图同一个 y（logcat -s NERI_TV_H）。
-                            val bounds = coords.boundsInWindow()
-                            android.util.Log.i(
-                                "NERI_TV_H",
-                                "heroPhoto top=${bounds.top.toInt()} " +
-                                    "bottom=${bounds.bottom.toInt()} h=${coords.size.height} " +
-                                    "block=${with(density) { backgroundHeight.toPx() }.toInt()}"
-                            )
+                            // 排查用，受 TvTuning.heroLayoutTrace 开关控制
+                            if (TvTuning.heroLayoutTrace) {
+                                val bounds = coords.boundsInWindow()
+                                android.util.Log.i(
+                                    "NERI_TV_H",
+                                    "heroPhoto top=${bounds.top.toInt()} " +
+                                        "bottom=${bounds.bottom.toInt()} h=${coords.size.height} " +
+                                        "block=${with(density) { backgroundHeight.toPx() }.toInt()}"
+                                )
+                            }
                         }
                 )
                 Box(
@@ -1337,14 +1368,7 @@ internal fun PlaylistModernHeroHeader(
                 horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 AsyncImage(
-                    model = offlineCachedImageRequest(
-                        context = context,
-                        data = normalizedCoverModel,
-                        sizePx = 320,
-                        allowHardware = false,
-                        crossfade = true,
-                        offlineMode = offlineMode
-                    ),
+                    model = heroCoverRequest,
                     contentDescription = coverContentDescription,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
@@ -1425,6 +1449,17 @@ internal fun BoxScope.PlaylistTopBarCoverBackdrop(
     if (coverUrl.isNullOrBlank() || alpha <= 0.01f) return
     val context = LocalContext.current
     val density = LocalDensity.current
+    // 折叠过程中 alpha 每帧都在变，这个 composable 会连续重组几十帧。
+    // 请求对象必须 remember，否则每帧都换一个 model 实例，白白重复走请求管线。
+    val backdropRequest = remember(coverUrl, offlineMode) {
+        // allowHardware 用默认 true：同头图，这张只用于显示，没有像素读取。
+        offlineCachedImageRequest(
+            context = context,
+            data = coverUrl,
+            sizePx = 720,
+            offlineMode = offlineMode
+        )
+    }
     val topBleed = playlistTopBarBleed()
     val totalHeight = topBleed + heroHeight + PlaylistActionSheetBleed
     BoxWithConstraints(
@@ -1433,16 +1468,19 @@ internal fun BoxScope.PlaylistTopBarCoverBackdrop(
         modifier = Modifier
             .matchParentSize()
             .onGloballyPositioned { coords ->
-                // 排查用，别删：顶栏的窗口 y 和高度必须和头图接上（logcat -s NERI_TV_H）。
-                android.util.Log.i(
-                    "NERI_TV_H",
-                    "bar y=${coords.positionInWindow().y.toInt()} h=${coords.size.height} " +
-                        "bleed=${with(density) { topBleed.toPx() }.toInt()} " +
-                        "block=${with(density) { totalHeight.toPx() }.toInt()} " +
-                        "w=${coords.size.width}"
-                )
+                // 排查用，受 TvTuning.heroLayoutTrace 开关控制（默认关）
+                if (TvTuning.heroLayoutTrace) {
+                    android.util.Log.i(
+                        "NERI_TV_H",
+                        "bar y=${coords.positionInWindow().y.toInt()} h=${coords.size.height} " +
+                            "bleed=${with(density) { topBleed.toPx() }.toInt()} " +
+                            "block=${with(density) { totalHeight.toPx() }.toInt()} " +
+                            "w=${coords.size.width}"
+                    )
+                }
                 // 头图那张是按「顶栏上边缘」定位的，前提是顶栏实际高度 == playlistTopBarBleed()。
                 // 两者不一致（换了顶栏实现 / 主题改了高度）就会错开，这里主动报警。
+                // 这一条**不**受开关控制：正常情况一次都不会触发，真触发就是真出错了。
                 val barHeightPx = coords.size.height
                 val topBleedPx = with(density) { topBleed.toPx() }.roundToInt()
                 if (kotlin.math.abs(barHeightPx - topBleedPx) > 1) {
@@ -1457,13 +1495,7 @@ internal fun BoxScope.PlaylistTopBarCoverBackdrop(
     ) {
         val containerHeightPx = constraints.maxHeight
         AsyncImage(
-            model = offlineCachedImageRequest(
-                context = context,
-                data = coverUrl,
-                sizePx = 720,
-                allowHardware = false,
-                offlineMode = offlineMode
-            ),
+            model = backdropRequest,
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier
@@ -1474,13 +1506,15 @@ internal fun BoxScope.PlaylistTopBarCoverBackdrop(
                     containerHeightPx = containerHeightPx
                 )
                 .onGloballyPositioned { coords ->
-                    // 排查用，别删：这张图的 top/bottom 必须和头图那张完全一致。
-                    val bounds = coords.boundsInWindow()
-                    android.util.Log.i(
-                        "NERI_TV_H",
-                        "barPhoto top=${bounds.top.toInt()} bottom=${bounds.bottom.toInt()} " +
-                            "h=${coords.size.height} alpha=$alpha"
-                    )
+                    // 排查用，受 TvTuning.heroLayoutTrace 开关控制（默认关）
+                    if (TvTuning.heroLayoutTrace) {
+                        val bounds = coords.boundsInWindow()
+                        android.util.Log.i(
+                            "NERI_TV_H",
+                            "barPhoto top=${bounds.top.toInt()} bottom=${bounds.bottom.toInt()} " +
+                                "h=${coords.size.height} alpha=$alpha"
+                        )
+                    }
                 }
         )
         Box(
@@ -1779,10 +1813,13 @@ internal fun PlaylistModernActionSheet(
             modifier = modifier
                 .fillMaxWidth()
                 .onGloballyPositioned { coords ->
-                    android.util.Log.i(
-                        "NERI_TV_H",
-                        "actions y=${coords.positionInWindow().y.toInt()} h=${coords.size.height}"
-                    )
+                    // 排查用，受 TvTuning.heroLayoutTrace 开关控制（默认关）
+                    if (TvTuning.heroLayoutTrace) {
+                        android.util.Log.i(
+                            "NERI_TV_H",
+                            "actions y=${coords.positionInWindow().y.toInt()} h=${coords.size.height}"
+                        )
+                    }
                 }
         ) {
             if (overHeroImage) {

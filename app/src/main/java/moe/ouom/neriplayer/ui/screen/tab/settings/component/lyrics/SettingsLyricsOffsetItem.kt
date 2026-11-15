@@ -175,6 +175,7 @@ private fun LyricOffsetInputDialog(
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
 
     MiuixSettingsDialog(
+        textScrollable = false,
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {

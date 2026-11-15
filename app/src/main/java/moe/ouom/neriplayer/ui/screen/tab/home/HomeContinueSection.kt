@@ -62,7 +62,7 @@ import moe.ouom.neriplayer.ui.theme.NeriDesign
 import moe.ouom.neriplayer.ui.theme.cleanCornerRadiusFor
 import moe.ouom.neriplayer.ui.tv.rememberTvDeferredImage
 import moe.ouom.neriplayer.ui.tv.rememberTvFocusRingIndication
-import moe.ouom.neriplayer.ui.tv.tvClampLeft
+import moe.ouom.neriplayer.ui.tv.tvRowStart
 import moe.ouom.neriplayer.ui.tv.tvClampRight
 import moe.ouom.neriplayer.ui.tv.tvReturnFocus
 import moe.ouom.neriplayer.util.media.fastScrollableImageRequest
@@ -178,6 +178,15 @@ internal fun ContinueSection(
         LaunchedEffect(pagerState.currentPage) {
             onPageChanged(pagerState.currentPage)
         }
+        // 外部把 savedPage 改小（首页刷新 → 回第 1 页）时分页器要真的跟过去：
+        // `initialPage` 只在第一次组合时生效，之后改 savedPage 不会让 pager 动。
+        // 只在两者不一致时滚，避免「用户翻页 → onPageChanged → 这里又滚一次」的死循环。
+        LaunchedEffect(savedPage, pageCount) {
+            val target = resolveHomeContinuePagerPage(savedPage, pageCount)
+            if (target != pagerState.currentPage) {
+                runCatching { pagerState.scrollToPage(target) }
+            }
+        }
 
         HorizontalPager(
             state = pagerState,
@@ -234,10 +243,10 @@ private fun ContinuePageSlot(model: ContinuePageModel, slot: Int) {
             localFilesCoverCandidates = model.localFilesCoverCandidates,
             offlineMode = model.offlineMode,
             modifier = Modifier.width(model.cardWidth)
-                // 电视：整条第一张再按左、最后一张再按右就停住。
-                // 不夹住的话方向搜索会一路往上跑到根节点，把顶部标签栏当成候选，
-                // 表现就是「首页第一个卡片按左跳回首页标签」。
-                .then(if (absoluteIndex == 0) Modifier.tvClampLeft() else Modifier)
+                // 电视：整条第一张 = 第 0 列，按左直接回侧栏本页标签。
+                // 以前这里是 tvClampLeft（item 级吞左键）—— 在内容区里永远收不到左键，
+                // 等于没写，实际落点由方向搜索决定，可能被吸到别的区块的芯片上。
+                .then(if (absoluteIndex == 0) Modifier.tvRowStart() else Modifier)
                 .then(
                     if (absoluteIndex == model.items.lastIndex) Modifier.tvClampRight()
                     else Modifier

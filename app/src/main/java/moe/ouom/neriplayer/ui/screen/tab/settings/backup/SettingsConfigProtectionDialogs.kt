@@ -54,6 +54,7 @@ internal fun SettingsConfigExportOptionsDialog(
     }
 
     MiuixSettingsDialog(
+        textScrollable = false,
         onDismissRequest = dismiss,
         title = { Text(stringResource(AppR.string.settings_config_export_options_title)) },
         text = {
@@ -159,6 +160,7 @@ internal fun SettingsConfigImportPasswordDialog(
     }
 
     MiuixSettingsDialog(
+        textScrollable = false,
         onDismissRequest = dismiss,
         title = { Text(stringResource(AppR.string.settings_config_import_password_title)) },
         text = {

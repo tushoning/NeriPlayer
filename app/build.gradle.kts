@@ -84,6 +84,15 @@ android {
                 keyPassword = releaseKeyPassword.orEmpty()
             }
         }
+        // 本地构建：Debug 默认用 ~/.android/debug.keystore，但当前构建环境里
+        // JVM 在那创建 debug.keystore.lock 会被拒（AccessDeniedException），
+        // 指到项目内的副本。local-debug.keystore 已排除出版本控制。
+        getByName("debug") {
+            val localDebugKeystore = rootProject.file("local-debug.keystore")
+            if (localDebugKeystore.exists()) {
+                storeFile = localDebugKeystore
+            }
+        }
     }
 
     println(" __  __                     ____    ___                                     \n" +

@@ -17,6 +17,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -130,8 +132,21 @@ internal fun MiuixSettingsDialog(
     icon: @Composable (() -> Unit)? = null,
     title: @Composable (() -> Unit)? = null,
     text: @Composable (() -> Unit)? = null,
+    /**
+     * 正文是否套一层纵向滚动，默认开。
+     *
+     * Material3 的 AlertDialog 正文槽位不滚动：内容一旦超过窗口高度就被底边裁掉，
+     * 电视上（540dp 高）特别容易撞到 —— 带副标题的选项列表放五六个就超了，
+     * 最后一项只露个边，还没法滚出来。
+     *
+     * 已经自己在 text 里做了滚动（verticalScroll / LazyColumn）的地方必须传 false，
+     * 否则外层滚动会给内层无限高约束，LazyColumn 会直接抛异常。
+     */
+    textScrollable: Boolean = true,
     properties: DialogProperties = DialogProperties()
 ) {
+    // 存成局部 val：lambda 里再引用参数的话智能转型不成立
+    val dialogText = text
     AlertDialog(
         onDismissRequest = onDismissRequest,
         confirmButton = confirmButton,
@@ -139,7 +154,20 @@ internal fun MiuixSettingsDialog(
         dismissButton = dismissButton,
         icon = icon,
         title = title,
-        text = text,
+        text = if (dialogText == null) {
+            null
+        } else {
+            {
+                if (textScrollable) {
+                    // 高度由 M3 的 weight(1f, fill = false) 约束，这里只管内容能滚
+                    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                        dialogText()
+                    }
+                } else {
+                    dialogText()
+                }
+            }
+        },
         shape = MiuixDialogShape,
         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         titleContentColor = MaterialTheme.colorScheme.onSurface,

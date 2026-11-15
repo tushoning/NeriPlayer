@@ -141,6 +141,7 @@ internal fun SettingsGitHubDialogs(
         }
 
         MiuixSettingsDialog(
+            textScrollable = false,
             onDismissRequest = dismissConfigDialog,
             title = { Text(stringResource(CoreCommonR.string.sync_config)) },
             text = {

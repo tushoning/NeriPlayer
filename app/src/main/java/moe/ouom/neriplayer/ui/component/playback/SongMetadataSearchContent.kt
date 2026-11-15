@@ -491,12 +491,17 @@ private fun MetadataSearchResultItem(
             )
         },
         leadingContent = {
-            AsyncImage(
-                model = offlineCachedImageRequest(
+            // 请求对象只在封面地址变化时重建（搜索结果列表滚动会持续重组）
+            val coverData = result.coverUrl?.replaceFirst("http://", "https://")
+            val coverRequest = remember(coverData, offlineMode) {
+                offlineCachedImageRequest(
                     context = context,
-                    data = result.coverUrl?.replaceFirst("http://", "https://"),
+                    data = coverData,
                     offlineMode = offlineMode
-                ),
+                )
+            }
+            AsyncImage(
+                model = coverRequest,
                 contentDescription = result.songName,
                 modifier = Modifier
                     .size(48.dp)

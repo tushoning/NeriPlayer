@@ -116,17 +116,41 @@ object TvTopBarFocus {
     }
 
     /**
-     * 侧栏按右键：把光标送进内容区**第一个可聚焦元素**。
+     * 「刚切换过标签、还没从标签栏进过内容区」的那个标签路由。
      *
-     * 走这条路而不是交给 Compose 的几何方向搜索，是因为几何搜索按「纵向距离最近」选点，
-     * 落点取决于每个标签格子恰好对着哪一行卡片，不稳定。
+     * 只有在这个窗口里，侧栏按右才把光标送到内容区的第一个落点；用过一次就清掉，
+     * 之后（包括内容区 → 标签栏 → 内容区）一律走几何方向搜索。
      *
-     * 返回 false 表示内容区还没有可聚焦节点（页面还在加载），调用方应退回系统默认搜索，
-     * 免得按键被吞掉、光标停在原地。
+     * 光标在标签栏内上下移动**不会**清它：上下只是移动焦点，页面没换，
+     * 第一次进内容区仍然应该落在页首。
      */
-    fun requestContentEntry(): Boolean {
-        val route = currentTabRoute ?: return false
-        return runCatching { contentEntryRequesterFor(route).requestFocus() }.getOrDefault(false)
+    @Volatile
+    private var pendingEntryRoute: String? = null
+
+    /**
+     * 标记「刚切到 [route] 这个标签」。
+     *
+     * 由点标签那一路调用 —— 只靠 [onCurrentTabResolved] 的 route 变化推断不可靠：
+     * 从歌手页点首页时，解析出来的标签从头到尾都是首页（只是中间夹了个详情页），
+     * route 没变，推断不出来。
+     */
+    fun markTabSwitch(route: String) {
+        pendingEntryRoute = route
+    }
+
+    /**
+     * 侧栏按右键。
+     *
+     * 返回 true = 已经按「页面第一个落点」处理过，调用方消费按键；
+     * 返回 false = 不在切标签窗口内（或内容区还没挂上可聚焦节点），
+     * 调用方把按键还给系统，走几何方向搜索。
+     */
+    fun requestTabEntry(): Boolean {
+        val page = currentTabRoute ?: focusedTabRoute ?: return false
+        if (pendingEntryRoute != page) return false
+        val ok = runCatching { contentEntryRequesterFor(page).requestFocus() }.getOrDefault(false)
+        if (ok) pendingEntryRoute = null
+        return ok
     }
 
     /**
@@ -244,7 +268,14 @@ object TvTopBarFocus {
 
     internal fun onCurrentTabResolved(route: String?) {
         currentTabRoute = route
-        if (route != null) lastResolvedTabRoute = route
+        if (route == null) return
+        // 和「上一次解析出的主标签」比，而不是和 currentTabRoute 比：
+        // 切页那一拍可能出现 route=null（详情页 / 转场），拿 null 当上一次值会漏判，
+        // 表现就是「切了标签，按右走的却是空间逻辑」。
+        val switched = route != lastResolvedTabRoute
+        lastResolvedTabRoute = route
+        // 换了个主标签（含冷启动首次解析）：下一次从标签栏进内容区落在第一个落点。
+        if (switched) pendingEntryRoute = route
     }
 
     /** 把光标送到指定标签；节点尚未挂载时静默失败 */

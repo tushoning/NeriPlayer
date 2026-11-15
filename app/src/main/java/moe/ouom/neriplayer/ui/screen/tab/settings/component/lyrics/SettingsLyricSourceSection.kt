@@ -118,6 +118,7 @@ internal fun SettingsLyricSourceSection(
         onDismissRequest = { showSourceDialog = false },
         title = { Text(stringResource(CoreCommonR.string.settings_default_lyric_source)) },
         text = {
+            // 正文滚动由 MiuixSettingsDialog 统一包（textScrollable 默认开），这里不用自己套
             Column {
                 LyricSourcePreference.entries.forEach { option ->
                     MiuixSettingsChoiceRow(

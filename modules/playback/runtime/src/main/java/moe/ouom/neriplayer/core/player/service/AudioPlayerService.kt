@@ -350,6 +350,22 @@ class AudioPlayerService : Service() {
 
         fun isForegroundActiveForDiagnostics(): Boolean = isServiceForegroundActive
 
+        /**
+         * 应用退出时把播放服务停干净：走 [ACTION_STOP] —— 暂停播放、撤掉前台通知，
+         * 并把 allowServiceRestart 置 false 后 stopSelf，onDestroy 里才会真正释放播放器运行时。
+         *
+         * 这个服务在 manifest 里是 `stopWithTask="false"`，只 finish() Activity 的话
+         * 它会一直活着，回到桌面还能听见歌在放。
+         *
+         * 服务没在跑就直接返回 false，不为「退出」凭空拉起一个前台服务。
+         */
+        fun stopForAppExit(context: Context): Boolean {
+            if (!isServiceInstanceActive) return false
+            NPLogger.w("NERI-APS", "stopForAppExit: stopping playback service for app exit")
+            val intent = Intent(context, AudioPlayerService::class.java).setAction(ACTION_STOP)
+            return runCatching { context.startService(intent) }.isSuccess
+        }
+
         fun refreshPlaybackWidgetsFromActiveService(reason: String): Boolean {
             val service = activeServiceInstance ?: return false
             NPLogger.d("NERI-APS", "Refreshing playback widgets from active service: reason=$reason")

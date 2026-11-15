@@ -178,13 +178,17 @@ internal fun LocalArtistGridCard(
             .clip(neriRoundedShape(12.dp))
     ) {
         if (!coverUrl.isNullOrBlank()) {
-            AsyncImage(
-                model = fastScrollableImageRequest(
+            // 请求对象只在封面地址变化时重建（网格滚动会持续重组）
+            val coverRequest = remember(coverUrl, offlineMode) {
+                fastScrollableImageRequest(
                     context = context,
                     data = coverUrl,
                     sizePx = 384,
                     offlineMode = offlineMode
-                ),
+                )
+            }
+            AsyncImage(
+                model = coverRequest,
                 contentDescription = artist.name,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier

@@ -83,6 +83,7 @@ internal fun PlaylistInsertDialog(
     // 弹窗使用独立窗口，回弹位移不能写回背后的歌单头图
     CompositionLocalProvider(LocalAdvancedGlassOverscrollBackdrop provides null) {
         MiuixSettingsDialog(
+            textScrollable = false,
             onDismissRequest = onDismiss,
             title = { Text(stringResource(AppR.string.playlist_insert_title)) },
             text = {

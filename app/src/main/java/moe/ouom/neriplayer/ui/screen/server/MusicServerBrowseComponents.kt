@@ -14,6 +14,7 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -200,8 +201,15 @@ private fun ServerAlbumCover(album: ServerAlbum, offlineMode: Boolean, modifier:
     Surface(modifier, shape = NeriDesign.tokens.coverSmallShape,
         color = MaterialTheme.colorScheme.surfaceVariant) {
         if (album.coverUrl.isNullOrBlank()) Box(contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Album, null) }
-        else AsyncImage(model = offlineCachedImageRequest(LocalContext.current, album.coverUrl, offlineMode = offlineMode),
-            contentDescription = null, contentScale = ContentScale.Crop)
+        else {
+            // 请求对象只在封面地址变化时重建（浏览网格滚动会持续重组）
+            val coverContext = LocalContext.current
+            val coverRequest = remember(album.coverUrl, offlineMode) {
+                offlineCachedImageRequest(coverContext, album.coverUrl, offlineMode = offlineMode)
+            }
+            AsyncImage(model = coverRequest,
+                contentDescription = null, contentScale = ContentScale.Crop)
+        }
     }
 }
 

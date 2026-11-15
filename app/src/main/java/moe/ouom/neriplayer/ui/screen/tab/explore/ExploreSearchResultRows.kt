@@ -37,7 +37,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import moe.ouom.neriplayer.ui.tv.tvClampLeft
+import moe.ouom.neriplayer.ui.tv.tvRowStart
 import moe.ouom.neriplayer.ui.tv.tvClampRight
 import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
 import moe.ouom.neriplayer.ui.tv.LocalTvRowMenuKeyState
@@ -292,13 +292,17 @@ private fun LinkedCollectionCover(
         contentAlignment = Alignment.Center
     ) {
         if (visibleCoverUrl != null) {
-            AsyncImage(
-                model = fastScrollableImageRequest(
+            // 请求对象只在封面地址变化时重建（搜索结果列表滚动会持续重组）
+            val coverRequest = remember(visibleCoverUrl, offlineMode) {
+                fastScrollableImageRequest(
                     context = context,
                     data = visibleCoverUrl,
                     sizePx = 144,
                     offlineMode = offlineMode
-                ),
+                )
+            }
+            AsyncImage(
+                model = coverRequest,
                 contentDescription = title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
@@ -384,8 +388,10 @@ internal fun SongRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                // 整行占满宽度，左边没有兄弟节点：按左会一路往上跑到顶部标签栏
-                .tvClampLeft()
+                // 整行占满宽度 = 第 0 列：按左直接回侧栏本页标签。
+                // 原来用 tvClampLeft 吞左键，但内容区根节点在 Initial pass 就把左键吃掉了，
+                // item 级监听收不到 —— 等于没写。
+                .tvRowStart()
                 .tvBringIntoViewOnFocus()
             .tvRowMenuKeyPress(tvRowMenuState, enabled = isTelevision)
                 .clickable {
@@ -473,13 +479,17 @@ private fun SongRowCover(song: SongItem, offlineMode: Boolean) {
     val context = LocalContext.current
     val coverUrl = exploreVisibleCoverUrl(rememberSongDisplayCoverUrl(song))
     if (coverUrl != null) {
-        AsyncImage(
-            model = fastScrollableImageRequest(
+        // 请求对象只在封面地址变化时重建（搜索结果列表滚动会持续重组）
+        val coverRequest = remember(coverUrl, offlineMode) {
+            fastScrollableImageRequest(
                 context = context,
                 data = coverUrl,
                 sizePx = 128,
                 offlineMode = offlineMode
-            ),
+            )
+        }
+        AsyncImage(
+            model = coverRequest,
             contentDescription = song.displayName(),
             contentScale = ContentScale.Crop,
             modifier = Modifier.size(48.dp).clip(neriRoundedShape(10.dp))

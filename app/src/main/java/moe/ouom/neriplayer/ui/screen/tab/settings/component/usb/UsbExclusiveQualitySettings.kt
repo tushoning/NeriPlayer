@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material3.Icon
@@ -26,6 +26,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import moe.ouom.neriplayer.ui.tv.rememberTvInitialFocus
+import moe.ouom.neriplayer.ui.tv.tvInitialFocus
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -439,7 +441,11 @@ private fun <T> UsbPreferenceChoiceDialog(
     onSelect: (T) -> Unit,
     onDismiss: () -> Unit
 ) {
+    // 电视：LazyColumn 的条目在焦点分配那一刻还没组合出来，不给它初始焦点，
+    // 系统会把光标塞给最下方的「关闭」按钮。这里显式把光标送到第一项。
+    val tvInitialFocus = rememberTvInitialFocus()
     MiuixSettingsDialog(
+        textScrollable = false,
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
@@ -449,12 +455,13 @@ private fun <T> UsbPreferenceChoiceDialog(
                     .heightIn(max = 480.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                items(options) { option ->
+                itemsIndexed(options) { index, option ->
                     MiuixSettingsChoiceRow(
                         title = optionLabel(option),
                         subtitle = optionDescription(option),
                         selected = option == selected,
-                        onClick = { onSelect(option) }
+                        onClick = { onSelect(option) },
+                        modifier = if (index == 0) Modifier.tvInitialFocus(tvInitialFocus) else Modifier
                     )
                 }
             }

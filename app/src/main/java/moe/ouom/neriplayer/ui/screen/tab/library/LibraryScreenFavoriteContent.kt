@@ -615,14 +615,18 @@ internal fun FavoritePlaylistList(
                             ),
                             leadingContent = {
                                 if (!favorite.coverUrl.isNullOrEmpty()) {
-                                    AsyncImage(
-                                        model = offlineCachedImageRequest(
+                                    // 请求对象只在封面地址变化时重建（长列表滚动会持续重组）
+                                    val coverRequest = remember(favorite.coverUrl, offlineMode) {
+                                        offlineCachedImageRequest(
                                             context = context,
                                             data = favorite.coverUrl,
                                             sizePx = 192,
                                             allowHardware = false,
                                             offlineMode = offlineMode
-                                        ),
+                                        )
+                                    }
+                                    AsyncImage(
+                                        model = coverRequest,
                                         contentDescription = null,
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier

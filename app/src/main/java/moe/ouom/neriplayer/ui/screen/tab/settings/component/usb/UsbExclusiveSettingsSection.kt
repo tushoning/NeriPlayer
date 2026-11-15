@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
@@ -36,6 +36,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import moe.ouom.neriplayer.ui.tv.rememberTvInitialFocus
+import moe.ouom.neriplayer.ui.tv.tvInitialFocus
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -511,7 +513,11 @@ private fun UsbDeviceSelectionDialog(
             )
         }
 
+    // 电视：LazyColumn 的条目在焦点分配那一刻还没组合出来，不给初始焦点的话
+    // 系统会把光标塞给最下方的「关闭」按钮
+    val tvInitialFocus = rememberTvInitialFocus()
     MiuixSettingsDialog(
+        textScrollable = false,
         onDismissRequest = onDismiss,
         title = { Text(stringResource(CoreCommonR.string.settings_usb_exclusive_choose_device)) },
         text = {
@@ -521,12 +527,13 @@ private fun UsbDeviceSelectionDialog(
                     .heightIn(max = 420.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                items(options) { option ->
+                itemsIndexed(options) { index, option ->
                     MiuixSettingsChoiceRow(
                         title = option.title,
                         subtitle = option.subtitle,
                         selected = option.key == selectedDeviceKey,
-                        onClick = { onSelect(option.key) }
+                        onClick = { onSelect(option.key) },
+                        modifier = if (index == 0) Modifier.tvInitialFocus(tvInitialFocus) else Modifier
                     )
                 }
             }

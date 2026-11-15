@@ -33,6 +33,17 @@ internal fun ServerArtistArtwork(
     var fallbackFailed by remember(artist.profileId, artist.id, artist.fallbackCoverUrl, offlineMode) { mutableStateOf(false) }
     val useServer = !serverFailed && !artist.coverUrl.isNullOrBlank()
     val url = if (useServer) artist.coverUrl else artist.fallbackCoverUrl.takeUnless { fallbackFailed }
+    val context = LocalContext.current
+    // 请求对象只在封面地址变化时重建（列表滚动会持续重组）
+    val coverRequest = remember(url, offlineMode, sizePx) {
+        offlineCachedImageRequest(
+            context = context,
+            data = url,
+            sizePx = sizePx,
+            allowHardware = false,
+            offlineMode = offlineMode
+        )
+    }
     Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
         .testTag("serverArtistArtwork:${artist.profileId}:${artist.id}"), contentAlignment = Alignment.Center) {
         if (url.isNullOrBlank()) {
@@ -40,8 +51,7 @@ internal fun ServerArtistArtwork(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
             AsyncImage(
-                model = offlineCachedImageRequest(LocalContext.current, url, sizePx = sizePx,
-                    allowHardware = false, offlineMode = offlineMode),
+                model = coverRequest,
                 contentDescription = artist.name, contentScale = ContentScale.Crop,
                 modifier = Modifier.matchParentSize(),
                 onError = { if (useServer) serverFailed = true else fallbackFailed = true }

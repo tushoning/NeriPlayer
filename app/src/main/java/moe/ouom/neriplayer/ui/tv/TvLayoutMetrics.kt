@@ -5,7 +5,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.Dp
-import kotlin.math.roundToInt
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 
@@ -20,6 +19,44 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun tvPageSidePadding(): Dp = 0.dp
 
+/** 电视卡片横条 / 网格里卡片两侧的内边距（首页 `PagedCardStrip` 用的就是它）。 */
+val TvCardStripHorizontalPadding: Dp = 8.dp
+
+/**
+ * 电视：卡片横条 / 网格「一排放几张、每张多宽」的**唯一**算法。
+ *
+ * 首页的 `PagedCardStrip`（「为你推荐 / 雷达歌单 / 继续播放」那一排）和探索页的网格
+ * 都调这一个函数 —— 只有算式完全一致，两处的卡片才是逐像素一样大。
+ * 只对齐「目标宽度 172dp」是不够的：格位宽由容器宽摊平，差几个 dp 肉眼就能看出来
+ * （探索页原来是 154dp、首页是 151dp，一大圈）。
+ *
+ * @param availableWidth 容器**内容宽**，调用方自己扣掉左右内边距
+ * @param targetCardWidth 期望的单张卡片宽度，只用来反算一排能放几张
+ */
+data class TvCardStripMetrics(
+    /** 一排几张 */
+    val perPage: Int,
+    /** 格位宽 */
+    val slotWidth: Dp,
+    /** 真正的卡片宽（格位宽 × 0.9，在格位里居中） */
+    val cardWidth: Dp
+)
+
+fun tvCardStripMetrics(
+    availableWidth: Dp,
+    targetCardWidth: Dp = 172.dp,
+    spacing: Dp = 12.dp
+): TvCardStripMetrics {
+    val available = availableWidth.coerceAtLeast(1.dp)
+    val perPage = (((available + spacing) / (targetCardWidth + spacing)).toInt()).coerceAtLeast(1)
+    val slotWidth = ((available - spacing * (perPage - 1)) / perPage).coerceAtLeast(80.dp)
+    return TvCardStripMetrics(
+        perPage = perPage,
+        slotWidth = slotWidth,
+        cardWidth = slotWidth * 0.9f
+    )
+}
+
 /**
  * 页面最外侧的左右边距：电视用 [tvPageSidePadding]（0），手机平板用 [base]。
  *
@@ -28,25 +65,6 @@ fun tvPageSidePadding(): Dp = 0.dp
 @Composable
 fun pageSidePaddingOr(base: Dp): Dp =
     if (LocalIsTelevision.current) tvPageSidePadding() else base
-
-/**
- * 电视：按「一张卡片想要多宽」反算网格列数，配合 `GridCells.Fixed` 用。
- *
- * 网格原来用 `GridCells.Adaptive(minSize)`，在电视这种大窗口上算出来的单元格会被撑得很大
- * （比如 960dp 宽、minSize 170dp 时会给出 4 列各 200dp，比首页雷达卡片大一圈）。
- * 这里直接按目标卡片宽度（默认取首页雷达歌单那一档 172dp）算列数，
- * 卡片大小就和首页一致了。
- */
-fun tvGridColumnsForCardWidth(
-    availableWidth: Dp,
-    cardWidth: Dp = 172.dp,
-    spacing: Dp = 12.dp
-): Int {
-    if (availableWidth <= 0.dp) return 1
-    val unit = (cardWidth + spacing).value
-    if (unit <= 0f) return 1
-    return ((availableWidth.value + spacing.value) / unit).roundToInt().coerceAtLeast(1)
-}
 
 /**
  * 电视上「第二级标签 / 副标题」这一类按钮的统一尺寸。

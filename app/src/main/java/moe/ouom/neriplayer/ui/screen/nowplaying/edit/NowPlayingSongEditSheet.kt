@@ -913,14 +913,19 @@ internal fun editSongCoverRenderer(state: EditSongCoverPreviewState): @Composabl
 
 @Composable
 private fun EditSongCoverImage(state: EditSongCoverPreviewState) {
-    AsyncImage(
-        model = offlineCachedImageRequest(
-            context = LocalContext.current,
+    // 请求对象只在封面地址变化时重建（编辑面板每次输入都会重组）
+    val coverContext = LocalContext.current
+    val coverRequest = remember(state.coverUrl, state.offlineMode) {
+        offlineCachedImageRequest(
+            context = coverContext,
             data = state.coverUrl,
             sizePx = 384,
             allowHardware = false,
             offlineMode = state.offlineMode
-        ),
+        )
+    }
+    AsyncImage(
+        model = coverRequest,
         contentDescription = editSongCoverDescription(state.canReplaceFromFile),
         modifier = Modifier.fillMaxSize(),
         contentScale = ContentScale.Crop

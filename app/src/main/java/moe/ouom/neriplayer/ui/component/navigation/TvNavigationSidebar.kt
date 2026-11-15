@@ -151,15 +151,17 @@ fun TvNavigationSidebar(
             .width(TvSidebarWidth)
             .fillMaxHeight()
             .tvTrackFocusWithin(TvTopBarFocus::onBarFocusChanged)
-            // 按右：直接送进内容区第一个可聚焦元素。
-            // 不这么做就会被系统按「纵向距离最近」的几何搜索结果决定落点，
-            // 落点取决于标签格子恰好对着哪一行卡片，很不稳定。
-            // 内容区还没挂上可聚焦节点时返回 false，交给系统默认处理，按键不会被吞掉。
+            // 按右：
+            //  • 刚切换过标签（还没进过内容区）→ 落到页面第一个落点（组合顺序第一个可聚焦节点）。
+            //    切页时光标在标签栏里跟着选中项走，几何落点会变成「半路上某个卡片」，
+            //    从页首开始看才符合预期。
+            //  • 其它情况 → 不拦，交给 Compose 的几何方向搜索（空间最近）。
+            //    钉死落点只看组合顺序、不看位置，光标会跳到视觉上完全不相干的地方。
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionRight) {
                     return@onPreviewKeyEvent false
                 }
-                TvTopBarFocus.requestContentEntry()
+                TvTopBarFocus.requestTabEntry()
             }
             .padding(vertical = 16.dp),
         // 标签在标签栏内居左（底板贴左边缘，右侧留白）

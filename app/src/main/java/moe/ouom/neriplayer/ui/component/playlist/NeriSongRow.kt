@@ -229,12 +229,17 @@ internal fun NeriSongRow(
         } else {
             val effectiveCover = coverUrl ?: song.coverUrl
             if (showCover && !effectiveCover.isNullOrBlank()) {
-                AsyncImage(
-                    model = offlineCachedImageRequest(
+                // 请求对象只在封面地址变化时建一次：这一行是全站歌单/归集/探索/队列
+                // 共用的，滚动时一帧几十行都在重组，每帧新建 ImageRequest 纯属给 GC 添压力。
+                val coverRequest = remember(effectiveCover, offlineMode) {
+                    offlineCachedImageRequest(
                         context = context,
                         data = effectiveCover,
                         offlineMode = offlineMode
-                    ),
+                    )
+                }
+                AsyncImage(
+                    model = coverRequest,
                     contentDescription = title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier

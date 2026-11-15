@@ -65,6 +65,7 @@ internal fun MusicServerAccountEditorDialog(
         }
     }
     MiuixSettingsDialog(
+        textScrollable = false,
         onDismissRequest = dismiss,
         title = { Text(stringResource(if (profile == null) CoreCommonR.string.server_add else CoreCommonR.string.server_edit)) },
         text = {

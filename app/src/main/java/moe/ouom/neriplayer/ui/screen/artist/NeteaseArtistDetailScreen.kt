@@ -475,6 +475,23 @@ private fun ArtistHeaderCard(
 ) {
     val context = LocalContext.current
     val hero = header.toNeteaseArtistHero()
+    // 背景图和头像的请求都只建一次：
+    // 详情数据 / 歌曲列表加载会触发这个 composable 重组，每帧新建 ImageRequest
+    // 就是每帧都换一个 model 实例，白跑一遍请求管线。
+    val coverRequest = remember(hero.coverUrl, offlineMode) {
+        offlineCachedImageRequest(
+            context = context,
+            data = hero.coverUrl,
+            offlineMode = offlineMode
+        )
+    }
+    val avatarRequest = remember(hero.avatarUrl, offlineMode) {
+        offlineCachedImageRequest(
+            context = context,
+            data = hero.avatarUrl,
+            offlineMode = offlineMode
+        )
+    }
     val heroHeight = 240.dp
     val avatarSize = 64.dp
     ElevatedCard(
@@ -485,11 +502,7 @@ private fun ArtistHeaderCard(
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
             AsyncImage(
-                model = offlineCachedImageRequest(
-                    context = context,
-                    data = hero.coverUrl,
-                    offlineMode = offlineMode
-                ),
+                model = coverRequest,
                 contentDescription = hero.name,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
@@ -516,11 +529,7 @@ private fun ArtistHeaderCard(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     AsyncImage(
-                        model = offlineCachedImageRequest(
-                            context = context,
-                            data = hero.avatarUrl,
-                            offlineMode = offlineMode
-                        ),
+                        model = avatarRequest,
                         contentDescription = hero.name,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier

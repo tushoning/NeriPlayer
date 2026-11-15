@@ -780,15 +780,20 @@ fun NeriMiniPlayer(
                 )
             } else if (visibleFrame != null) {
                 key(visibleFrame.requestToken) {
-                    AsyncImage(
-                        model = fastScrollableImageRequest(
+                    // 请求对象只在帧身份变化时重建；重组本身（封面动画、进度等）不应该
+                    // 重新走一遍请求管线。
+                    val coverRequest = remember(visibleFrame) {
+                        fastScrollableImageRequest(
                             context = context,
                             data = visibleFrame.coverUrl,
                             sizePx = PLAYBACK_COVER_BITMAP_MAX_DIMENSION_PX,
                             crossfade = false,
                             offlineMode = offlineMode,
                             cacheKey = miniPlayerCoverCacheKey(visibleFrame)
-                        ),
+                        )
+                    }
+                    AsyncImage(
+                        model = coverRequest,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
@@ -820,15 +825,19 @@ fun NeriMiniPlayer(
                 !sameMiniPlayerCoverFrame(requestedFrame, visibleFrame)
             ) {
                 key(requestedFrame.requestToken) {
-                    AsyncImage(
-                        model = fastScrollableImageRequest(
+                    // 同上：请求对象只在帧身份变化时重建
+                    val coverRequest = remember(requestedFrame) {
+                        fastScrollableImageRequest(
                             context = context,
                             data = requestedFrame.coverUrl,
                             sizePx = PLAYBACK_COVER_BITMAP_MAX_DIMENSION_PX,
                             crossfade = false,
                             offlineMode = offlineMode,
                             cacheKey = miniPlayerCoverCacheKey(requestedFrame)
-                        ),
+                        )
+                    }
+                    AsyncImage(
+                        model = coverRequest,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier

@@ -39,6 +39,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -434,12 +435,16 @@ internal fun StatTrackRow(
                     )
                     val coverUrl = stat.toPlaybackStatsSongItem().displayCoverUrl()
                     if (coverUrl != null) {
-                        AsyncImage(
-                            model = offlineCachedImageRequest(
+                        // 请求对象只在封面地址变化时重建（榜单列表滚动会持续重组）
+                        val coverRequest = remember(coverUrl, offlineMode) {
+                            offlineCachedImageRequest(
                                 context = context,
                                 data = coverUrl,
                                 offlineMode = offlineMode
-                            ),
+                            )
+                        }
+                        AsyncImage(
+                            model = coverRequest,
                             contentDescription = null,
                             modifier = Modifier
                                 .size(48.dp)

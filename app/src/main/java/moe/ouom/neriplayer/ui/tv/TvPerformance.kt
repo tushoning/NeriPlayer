@@ -145,6 +145,22 @@ object TvTuning {
     var scrollAnimMs: Int = 70
         private set
 
+    /**
+     * 诊断开关：歌单/歌手详情页头图那几层是否打印布局追踪日志（`logcat -s NERI_TV_H`）。
+     *
+     * **默认关**。这些日志挂在 `onGloballyPositioned` 里，只要发生布局就打印一次 ——
+     * 滚动详情页时一秒几十条，而 logcat 写入是同步 IO，本身就会拖慢主线程。
+     * 当年排查「头图与顶栏接缝错开」时靠它们定位，问题已经修掉，平时不需要开。
+     *
+     * ```
+     * adb shell settings put global neri_tv_hero_trace 1   # 开（改完要重启应用）
+     * adb shell settings delete global neri_tv_hero_trace  # 关
+     * ```
+     */
+    @Volatile
+    var heroLayoutTrace: Boolean = false
+        private set
+
     fun refresh(context: android.content.Context) {
         val resolver = context.contentResolver
         fun flag(key: String, default: Int = 1): Boolean = runCatching {
@@ -160,5 +176,7 @@ object TvTuning {
         focusRing = flag("neri_tv_ring")
         // neri_tv_pager 默认 1（用 Pager），设 0 退回 LazyRow
         useLazyRow = !flag("neri_tv_pager")
+        // 头图布局追踪日志，默认关（见 heroLayoutTrace 的注释）
+        heroLayoutTrace = flag("neri_tv_hero_trace", default = 0)
     }
 }

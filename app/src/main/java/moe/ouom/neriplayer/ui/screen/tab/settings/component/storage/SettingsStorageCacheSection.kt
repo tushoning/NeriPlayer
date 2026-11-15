@@ -569,6 +569,7 @@ internal fun SettingsStorageCacheSection(
 
     if (showDownloadFileNameDialog.value) {
         MiuixSettingsDialog(
+            textScrollable = false,
             onDismissRequest = ::dismissDownloadFileNameDialog,
             title = { Text(stringResource(CoreCommonR.string.settings_download_file_name_format)) },
             text = {

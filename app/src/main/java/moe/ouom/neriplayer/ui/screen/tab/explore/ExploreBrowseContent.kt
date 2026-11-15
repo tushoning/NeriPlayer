@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -46,8 +47,8 @@ import moe.ouom.neriplayer.ui.tv.tvGridClampHorizontal
 import moe.ouom.neriplayer.ui.tv.rememberTvGridRowNavigation
 import moe.ouom.neriplayer.ui.tv.tvGridRowNav
 import moe.ouom.neriplayer.ui.tv.LocalIsTelevision
-import moe.ouom.neriplayer.ui.tv.tvGridColumnsForCardWidth
-import moe.ouom.neriplayer.ui.util.currentWindowWidthDp
+import moe.ouom.neriplayer.ui.tv.tvCardStripMetrics
+import moe.ouom.neriplayer.ui.tv.TvCardStripHorizontalPadding
 import moe.ouom.neriplayer.ui.tv.pageSidePaddingOr
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -110,16 +111,6 @@ internal fun NeteaseDefaultContent(
     val gridHorizontalPadding = pageSidePaddingOr(if (isTabletLayout) 56.dp else 16.dp)
     val gridMinCellSize = if (isTabletLayout) 170.dp else 150.dp
     val gridSpacing = if (isTabletLayout) 16.dp else 12.dp
-    // 电视上按首页「雷达歌单」那一档卡片宽度（172dp）反算列数，
-    // 否则 Adaptive 会把单元格撑到 200dp，比首页卡片大一圈
-    val tvColumns = if (isTelevision) {
-        tvGridColumnsForCardWidth(
-            availableWidth = currentWindowWidthDp() - gridHorizontalPadding * 2,
-            spacing = 12.dp
-        )
-    } else {
-        0
-    }
     val tagListState = rememberLazyListState()
     // 电视：上下键自己按行搬焦点，见 TvGridRowNavigation
     val gridRowNav = rememberTvGridRowNavigation(gridState)
@@ -129,19 +120,35 @@ internal fun NeteaseDefaultContent(
     val showTagEndFade by remember(tagListState) {
         derivedStateOf { tagListState.canScrollForward }
     }
-    LazyVerticalGrid(
-        state = gridState,
-        columns = if (isTelevision) GridCells.Fixed(tvColumns) else GridCells.Adaptive(gridMinCellSize),
-        verticalArrangement = Arrangement.spacedBy(gridSpacing),
-        horizontalArrangement = Arrangement.spacedBy(gridSpacing),
-        contentPadding = PaddingValues(
-            start = pageSidePaddingOr(gridHorizontalPadding),
-            end = pageSidePaddingOr(gridHorizontalPadding),
-            top = 16.dp,
-            bottom = 16.dp + miniPlayerHeight
-        ),
-        modifier = Modifier.exploreCenteredMaxWidth(ExploreBrowseContentMaxWidth)
-    ) {
+    BoxWithConstraints(Modifier.exploreCenteredMaxWidth(ExploreBrowseContentMaxWidth)) {
+        // 电视：卡片尺寸跟首页「为你推荐 / 雷达歌单」那一排**逐像素一致** ——
+        // 走同一个 tvCardStripMetrics（先扣掉横条那 8dp 两侧内边距再反算列数），
+        // 原来只按目标 172dp 算列数，格位宽被摊平后卡片比首页大一圈。
+        val tvCard = if (isTelevision) {
+            tvCardStripMetrics(
+                availableWidth = maxWidth - TvCardStripHorizontalPadding * 2,
+                spacing = 12.dp
+            )
+        } else {
+            null
+        }
+        LazyVerticalGrid(
+            state = gridState,
+            columns = if (tvCard != null) {
+                GridCells.Fixed(tvCard.perPage)
+            } else {
+                GridCells.Adaptive(gridMinCellSize)
+            },
+            verticalArrangement = Arrangement.spacedBy(gridSpacing),
+            horizontalArrangement = Arrangement.spacedBy(gridSpacing),
+            contentPadding = PaddingValues(
+                start = pageSidePaddingOr(gridHorizontalPadding),
+                end = pageSidePaddingOr(gridHorizontalPadding),
+                top = 16.dp,
+                bottom = 16.dp + miniPlayerHeight
+            ),
+            modifier = Modifier.fillMaxSize()
+        ) {
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column(Modifier.fillMaxWidth()) {
                 val displayKeys = tagKeys
@@ -199,9 +206,14 @@ internal fun NeteaseDefaultContent(
                         playlist = playlist,
                         isFavorite = favoriteKeys.contains("netease:${playlist.id}"),
                         onClick = { onPlay(playlist) },
-                        // 电视：最左/最右一列再按方向键就停住，别让焦点跑出网格；
+                        // 电视：宽度取首页那一档（tvCardStripMetrics 的 cardWidth），格位里居中；
+                        // 最左/最右一列再按方向键就停住，别让焦点跑出网格；
                         // 上下键按「同一列」逐行移动（视口外那一行还没组合，Compose 自己搜会掉到第一个卡片）
-                        modifier = Modifier.fillMaxWidth(if (isTelevision) 0.9f else 1f)
+                        modifier = (if (tvCard != null) {
+                            Modifier.width(tvCard.cardWidth)
+                        } else {
+                            Modifier.fillMaxWidth()
+                        })
                             .tvGridRowNav(gridRowNav, playlist.id)
                             .tvGridClampHorizontal(gridState, playlist.id)
                     )
@@ -222,6 +234,7 @@ internal fun NeteaseDefaultContent(
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Text(browse.error, color = MaterialTheme.colorScheme.error)
             }
+        }
         }
     }
 }
@@ -357,30 +370,55 @@ internal fun YouTubeMusicExploreContent(
         }
         else -> {
             val gridRowNav = rememberTvGridRowNavigation(gridState)
-            LazyVerticalGrid(
-                state = gridState,
-                columns = GridCells.Adaptive(gridMinCellSize),
-                contentPadding = PaddingValues(
-                    start = pageSidePaddingOr(gridHorizontalPadding), end = pageSidePaddingOr(gridHorizontalPadding),
-                    top = 8.dp,
-                    bottom = 16.dp + miniPlayerHeight
-                ),
-                verticalArrangement = Arrangement.spacedBy(gridSpacing),
-                horizontalArrangement = Arrangement.spacedBy(gridSpacing),
-                modifier = Modifier.exploreCenteredMaxWidth(ExploreBrowseContentMaxWidth)
-            ) {
-                items(
-                    items = browse.playlists,
-                    key = { it.browseId }
-                ) { playlist ->
-                    YtMusicExploreCard(
-                        playlist = playlist,
-                        onClick = { onClick(playlist) },
-                        offlineMode = offlineMode,
-                        modifier = Modifier
-                            .tvGridRowNav(gridRowNav, playlist.browseId)
-                            .tvGridClampHorizontal(gridState, playlist.browseId)
+            val isTelevision = LocalIsTelevision.current
+            BoxWithConstraints(Modifier.exploreCenteredMaxWidth(ExploreBrowseContentMaxWidth)) {
+                // 电视：和首页「为你推荐 / 雷达歌单」那一排用同一套算式，卡片一样大
+                val tvCard = if (isTelevision) {
+                    tvCardStripMetrics(
+                        availableWidth = maxWidth - TvCardStripHorizontalPadding * 2,
+                        spacing = 12.dp
                     )
+                } else {
+                    null
+                }
+                LazyVerticalGrid(
+                    state = gridState,
+                    columns = if (tvCard != null) {
+                        GridCells.Fixed(tvCard.perPage)
+                    } else {
+                        GridCells.Adaptive(gridMinCellSize)
+                    },
+                    contentPadding = PaddingValues(
+                        start = pageSidePaddingOr(gridHorizontalPadding), end = pageSidePaddingOr(gridHorizontalPadding),
+                        top = 8.dp,
+                        bottom = 16.dp + miniPlayerHeight
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(gridSpacing),
+                    horizontalArrangement = Arrangement.spacedBy(gridSpacing),
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    items(
+                        items = browse.playlists,
+                        key = { it.browseId }
+                    ) { playlist ->
+                        Box(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            YtMusicExploreCard(
+                                playlist = playlist,
+                                onClick = { onClick(playlist) },
+                                offlineMode = offlineMode,
+                                modifier = (if (tvCard != null) {
+                                    Modifier.width(tvCard.cardWidth)
+                                } else {
+                                    Modifier.fillMaxWidth()
+                                })
+                                    .tvGridRowNav(gridRowNav, playlist.browseId)
+                                    .tvGridClampHorizontal(gridState, playlist.browseId)
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -403,13 +441,17 @@ private fun YtMusicExploreCard(
             .tvReturnFocus("yt:${playlist.playlistId}:${playlist.browseId}")
             .clickable(onClick = onClick)
     ) {
-        AsyncImage(
-            model = fastScrollableImageRequest(
+        // 请求对象只在封面地址变化时重建（网格滚动会持续重组）
+        val coverRequest = remember(playlist.coverUrl, offlineMode) {
+            fastScrollableImageRequest(
                 context = context,
                 data = playlist.coverUrl,
                 sizePx = 384,
                 offlineMode = offlineMode
-            ),
+            )
+        }
+        AsyncImage(
+            model = coverRequest,
             contentDescription = playlist.title,
             contentScale = ContentScale.Crop,
             modifier = Modifier

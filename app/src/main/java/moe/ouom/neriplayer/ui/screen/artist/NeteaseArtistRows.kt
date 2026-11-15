@@ -135,12 +135,16 @@ internal fun ArtistAlbumRow(
                 .padding(vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            AsyncImage(
-                model = offlineCachedImageRequest(
+            // 请求对象只在封面地址变化时重建（列表滚动会持续重组）
+            val coverRequest = remember(album.picUrl, offlineMode) {
+                offlineCachedImageRequest(
                     context = context,
                     data = album.picUrl,
                     offlineMode = offlineMode
-                ),
+                )
+            }
+            AsyncImage(
+                model = coverRequest,
                 contentDescription = album.name,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier

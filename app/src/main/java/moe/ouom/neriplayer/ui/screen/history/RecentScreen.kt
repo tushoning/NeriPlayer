@@ -846,14 +846,19 @@ private fun RecentRowLeading(
 @Composable
 private fun RecentRowCover(coverUrl: String?, offlineMode: Boolean) {
     if (!coverUrl.isNullOrBlank()) {
-        AsyncImage(
-            model = offlineCachedImageRequest(
-                context = LocalContext.current,
+        // 请求对象只在封面地址变化时重建（长列表滚动会持续重组）
+        val coverContext = LocalContext.current
+        val coverRequest = remember(coverUrl, offlineMode) {
+            offlineCachedImageRequest(
+                context = coverContext,
                 data = coverUrl,
                 sizePx = 192,
                 allowHardware = false,
                 offlineMode = offlineMode
-            ),
+            )
+        }
+        AsyncImage(
+            model = coverRequest,
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier

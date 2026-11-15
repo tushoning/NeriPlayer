@@ -811,13 +811,17 @@ internal fun CreatorSongCover(
         contentAlignment = Alignment.Center
     ) {
         if (!coverUrl.isNullOrBlank()) {
-            AsyncImage(
-                model = fastScrollableImageRequest(
+            // 请求对象只在封面地址变化时重建（列表滚动会持续重组）
+            val coverRequest = remember(coverUrl, offlineMode) {
+                fastScrollableImageRequest(
                     context = context,
                     data = coverUrl,
                     sizePx = 128,
                     offlineMode = offlineMode
-                ),
+                )
+            }
+            AsyncImage(
+                model = coverRequest,
                 contentDescription = contentDescription,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
@@ -856,13 +860,17 @@ private fun CreatorSectionCard(
             contentAlignment = Alignment.Center
         ) {
             if (item.coverUrl.isNotBlank()) {
-                AsyncImage(
-                    model = fastScrollableImageRequest(
+                // 请求对象只在封面地址变化时重建（列表滚动会持续重组）
+                val coverRequest = remember(item.coverUrl, offlineMode) {
+                    fastScrollableImageRequest(
                         context = context,
                         data = item.coverUrl,
                         sizePx = 320,
                         offlineMode = offlineMode
-                    ),
+                    )
+                }
+                AsyncImage(
+                    model = coverRequest,
                     contentDescription = item.title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()

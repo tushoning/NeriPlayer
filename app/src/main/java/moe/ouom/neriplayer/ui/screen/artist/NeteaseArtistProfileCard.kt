@@ -9,6 +9,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -26,16 +27,20 @@ internal fun NeteaseArtistProfileCard(
 ) {
     val context = LocalContext.current
     val hero = header.toNeteaseArtistHero()
+    // 页头配色/列表加载会让这个 composable 反复重组，请求对象只建一次
+    val coverRequest = remember(hero.coverUrl, offlineMode) {
+        offlineCachedImageRequest(
+            context = context,
+            data = hero.coverUrl,
+            offlineMode = offlineMode
+        )
+    }
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = neriRoundedShape(28.dp)
     ) {
         AsyncImage(
-            model = offlineCachedImageRequest(
-                context = context,
-                data = hero.coverUrl,
-                offlineMode = offlineMode
-            ),
+            model = coverRequest,
             contentDescription = hero.name,
             contentScale = ContentScale.Crop,
             modifier = Modifier

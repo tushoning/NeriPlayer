@@ -395,8 +395,12 @@ private fun CurationCoverThumb(item: LocalCurationItem) {
             modifier = Modifier.size(24.dp)
         )
         if (!model.isNullOrBlank()) {
+            // 请求对象只在封面模型变化时重建（审核列表滚动会持续重组）
+            val coverRequest = remember(model) {
+                offlineCachedImageRequest(context = context, data = model, sizePx = 160)
+            }
             AsyncImage(
-                model = offlineCachedImageRequest(context = context, data = model, sizePx = 160),
+                model = coverRequest,
                 contentDescription = if (item.cover != null) {
                     stringResource(AppR.string.local_curation_cd_cover_preview)
                 } else {

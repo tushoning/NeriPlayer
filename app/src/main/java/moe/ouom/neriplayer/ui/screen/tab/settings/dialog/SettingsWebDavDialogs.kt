@@ -168,6 +168,7 @@ internal fun WebDavConfigurationDialog(
     }
 
     MiuixSettingsDialog(
+        textScrollable = false,
         onDismissRequest = onDismiss,
         title = { Text(stringResource(CoreCommonR.string.webdav_sync_title)) },
         text = {
