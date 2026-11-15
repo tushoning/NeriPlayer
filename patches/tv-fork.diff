@@ -1,6 +1,6 @@
 # NeriPlayer TV fork — 相对上游的完整改动（单个合并补丁）
 # 基线 upstream commit : bcc057a1  (fix(icon): ship a real adaptive launcher icon with a monochrome layer for themed icons (#654))
-# 我方 tip             : c328d3c6  (feat(tv): 检查更新改为弹窗式；首页拆分与卡片/图片请求优化)
+# 我方 tip             : fdeb0c86  (fix(update): 版本号与 tag 取同一时刻，修掉装完仍提示有新版本)
 # 生成命令             : bash fork-tools/make-patches.sh bcc057a1
 # 应用                 : git apply -3 patches/tv-fork.diff
 
@@ -18,10 +18,10 @@ index 00000000..94431c7a
 +patches/BASE -text
 diff --git a/.github/workflows/fork-sync.yml b/.github/workflows/fork-sync.yml
 new file mode 100644
-index 00000000..75960e68
+index 00000000..b59dca67
 --- /dev/null
 +++ b/.github/workflows/fork-sync.yml
-@@ -0,0 +1,379 @@
+@@ -0,0 +1,394 @@
 +name: 同步上游并发布 TV 版
 +
 +# 干什么：
@@ -233,6 +233,7 @@ index 00000000..75960e68
 +          echo "密钥库指纹校验通过：$GOT"
 +
 +      - name: 编译电视包
++        id: build
 +        if: steps.apply.outputs.ok == 'true'
 +        env:
 +          ORG_GRADLE_PROJECT_KEYSTORE_FILE: aerial.keystore
@@ -241,7 +242,15 @@ index 00000000..75960e68
 +          ORG_GRADLE_PROJECT_KEY_PASSWORD: ${{ secrets.AERIAL_KEY_PASSWORD }}
 +        run: |
 +          set -euo pipefail
-+          ./gradlew :app:assembleTvrelease --warning-mode all --stacktrace
++          # versionCode 和 tag 必须来自同一时刻。tag 名里的 yyyyMMdd-HHmm 会被
++          # AppUpdateRepository 解析成 yyMMddHH，再和 BuildConfig.VERSION_CODE 比大小；
++          # 以前 tag 取「发布时刻」、versionCode 取「构建时刻」，构建跨整点就差 1，
++          # 于是装上新包之后应用内仍然一直提示「有新版本」。
++          BUILD_TS=$(date -u +%s%3N)
++          BUILD_STAMP=$(date -u -d "@$((BUILD_TS / 1000))" +%Y%m%d-%H%M)
++          echo "stamp=$BUILD_STAMP" >> "$GITHUB_OUTPUT"
++          echo "构建时刻(UTC) $BUILD_STAMP"
++          ./gradlew :app:assembleTvrelease -PbuildTimestamp="$BUILD_TS" --warning-mode all --stacktrace
 +
 +      - name: 删掉临时密钥
 +        if: always()
@@ -253,14 +262,20 @@ index 00000000..75960e68
 +        env:
 +          UPSTREAM_SHA: ${{ steps.up.outputs.new }}
 +          UPSTREAM_RELEASE: ${{ steps.up.outputs.release_tag }}
++          BUILD_STAMP: ${{ steps.build.outputs.stamp }}
 +        run: |
 +          set -euo pipefail
 +          APK=$(ls app/build/outputs/apk/tvrelease/*.apk | head -1)
 +          test -n "$APK" || { echo "::error::没找到 tvrelease 的 APK"; exit 1; }
 +          cp "$APK" "$APK_OUT"
 +          VERSION=$(basename "$APK" | sed 's/^NeriPlayer-//; s/-armeabi-v7a.*//; s/\.apk$//')
-+          # tag 带月日时分，手动重复触发也不会撞车（同一个 tag 只能对应一次构建）
-+          TAG="tv-$(date -u +%Y%m%d-%H%M)"
++          # tag 用编译步骤定下的那个时刻，保证 versionCodeOfTag(tag) == BuildConfig.VERSION_CODE。
++          # 兜底：万一 build 步骤没输出（理论上不会），退回当前时间。
++          if [ -n "${BUILD_STAMP:-}" ]; then
++            TAG="tv-${BUILD_STAMP}"
++          else
++            TAG="tv-$(date -u +%Y%m%d-%H%M)"
++          fi
 +          SRC_OUT="NeriPlayer-TV-${TAG}-source.tar.gz"
 +          REL_NOTE=""
 +          if [ -n "${UPSTREAM_RELEASE:-}" ]; then
@@ -31945,6 +31960,26 @@ index 5c31ec1a..00000000
 -        const val FRAME_STEP_NANOS = 1_000_000_000L
 -    }
 -}
+diff --git a/build-logic/convention/src/main/kotlin/Common.kt b/build-logic/convention/src/main/kotlin/Common.kt
+index 2c2e68ea..fb1df8c3 100644
+--- a/build-logic/convention/src/main/kotlin/Common.kt
++++ b/build-logic/convention/src/main/kotlin/Common.kt
+@@ -12,8 +12,13 @@ object Common {
+             Date(timestamp)
+         } ?: Date()
+         val appVerCode: Int by lazy {
+-            val versionCode = SimpleDateFormat("yyMMddHH", Locale.ENGLISH).format(buildDate)
+-            versionCode.toInt()
++            // 必须固定 UTC：CI 的 tag 名用 `date -u +%Y%m%d-%H%M` 生成，
++            // AppUpdateRepository 再从 tag 里取 `yyMMddHH` 和 BuildConfig.VERSION_CODE 比大小。
++            // 两边时区不一致时（runner 是 UTC、本地是 UTC+8），tag 解析值会和安装包的版本号
++            // 差 8 小时，更新检查就会永远提示「有新版本」。
++            val sdf = SimpleDateFormat("yyMMddHH", Locale.ENGLISH)
++            sdf.timeZone = TimeZone.getTimeZone("UTC")
++            sdf.format(buildDate).toInt()
+         }
+         return appVerCode
+     }
 diff --git a/build-logic/convention/src/main/kotlin/Version.kt b/build-logic/convention/src/main/kotlin/Version.kt
 index 24773fe2..7f5857b9 100644
 --- a/build-logic/convention/src/main/kotlin/Version.kt
@@ -32124,10 +32159,10 @@ index 00000000..6c4d61de
 +fi
 diff --git a/fork-tools/sync-upstream.sh b/fork-tools/sync-upstream.sh
 new file mode 100644
-index 00000000..bed4bf2e
+index 00000000..0093058d
 --- /dev/null
 +++ b/fork-tools/sync-upstream.sh
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,144 @@
 +#!/usr/bin/env bash
 +# ---------------------------------------------------------------------------
 +# 上游更新后，把我方改动重新落到新上游上
@@ -32188,19 +32223,39 @@ index 00000000..bed4bf2e
 +fi
 +
 +BRANCH="sync/$(date +%Y%m%d-%H%M)"
++
++# patches/ 是被 git 跟踪的，checkout 到上游提交后整个目录会消失，
++# 后面 `git am patches/series/*.patch` 就会报 "could not open ... No such file"。
++# 所以先把要用的补丁复制到仓库外（build/ 在 .gitignore 里，不会被提交）。
++BACKUP="$REPO_ROOT/build/sync-backup"
++rm -rf "$BACKUP"
++mkdir -p "$BACKUP"
++cp -a patches/tv-fork.diff "$BACKUP/tv-fork.diff"
++cp -a patches/series "$BACKUP/series"
++if [ -d patches/submodule ]; then
++  cp -a patches/submodule "$BACKUP/submodule"
++fi
++echo "补丁已备份到 $BACKUP"
++
 +git checkout -B "$BRANCH" "$NEW_UPSTREAM"
 +
 +echo
 +echo "== 应用我方改动（$MODE）=="
 +set +e
 +if [ "$MODE" = squash ]; then
-+  git apply -3 patches/tv-fork.diff
++  git apply -3 "$BACKUP/tv-fork.diff"
 +  RC=$?
 +else
-+  git am -3 --keep-cr patches/series/*.patch
++  git am -3 --keep-cr "$BACKUP"/series/*.patch
 +  RC=$?
 +fi
 +set -e
++
++# 子模块补丁是手写的、不属于任何补丁，得手动搬回来（make-patches.sh 会原样保留）
++mkdir -p patches
++if [ -d "$BACKUP/submodule" ]; then
++  cp -a "$BACKUP/submodule" patches/submodule
++fi
 +
 +if [ "$RC" -ne 0 ]; then
 +  cat <<'EOF'
@@ -32250,6 +32305,8 @@ index 00000000..bed4bf2e
 +echo "下一步："
 +echo "  bash fork-tools/make-patches.sh        # 把基线更新成新上游"
 +echo "  git checkout main && git reset --hard $BRANCH && git push -f origin main"
++echo
++echo "补丁来源备份在 build/sync-backup，确认无误后可以删。"
 diff --git a/gradle.properties b/gradle.properties
 index 2ba8b47b..a7f384d8 100644
 --- a/gradle.properties
