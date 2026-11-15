@@ -209,6 +209,7 @@ jobs:
           echo "密钥库指纹校验通过：$GOT"
 
       - name: 编译电视包
+        id: build
         if: steps.apply.outputs.ok == 'true'
         env:
           ORG_GRADLE_PROJECT_KEYSTORE_FILE: aerial.keystore
@@ -217,7 +218,15 @@ jobs:
           ORG_GRADLE_PROJECT_KEY_PASSWORD: ${{ secrets.AERIAL_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          ./gradlew :app:assembleTvrelease --warning-mode all --stacktrace
+          # versionCode 和 tag 必须来自同一时刻。tag 名里的 yyyyMMdd-HHmm 会被
+          # AppUpdateRepository 解析成 yyMMddHH，再和 BuildConfig.VERSION_CODE 比大小；
+          # 以前 tag 取「发布时刻」、versionCode 取「构建时刻」，构建跨整点就差 1，
+          # 于是装上新包之后应用内仍然一直提示「有新版本」。
+          BUILD_TS=$(date -u +%s%3N)
+          BUILD_STAMP=$(date -u -d "@$((BUILD_TS / 1000))" +%Y%m%d-%H%M)
+          echo "stamp=$BUILD_STAMP" >> "$GITHUB_OUTPUT"
+          echo "构建时刻(UTC) $BUILD_STAMP"
+          ./gradlew :app:assembleTvrelease -PbuildTimestamp="$BUILD_TS" --warning-mode all --stacktrace
 
       - name: 删掉临时密钥
         if: always()
@@ -229,14 +238,20 @@ jobs:
         env:
           UPSTREAM_SHA: ${{ steps.up.outputs.new }}
           UPSTREAM_RELEASE: ${{ steps.up.outputs.release_tag }}
+          BUILD_STAMP: ${{ steps.build.outputs.stamp }}
         run: |
           set -euo pipefail
           APK=$(ls app/build/outputs/apk/tvrelease/*.apk | head -1)
           test -n "$APK" || { echo "::error::没找到 tvrelease 的 APK"; exit 1; }
           cp "$APK" "$APK_OUT"
           VERSION=$(basename "$APK" | sed 's/^NeriPlayer-//; s/-armeabi-v7a.*//; s/\.apk$//')
-          # tag 带月日时分，手动重复触发也不会撞车（同一个 tag 只能对应一次构建）
-          TAG="tv-$(date -u +%Y%m%d-%H%M)"
+          # tag 用编译步骤定下的那个时刻，保证 versionCodeOfTag(tag) == BuildConfig.VERSION_CODE。
+          # 兜底：万一 build 步骤没输出（理论上不会），退回当前时间。
+          if [ -n "${BUILD_STAMP:-}" ]; then
+            TAG="tv-${BUILD_STAMP}"
+          else
+            TAG="tv-$(date -u +%Y%m%d-%H%M)"
+          fi
           SRC_OUT="NeriPlayer-TV-${TAG}-source.tar.gz"
           REL_NOTE=""
           if [ -n "${UPSTREAM_RELEASE:-}" ]; then

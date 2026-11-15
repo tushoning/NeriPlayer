@@ -58,19 +58,39 @@ if git merge-base --is-ancestor "$NEW_UPSTREAM" "$OLD_BASE"; then
 fi
 
 BRANCH="sync/$(date +%Y%m%d-%H%M)"
+
+# patches/ 是被 git 跟踪的，checkout 到上游提交后整个目录会消失，
+# 后面 `git am patches/series/*.patch` 就会报 "could not open ... No such file"。
+# 所以先把要用的补丁复制到仓库外（build/ 在 .gitignore 里，不会被提交）。
+BACKUP="$REPO_ROOT/build/sync-backup"
+rm -rf "$BACKUP"
+mkdir -p "$BACKUP"
+cp -a patches/tv-fork.diff "$BACKUP/tv-fork.diff"
+cp -a patches/series "$BACKUP/series"
+if [ -d patches/submodule ]; then
+  cp -a patches/submodule "$BACKUP/submodule"
+fi
+echo "补丁已备份到 $BACKUP"
+
 git checkout -B "$BRANCH" "$NEW_UPSTREAM"
 
 echo
 echo "== 应用我方改动（$MODE）=="
 set +e
 if [ "$MODE" = squash ]; then
-  git apply -3 patches/tv-fork.diff
+  git apply -3 "$BACKUP/tv-fork.diff"
   RC=$?
 else
-  git am -3 --keep-cr patches/series/*.patch
+  git am -3 --keep-cr "$BACKUP"/series/*.patch
   RC=$?
 fi
 set -e
+
+# 子模块补丁是手写的、不属于任何补丁，得手动搬回来（make-patches.sh 会原样保留）
+mkdir -p patches
+if [ -d "$BACKUP/submodule" ]; then
+  cp -a "$BACKUP/submodule" patches/submodule
+fi
 
 if [ "$RC" -ne 0 ]; then
   cat <<'EOF'
@@ -120,3 +140,5 @@ echo
 echo "下一步："
 echo "  bash fork-tools/make-patches.sh        # 把基线更新成新上游"
 echo "  git checkout main && git reset --hard $BRANCH && git push -f origin main"
+echo
+echo "补丁来源备份在 build/sync-backup，确认无误后可以删。"

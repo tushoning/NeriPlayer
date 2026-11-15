@@ -12,8 +12,13 @@ object Common {
             Date(timestamp)
         } ?: Date()
         val appVerCode: Int by lazy {
-            val versionCode = SimpleDateFormat("yyMMddHH", Locale.ENGLISH).format(buildDate)
-            versionCode.toInt()
+            // 必须固定 UTC：CI 的 tag 名用 `date -u +%Y%m%d-%H%M` 生成，
+            // AppUpdateRepository 再从 tag 里取 `yyMMddHH` 和 BuildConfig.VERSION_CODE 比大小。
+            // 两边时区不一致时（runner 是 UTC、本地是 UTC+8），tag 解析值会和安装包的版本号
+            // 差 8 小时，更新检查就会永远提示「有新版本」。
+            val sdf = SimpleDateFormat("yyMMddHH", Locale.ENGLISH)
+            sdf.timeZone = TimeZone.getTimeZone("UTC")
+            sdf.format(buildDate).toInt()
         }
         return appVerCode
     }
