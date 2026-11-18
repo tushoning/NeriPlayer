@@ -9,16 +9,21 @@ Upstream project / 上游项目:
     Copyright (C) 2025-2025 NeriPlayer developers
 
 Modifications / 修改内容:
-    Television adaptation fork / 电视端适配分支
-      - TV navigation sidebar and D-pad focus management
-      - Reduced animation, blur and shader work for low-power TV hardware
-      - TV-oriented layouts for the now-playing and lyrics screens
-      - Recovery for unrolled SQLite WAL journals at startup
-    Full machine-readable diff / 完整差异:
-      patches/tv-fork.diff
+    A. Television build / 电视版（moe.ouom.neriplayer.tv）
+       - TV navigation sidebar and D-pad focus management
+       - Reduced animation, blur and shader work for low-power TV hardware
+       - TV-oriented layouts for the now-playing and lyrics screens
+       - Recovery for unrolled SQLite WAL journals at startup
+       Diff / 差异: patches/tv-fork.diff
+
+    B. Phone build / 手机版（moe.ouom.neriplayer）
+       - Now-playing toolbar: speaker/volume button replaced by speed & pitch
+         (0.25x-3x, -12..+12 semitones, linked-pitch switch)
+       - In-app update check (launch + Settings - About)
+       Diff / 差异: patches-mobile/mobile-fork.diff
 
 Modified on / 修改日期:
-    2026-10-24 (first) / 2026-11-07 (latest)
+    2026-10-24 (first) / 2026-11-19 (latest)
     首次修改 / 最近修改。每次发布的精确构建日期见对应 Release 说明。
 
 License / 许可证:

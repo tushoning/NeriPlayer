@@ -1,0 +1,50 @@
+From aa59f2d30f4810ef3e6afb8417aa6b992f97f5ba Mon Sep 17 00:00:00 2001
+From: Neri Fork <neri@fork.local>
+Date: Thu, 19 Nov 2026 03:25:14 +0800
+Subject: [PATCH] =?UTF-8?q?build:=20native=20=E6=94=AF=E6=8C=81=20-Pnative?=
+ =?UTF-8?q?Abis=20=E9=99=90=E5=88=B6=20ABI=EF=BC=9BNDK=20=E5=AF=B9?=
+ =?UTF-8?q?=E9=BD=90=2028.2?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+CI 出手机包时只编 arm64-v8a，省掉另外三个 ABI 的 CMake 编译；
+NDK 与电视版保持同一版本，避免同一套 CI 里装两个 NDK。
+---
+ build-logic/convention/src/main/kotlin/Version.kt | 2 +-
+ modules/native/build.gradle.kts                   | 6 ++++++
+ 2 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/build-logic/convention/src/main/kotlin/Version.kt b/build-logic/convention/src/main/kotlin/Version.kt
+index 24773fe2..7f5857b9 100644
+--- a/build-logic/convention/src/main/kotlin/Version.kt
++++ b/build-logic/convention/src/main/kotlin/Version.kt
+@@ -10,7 +10,7 @@ object Version {
+     const val minSdk = 28
+     const val targetSdk = 36
+ 
+-    private const val defaultNdkVersion = "27.0.12077973"
++    private const val defaultNdkVersion = "28.2.13676358"
+     private const val defaultCMakeVersion = "3.28.0+"
+ 
+     fun getNdkVersion(): String {
+diff --git a/modules/native/build.gradle.kts b/modules/native/build.gradle.kts
+index 4a94a74b..b04e18bf 100644
+--- a/modules/native/build.gradle.kts
++++ b/modules/native/build.gradle.kts
+@@ -6,6 +6,12 @@ android {
+     namespace = "moe.ouom.neriplayer.nativebridge"
+ 
+     defaultConfig {
++        // 本机构建用：-PnativeAbis=arm64-v8a 可只编指定 ABI，避免把 x86/armeabi 也全编一遍
++        (project.findProperty("nativeAbis") as String?)?.let { abis ->
++            ndk {
++                abiFilters += abis.split(",").map { it.trim() }.filter { it.isNotEmpty() }
++            }
++        }
+         externalNativeBuild {
+             cmake {
+                 cppFlags += listOf("-fexceptions", "-frtti")
+-- 
+2.55.0.windows.3
+

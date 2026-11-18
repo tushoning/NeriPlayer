@@ -1,0 +1,797 @@
+From 9c881092c928d8dd1dc96ea20144afed5c2dc1ed Mon Sep 17 00:00:00 2001
+From: Neri Fork <neri@fork.local>
+Date: Thu, 19 Nov 2026 03:25:14 +0800
+Subject: [PATCH] =?UTF-8?q?feat(phone):=20=E5=BA=94=E7=94=A8=E5=86=85?=
+ =?UTF-8?q?=E6=A3=80=E6=9F=A5=E6=9B=B4=E6=96=B0?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 启动时每日检查一次，查到新版本弹窗，否则 Toast
+- 设置-关于点「版本」弹出更新弹窗（开发者模式 7 连击保留，不再顺手复制版本号）
+- 更新通道认 Release 里附带 NeriPlayer-Mobile-arm64-v8a.apk 的最新版本，
+  只挂电视包的 Release 自动跳过；下载走 gh-proxy / ghfast / 直连，先测延迟
+---
+ .../java/moe/ouom/neriplayer/ui/NeriApp.kt    |  27 ++
+ .../about/SettingsAboutInteractions.kt        |  22 +-
+ .../settings/about/SettingsAboutSection.kt    |   8 +-
+ .../tab/settings/about/UpdateCheckDialog.kt   | 147 +++++++++++
+ .../neriplayer/update/AppUpdateRepository.kt  | 233 ++++++++++++++++++
+ .../update/UpdateCheckController.kt           | 137 ++++++++++
+ app/src/main/res/xml/file_paths.xml           |   4 +
+ .../src/main/res/values-en/strings_common.xml |  12 +
+ .../src/main/res/values-zh/strings_common.xml |  12 +
+ .../src/main/res/values/strings_common.xml    |  12 +
+ 10 files changed, 601 insertions(+), 13 deletions(-)
+ create mode 100644 app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/UpdateCheckDialog.kt
+ create mode 100644 app/src/main/java/moe/ouom/neriplayer/update/AppUpdateRepository.kt
+ create mode 100644 app/src/main/java/moe/ouom/neriplayer/update/UpdateCheckController.kt
+
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/NeriApp.kt b/app/src/main/java/moe/ouom/neriplayer/ui/NeriApp.kt
+index 7097f43c..4d56a552 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/NeriApp.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/NeriApp.kt
+@@ -123,6 +123,7 @@ import moe.ouom.neriplayer.data.settings.appearance.isCurrentBuildDimensity
+ import moe.ouom.neriplayer.data.settings.playback.readPlaybackPreferenceSnapshotCached
+ import moe.ouom.neriplayer.navigation.Destinations
+ import moe.ouom.neriplayer.data.model.navigation.LauncherShortcutAction
++import moe.ouom.neriplayer.common.R as CoreCommonR
+ import moe.ouom.neriplayer.data.model.navigation.LauncherShortcutRequest
+ import moe.ouom.neriplayer.navigation.launcherShortcutMainTabRoute
+ import moe.ouom.neriplayer.ui.effect.glass.AdvancedGlassController
+@@ -132,6 +133,9 @@ import moe.ouom.neriplayer.ui.effect.glass.captureAdvancedGlassBackdrop
+ import moe.ouom.neriplayer.ui.effect.glass.isAdvancedGlassBackendSupported
+ import moe.ouom.neriplayer.ui.effect.glass.rememberAdvancedGlassBackdrop
+ import moe.ouom.neriplayer.ui.feedback.AppFeedback
++import moe.ouom.neriplayer.update.LaunchUpdateCheckResult
++import moe.ouom.neriplayer.update.UpdateCheckController
++import moe.ouom.neriplayer.ui.screen.tab.settings.about.UpdateCheckDialogHost
+ import moe.ouom.neriplayer.ui.screen.nowplaying.NowPlayingScreen
+ import moe.ouom.neriplayer.ui.screen.debug.DebugHomeScreen
+ import moe.ouom.neriplayer.ui.screen.host.ExploreHostScreen
+@@ -662,6 +666,24 @@ private fun NeriAppContent(
+         }
+     }
+ 
++    // 启动时检查一次更新：同一自然日只查一次。查到新版本直接弹窗（由 UpdateCheckDialogHost 显示），
++    // 已是最新版本和请求失败都 Toast 明确告知。
++    LaunchedEffect(Unit) {
++        // 等首帧稳定再查，避免和启动时的主题、封面等请求抢网络
++        delay(2500)
++        when (UpdateCheckController.checkOnLaunch(context)) {
++            LaunchUpdateCheckResult.UpToDate -> AppFeedback.showToast(
++                context = context,
++                message = context.getString(CoreCommonR.string.settings_update_latest)
++            )
++            LaunchUpdateCheckResult.Failed -> AppFeedback.showToast(
++                context = context,
++                message = context.getString(CoreCommonR.string.settings_update_check_failed)
++            )
++            else -> Unit
++        }
++    }
++
+     val currentBootstrapServiceStart by rememberUpdatedState {
+         PlayerStartupServicePlanner.plan(
+             hasItems = PlayerManager.hasItems(),
+@@ -1951,6 +1973,11 @@ private fun NeriAppContent(
+                         onDismiss = { showUsbExclusiveBackgroundPermissionDialog = false }
+                     )
+ 
++                    UpdateCheckDialogHost(
++                        blocked = showUsbExclusiveBackgroundPermissionDialog ||
++                            pendingTrafficRiskDownloadRequest != null
++                    )
++
+             }
+         }
+             }
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/SettingsAboutInteractions.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/SettingsAboutInteractions.kt
+index fb1b06b9..e6652d16 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/SettingsAboutInteractions.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/SettingsAboutInteractions.kt
+@@ -12,6 +12,7 @@ import androidx.compose.runtime.remember
+ import androidx.compose.ui.platform.LocalContext
+ import androidx.compose.ui.platform.LocalResources
+ import androidx.core.net.toUri
++import moe.ouom.neriplayer.update.UpdateCheckController
+ import moe.ouom.neriplayer.common.R as CoreCommonR
+ import moe.ouom.neriplayer.util.platform.tryStartActivity
+ import moe.ouom.neriplayer.R as AppR
+@@ -22,19 +23,19 @@ internal class SettingsAboutVersionTapOwner(
+     private val onEnableDevMode: () -> Unit,
+     private val onMessage: (Int) -> Unit
+ ) {
+-    fun onVersionClick() {
+-        if (devModeEnabled) {
+-            onMessage(AppR.string.debug_mode_enabled)
+-            return
+-        }
++    /** @return true 表示这一下被开发者模式的连击逻辑吃掉了（此时不该再去查更新）。 */
++    fun onVersionClick(): Boolean {
++        // 开发者模式已经开着，7 连击没有意义：点一下就是检查更新
++        if (devModeEnabled) return false
+         val nextCount = tapCount.intValue + 1
+         if (nextCount < 7) {
+             tapCount.intValue = nextCount
+-            return
++            return false
+         }
+         tapCount.intValue = 0
+         onEnableDevMode()
+         onMessage(AppR.string.debug_mode_opened)
++        return true
+     }
+ }
+ 
+@@ -54,7 +55,7 @@ private class SettingsAboutPageActions(
+         onMessage = { messageRes -> onInlineMessageChange(resources.getString(messageRes)) }
+     )
+ 
+-    fun onVersionClick() = versionTap.onVersionClick()
++    fun onVersionClick(): Boolean = versionTap.onVersionClick()
+ 
+     fun onCopyValue(value: String) {
+         context.getSystemService(ClipboardManager::class.java)
+@@ -92,7 +93,12 @@ internal fun SettingsAboutPageContent(
+     )
+     SettingsAboutContent(
+         devModeEnabled = devModeEnabled,
+-        onVersionClick = actions::onVersionClick,
++        // 点「版本」= 检查更新：弹窗由 NeriApp 里的 UpdateCheckDialogHost 统一挂载，
++        // 这里只负责把会话开起来（离开设置页窗口也不会丢）。
++        onVersionClick = {
++            // 开发者模式那 7 连击期间不查更新，免得连点七次网络请求
++            if (!actions.onVersionClick()) UpdateCheckController.checkFromSettings()
++        },
+         onCopyValue = actions::onCopyValue,
+         onOpenGitHubRepo = actions::onOpenGitHubRepo
+     )
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/SettingsAboutSection.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/SettingsAboutSection.kt
+index 9ad12ac0..afa7fb82 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/SettingsAboutSection.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/SettingsAboutSection.kt
+@@ -72,8 +72,7 @@ internal fun SettingsAboutContent(
+     SettingsBuildUuidItem(onCopyValue)
+     SettingsVersionItem(
+         devModeEnabled = devModeEnabled,
+-        onVersionClick = onVersionClick,
+-        onCopyValue = onCopyValue
++        onVersionClick = onVersionClick
+     )
+     SettingsBuildTimeItem(onCopyValue)
+     SettingsGitHubItem(onOpenGitHubRepo = onOpenGitHubRepo)
+@@ -129,8 +128,7 @@ private fun SettingsBuildUuidItem(onCopyValue: (String) -> Unit) {
+ @Composable
+ private fun SettingsVersionItem(
+     devModeEnabled: Boolean,
+-    onVersionClick: () -> Unit,
+-    onCopyValue: (String) -> Unit
++    onVersionClick: () -> Unit
+ ) {
+     val suffix = if (devModeEnabled) {
+         " (${stringResource(CoreCommonR.string.settings_version_debug_suffix)})"
+@@ -154,8 +152,8 @@ private fun SettingsVersionItem(
+             )
+         },
+         supportingContent = { Text(versionName) },
++        // 点「版本」只用来检查更新，不再顺手复制版本号
+         modifier = androidx.compose.ui.Modifier.settingsItemClickable {
+-            onCopyValue(versionName)
+             onVersionClick()
+         },
+         colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+diff --git a/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/UpdateCheckDialog.kt b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/UpdateCheckDialog.kt
+new file mode 100644
+index 00000000..536c098f
+--- /dev/null
++++ b/app/src/main/java/moe/ouom/neriplayer/ui/screen/tab/settings/about/UpdateCheckDialog.kt
+@@ -0,0 +1,147 @@
++/*
++ * NeriPlayer - update dialog (mobile build).
++ *
++ * This file is part of NeriPlayer (GPL-3.0-or-later).
++ */
++package moe.ouom.neriplayer.ui.screen.tab.settings.about
++
++import androidx.compose.material3.Text
++import androidx.compose.material3.TextButton
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableIntStateOf
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.rememberCoroutineScope
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.platform.LocalContext
++import androidx.compose.ui.res.stringResource
++import androidx.lifecycle.compose.collectAsStateWithLifecycle
++import kotlinx.coroutines.launch
++import moe.ouom.neriplayer.update.AppUpdateRepository
++import moe.ouom.neriplayer.update.UpdateCheckController
++import moe.ouom.neriplayer.update.UpdateCheckUiState
++import moe.ouom.neriplayer.ui.component.overlay.DensityScaledAlertDialog
++import moe.ouom.neriplayer.ui.feedback.AppFeedback
++import java.io.File
++import moe.ouom.neriplayer.common.R as CoreCommonR
++
++/**
++ * 「检查更新」弹窗，设置页点版本和启动时的一天一次检查共用。
++ *
++ * 用项目里现成的 [DensityScaledAlertDialog]（Clean / Material 两套主题都吃），不另造弹窗。
++ * 固定两个按钮：左边「关闭」，右边一颗随 [state] 变化的主按钮：
++ * - 检查中 → 「检查更新」置灰
++ * - 暂无新版本 / 检查失败 → 「检查更新」，点了重新查
++ * - 有新版本 → 「下载更新」→ 百分比 → 下载完变「安装」
++ */
++@Composable
++internal fun UpdateCheckDialog(
++    state: UpdateCheckUiState,
++    onCheckAgain: () -> Unit,
++    onDismiss: () -> Unit
++) {
++    val context = LocalContext.current
++    val scope = rememberCoroutineScope()
++    val latest: AppUpdateRepository.Latest? =
++        (state as? UpdateCheckUiState.Available)?.latest
++
++    // 下载状态按版本号分开记：重新检查到另一个版本时不能沿用上一个的进度和文件
++    var downloading by remember(latest?.tag) { mutableStateOf(false) }
++    var progress by remember(latest?.tag) { mutableIntStateOf(0) }
++    var apk by remember(latest?.tag) { mutableStateOf<File?>(null) }
++
++    val downloadedFile = apk
++    val downloadingThis = downloading
++    val checking = state == UpdateCheckUiState.Checking
++
++    DensityScaledAlertDialog(
++        // 下载中不许点外面关掉，否则进度和文件都白费
++        onDismissRequest = { if (!downloadingThis) onDismiss() },
++        title = { Text(state.titleText(latest)) },
++        dismissButton = {
++            TextButton(onClick = onDismiss, enabled = !downloadingThis) {
++                Text(stringResource(CoreCommonR.string.settings_update_action_close))
++            }
++        },
++        confirmButton = {
++            if (latest == null) {
++                TextButton(enabled = !checking, onClick = onCheckAgain) {
++                    Text(stringResource(CoreCommonR.string.settings_update_action_check))
++                }
++            } else {
++                TextButton(
++                    enabled = !downloadingThis,
++                    onClick = {
++                        when {
++                            downloadedFile != null ->
++                                AppUpdateRepository.install(context, downloadedFile)
++                            downloadingThis -> Unit
++                            else -> {
++                                downloading = true
++                                progress = 0
++                                scope.launch {
++                                    val result = AppUpdateRepository.download(context, latest.tag) { percent ->
++                                        progress = percent
++                                    }
++                                    downloading = false
++                                    if (result != null) {
++                                        apk = result
++                                    } else {
++                                        AppFeedback.showToast(
++                                            context = context,
++                                            message = context.getString(
++                                                CoreCommonR.string.settings_update_download_failed
++                                            )
++                                        )
++                                    }
++                                }
++                            }
++                        }
++                    }
++                ) {
++                    Text(
++                        when {
++                            downloadedFile != null ->
++                                stringResource(CoreCommonR.string.settings_update_action_install)
++                            downloadingThis -> "$progress%"
++                            else -> stringResource(CoreCommonR.string.settings_update_action_download)
++                        }
++                    )
++                }
++            }
++        }
++    )
++}
++
++/**
++ * 全局更新弹窗宿主，挂在 `NeriApp` 根部。
++ *
++ * 设置页点「版本」和启动时的一天一次检查都只改 [UpdateCheckController.dialogState]，
++ * 弹窗本身由这里统一渲染 —— 所以离开设置页、切换标签都不会把窗口弄丢。
++ *
++ * @param blocked 启动期其它全局弹窗（USB 后台权限、流量风险）**正在显示**时先让位，
++ *   避免两个窗口同时抢焦点；它们处理完自然恢复显示。
++ */
++@Composable
++internal fun UpdateCheckDialogHost(blocked: Boolean) {
++    val state by UpdateCheckController.dialogState.collectAsStateWithLifecycle()
++    val current = state
++    if (current == null || blocked) return
++    UpdateCheckDialog(
++        state = current,
++        onCheckAgain = UpdateCheckController::checkFromSettings,
++        onDismiss = UpdateCheckController::dismiss
++    )
++}
++
++@Composable
++private fun UpdateCheckUiState.titleText(latest: AppUpdateRepository.Latest?): String = when (this) {
++    UpdateCheckUiState.Checking -> stringResource(CoreCommonR.string.settings_update_checking)
++    UpdateCheckUiState.UpToDate -> stringResource(CoreCommonR.string.settings_update_none)
++    UpdateCheckUiState.Failed -> stringResource(CoreCommonR.string.settings_update_check_failed)
++    is UpdateCheckUiState.Available -> stringResource(
++        CoreCommonR.string.settings_update_available,
++        latest?.tag.orEmpty()
++    )
++}
+diff --git a/app/src/main/java/moe/ouom/neriplayer/update/AppUpdateRepository.kt b/app/src/main/java/moe/ouom/neriplayer/update/AppUpdateRepository.kt
+new file mode 100644
+index 00000000..86105a52
+--- /dev/null
++++ b/app/src/main/java/moe/ouom/neriplayer/update/AppUpdateRepository.kt
+@@ -0,0 +1,233 @@
++/*
++ * NeriPlayer - update channel (mobile build).
++ *
++ * This file is part of NeriPlayer (GPL-3.0-or-later).
++ */
++package moe.ouom.neriplayer.update
++
++import android.content.Context
++import android.content.Intent
++import androidx.core.content.FileProvider
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.withContext
++import org.json.JSONArray
++import java.io.File
++import java.net.HttpURLConnection
++import java.net.URL
++
++/**
++ * 更新通道：只认我们自己 fork 仓库的 Release。
++ *
++ * 电视版和手机版走**同一个 Release**（CI 一次出两个包），各取各的资产：
++ * - 电视版：`NeriPlayer-tv-arm32-v7a.apk`
++ * - 手机版：`NeriPlayer-Mobile-arm64-v8a.apk`
++ *
++ * 所以这里不能只看 tag 前缀，而是按「最新一个附带手机包的 Release」来挑 ——
++ * 只挂电视包的 Release 会被自动跳过，绝不会把电视包当手机版的更新推下来。
++ *
++ * 版本比较不解析 `versionName`，而是拿 Release tag 里的时间对 `versionCode` ——
++ * 构建脚本就是按 `yyMMddHH` 生成的（见 `build-logic/convention/Common.kt`）。
++ */
++internal object AppUpdateRepository {
++
++    private const val REPO = "tushoning/NeriPlayer"
++
++    /** 手机包资产名，和 CI 出包保持一致 */
++    private const val ASSET_NAME = "NeriPlayer-Mobile-arm64-v8a.apk"
++
++    /** 前两条是国内加速镜像，最后一条是原链接；下载时按实测延迟排序后再挑。 */
++    private val downloadBases = listOf(
++        "https://gh-proxy.com/",
++        "https://ghfast.top/",
++        ""
++    )
++
++    /** Release 列表只能走 API；镜像同样套在前面。 */
++    private val apiBases = listOf(
++        "",
++        "https://gh-proxy.com/",
++        "https://ghfast.top/"
++    )
++
++    data class Latest(val tag: String, val versionCode: Int)
++
++    /**
++     * 一次检查的结果。
++     *
++     * 必须把「接口通了、但仓库里没有手机版 Release」和「网络/接口挂了」分开：
++     * 前者是正常状态（还没发过手机包），界面应该显示「暂无新版本」，
++     * 不能每开机一次就弹「检查更新失败」。
++     */
++    sealed interface FetchResult {
++        data class Found(val latest: Latest) : FetchResult
++        data object NotFound : FetchResult
++        data object Failed : FetchResult
++    }
++
++    suspend fun fetchLatest(): FetchResult = withContext(Dispatchers.IO) {
++        for (base in apiBases) {
++            val scan = runCatching { scanReleases("${base}${apiUrl()}") }
++            if (scan.isSuccess) {
++                val latest = scan.getOrNull()
++                return@withContext if (latest != null) FetchResult.Found(latest) else FetchResult.NotFound
++            }
++        }
++        FetchResult.Failed
++    }
++
++    private fun apiUrl(): String =
++        "https://api.github.com/repos/$REPO/releases?per_page=50"
++
++    /**
++     * 拉一页 Release，挑出「附带手机包」的那条（非草稿、非预发布），取 versionCode 最大的。
++     *
++     * 一次 CI 会同时传电视包和手机包，所以直接按资产名认，tag 是什么前缀都不影响；
++     * 只挂电视包的 Release 会被跳过。
++     */
++    private fun scanReleases(url: String): Latest? {
++        val body = httpGet(url) ?: throw IllegalStateException("release api unavailable")
++        val array = JSONArray(body)
++        var best: Latest? = null
++        for (index in 0 until array.length()) {
++            val item = array.optJSONObject(index) ?: continue
++            if (item.optBoolean("draft") || item.optBoolean("prerelease")) continue
++            if (!hasMobileAsset(item.optJSONArray("assets"))) continue
++            val tag = item.optString("tag_name")
++            val code = versionCodeOfTag(tag)
++            if (code <= 0) continue
++            if (best == null || code > best.versionCode) best = Latest(tag, code)
++        }
++        return best
++    }
++
++    private fun hasMobileAsset(assets: JSONArray?): Boolean {
++        if (assets == null) return false
++        for (i in 0 until assets.length()) {
++            val asset = assets.optJSONObject(i) ?: continue
++            if (asset.optString("name") == ASSET_NAME) return true
++        }
++        return false
++    }
++
++    private fun httpGet(url: String): String? {
++        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
++            connectTimeout = TIMEOUT_CONNECT
++            readTimeout = TIMEOUT_READ
++            requestMethod = "GET"
++            setRequestProperty("Accept", "application/vnd.github+json")
++            // GitHub API 不带 UA 会直接 403
++            setRequestProperty("User-Agent", "NeriPlayer-Mobile")
++        }
++        return try {
++            if (conn.responseCode !in 200..299) return null
++            conn.inputStream.bufferedReader().use { it.readText() }
++        } finally {
++            conn.disconnect()
++        }
++    }
++
++    /** `tv-20261119-0230` → `26111902`，与构建脚本的 `yyMMddHH` 对齐（只看 tag 里的时间，不看前缀）。 */
++    fun versionCodeOfTag(tag: String): Int {
++        val match = TAG_PATTERN.find(tag) ?: return 0
++        val (year, month, day, hour) = match.destructured
++        return (year.takeLast(2) + month + day + hour).toIntOrNull() ?: 0
++    }
++
++    /**
++     * 下载到 `cacheDir/app_update/<tag>.apk`。
++     *
++     * 三条链接先各发一个 1KB 的 Range 请求测延迟，按快慢依次尝试；一条失败自动换下一条。
++     * 返回 null 表示全部失败。
++     */
++    suspend fun download(
++        context: Context,
++        tag: String,
++        onProgress: (Int) -> Unit
++    ): File? = withContext(Dispatchers.IO) {
++        val dir = File(context.cacheDir, UPDATE_DIR).apply { mkdirs() }
++        val target = File(dir, "$tag.apk")
++        val ordered = downloadBases.sortedBy { latencyMillis(assetUrl(it, tag)) }
++        for (base in ordered) {
++            val ok = runCatching { fetchToFile(assetUrl(base, tag), target, onProgress) }
++                .getOrDefault(false)
++            if (ok && target.length() > 0L) return@withContext target
++        }
++        runCatching { target.delete() }
++        null
++    }
++
++    private fun assetUrl(base: String, tag: String): String =
++        "${base}https://github.com/$REPO/releases/download/$tag/$ASSET_NAME"
++
++    private fun latencyMillis(url: String): Long {
++        val startedAt = System.nanoTime()
++        return runCatching {
++            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
++                connectTimeout = TIMEOUT_PROBE
++                readTimeout = TIMEOUT_PROBE
++                requestMethod = "GET"
++                setRequestProperty("Range", "bytes=0-1023")
++            }
++            try {
++                conn.inputStream.use { it.readBytes() }
++                (System.nanoTime() - startedAt) / 1_000_000L
++            } finally {
++                conn.disconnect()
++            }
++        }.getOrDefault(Long.MAX_VALUE)
++    }
++
++    private fun fetchToFile(url: String, target: File, onProgress: (Int) -> Unit): Boolean {
++        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
++            connectTimeout = TIMEOUT_CONNECT
++            readTimeout = TIMEOUT_DOWNLOAD_READ
++        }
++        return try {
++            if (conn.responseCode !in 200..299) return false
++            val total = conn.contentLengthLong
++            conn.inputStream.use { input ->
++                target.outputStream().use { output ->
++                    val buffer = ByteArray(BUFFER_SIZE)
++                    var written = 0L
++                    while (true) {
++                        val read = input.read(buffer)
++                        if (read <= 0) break
++                        output.write(buffer, 0, read)
++                        written += read
++                        if (total > 0L) {
++                            onProgress(((written * 100) / total).toInt().coerceIn(0, 100))
++                        }
++                    }
++                }
++            }
++            onProgress(100)
++            true
++        } finally {
++            conn.disconnect()
++        }
++    }
++
++    /** 交给系统安装器。文件必须在 FileProvider 暴露的 `app_update/` 目录下。 */
++    fun install(context: Context, apk: File) {
++        val uri = FileProvider.getUriForFile(
++            context,
++            "${context.packageName}.fileprovider",
++            apk
++        )
++        val intent = Intent(Intent.ACTION_VIEW).apply {
++            setDataAndType(uri, "application/vnd.android.package-archive")
++            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
++            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
++        }
++        context.startActivity(intent)
++    }
++
++    const val UPDATE_DIR = "app_update"
++
++    private val TAG_PATTERN = Regex("(\\d{4})(\\d{2})(\\d{2})-(\\d{2})(\\d{2})")
++    private const val TIMEOUT_PROBE = 4000
++    private const val TIMEOUT_CONNECT = 12000
++    private const val TIMEOUT_READ = 12000
++    private const val TIMEOUT_DOWNLOAD_READ = 30000
++    private const val BUFFER_SIZE = 64 * 1024
++}
+diff --git a/app/src/main/java/moe/ouom/neriplayer/update/UpdateCheckController.kt b/app/src/main/java/moe/ouom/neriplayer/update/UpdateCheckController.kt
+new file mode 100644
+index 00000000..529ecb70
+--- /dev/null
++++ b/app/src/main/java/moe/ouom/neriplayer/update/UpdateCheckController.kt
+@@ -0,0 +1,137 @@
++/*
++ * NeriPlayer - update check session (mobile build).
++ *
++ * This file is part of NeriPlayer (GPL-3.0-or-later).
++ */
++package moe.ouom.neriplayer.update
++
++import android.content.Context
++import kotlinx.coroutines.CoroutineScope
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.SupervisorJob
++import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.StateFlow
++import kotlinx.coroutines.flow.asStateFlow
++import kotlinx.coroutines.launch
++import moe.ouom.neriplayer.BuildConfig
++import java.time.LocalDate
++
++/**
++ * 「检查更新」弹窗当前要展示的内容。
++ *
++ * `null`（[UpdateCheckController.dialogState] 的初始值）表示不显示弹窗。
++ */
++internal sealed interface UpdateCheckUiState {
++    /** 正在请求 GitHub Release；从设置页点进来时立刻是这个状态。 */
++    data object Checking : UpdateCheckUiState
++
++    /** 检查成功，但没有比当前安装版本更新的 Release。 */
++    data object UpToDate : UpdateCheckUiState
++
++    /** 请求失败（无网络、镜像全挂、超时）。 */
++    data object Failed : UpdateCheckUiState
++
++    /** 查到新版本，可以下载。 */
++    data class Available(val latest: AppUpdateRepository.Latest) : UpdateCheckUiState
++}
++
++/** [UpdateCheckController.checkOnLaunch] 的结果，用来决定启动时要不要提示用户。 */
++internal enum class LaunchUpdateCheckResult {
++    /** 查到新版本，弹窗已经自己顶上来了 */
++    Updated,
++
++    /** 确认已是最新版本 */
++    UpToDate,
++
++    /** 请求失败，静默处理 */
++    Failed,
++
++    /** 今天已经查过，或已经有别的弹窗在用，直接跳过 */
++    Skipped
++}
++
++/**
++ * 更新检查的全局会话。
++ *
++ * 设置页点「版本」和启动时的一天一次检查都走这里，弹窗由 `NeriApp` 统一挂载
++ * （设置页自己不再持有弹窗状态，否则离开设置页窗口就没了）。
++ *
++ * 一次检查同一时刻只会有一个：用自增 [token] 丢弃过期结果，不用 `Job.cancel()` ——
++ * 取消会让 `runCatching` 把 `CancellationException` 一起吞掉，旧协程会继续往下跑。
++ */
++internal object UpdateCheckController {
++
++    private const val PREFS_NAME = "app_update_check"
++    private const val KEY_LAST_CHECK_DAY = "last_check_epoch_day"
++
++    private val _dialogState = MutableStateFlow<UpdateCheckUiState?>(null)
++    val dialogState: StateFlow<UpdateCheckUiState?> = _dialogState.asStateFlow()
++
++    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
++
++    /** 每次发起检查自增，结果回来时对不上就丢弃 */
++    private var token = 0
++
++    /**
++     * 设置页点「版本」：立刻把弹窗顶出来显示「更新检查中」，再在后台请求。
++     */
++    fun checkFromSettings() {
++        val myToken = ++token
++        _dialogState.value = UpdateCheckUiState.Checking
++        scope.launch {
++            val found = runCatching { AppUpdateRepository.fetchLatest() }
++                .getOrDefault(AppUpdateRepository.FetchResult.Failed)
++            if (myToken != token) return@launch
++            // 检查期间用户可能已经点了「关闭」，那就别再把窗口顶出来
++            if (_dialogState.value == null) return@launch
++            _dialogState.value = found.toUiState()
++        }
++    }
++
++    /**
++     * 启动时调用：同一自然日只查一次。
++     *
++     * 只有查到新版本才自己弹窗；其余情况把结果交回调用方（去 Toast 或静默）。
++     * 「今天查过了」的标记在发请求之前就写下去 —— 网络失败也占掉今天的额度，
++     * 否则开机没网时会每次冷启动都重试一遍。
++     */
++    suspend fun checkOnLaunch(context: Context): LaunchUpdateCheckResult {
++        if (_dialogState.value != null) return LaunchUpdateCheckResult.Skipped
++        val appContext = context.applicationContext
++        val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
++        val today = LocalDate.now().toEpochDay()
++        if (prefs.getLong(KEY_LAST_CHECK_DAY, Long.MIN_VALUE) == today) {
++            return LaunchUpdateCheckResult.Skipped
++        }
++        prefs.edit().putLong(KEY_LAST_CHECK_DAY, today).apply()
++
++        val myToken = ++token
++        val found = runCatching { AppUpdateRepository.fetchLatest() }
++            .getOrDefault(AppUpdateRepository.FetchResult.Failed)
++        if (myToken != token) return LaunchUpdateCheckResult.Skipped
++        return when (val state = found.toUiState()) {
++            is UpdateCheckUiState.Available -> {
++                _dialogState.value = state
++                LaunchUpdateCheckResult.Updated
++            }
++            UpdateCheckUiState.UpToDate -> LaunchUpdateCheckResult.UpToDate
++            else -> LaunchUpdateCheckResult.Failed
++        }
++    }
++
++    fun dismiss() {
++        _dialogState.value = null
++    }
++
++    private fun AppUpdateRepository.FetchResult.toUiState(): UpdateCheckUiState = when (this) {
++        AppUpdateRepository.FetchResult.Failed -> UpdateCheckUiState.Failed
++        // 没有手机版 Release 也等于「没得更新」，别当成错误
++        AppUpdateRepository.FetchResult.NotFound -> UpdateCheckUiState.UpToDate
++        is AppUpdateRepository.FetchResult.Found ->
++            if (latest.versionCode <= BuildConfig.VERSION_CODE) {
++                UpdateCheckUiState.UpToDate
++            } else {
++                UpdateCheckUiState.Available(latest)
++            }
++    }
++}
+diff --git a/app/src/main/res/xml/file_paths.xml b/app/src/main/res/xml/file_paths.xml
+index 6162ca47..749f495b 100644
+--- a/app/src/main/res/xml/file_paths.xml
++++ b/app/src/main/res/xml/file_paths.xml
+@@ -12,4 +12,8 @@
+     <cache-path
+         name="lyric_share_cards"
+         path="lyric_share_cards/" />
++    <!-- 应用内更新的下载目录：安装器要通过 FileProvider 读这里的 apk -->
++    <cache-path
++        name="app_update"
++        path="app_update/" />
+ </paths>
+diff --git a/modules/common/src/main/res/values-en/strings_common.xml b/modules/common/src/main/res/values-en/strings_common.xml
+index c6745b42..76c901f8 100644
+--- a/modules/common/src/main/res/values-en/strings_common.xml
++++ b/modules/common/src/main/res/values-en/strings_common.xml
+@@ -93,4 +93,16 @@
+     <string name="cd_queue_quick_actions">Queue Quick Actions</string>
+     <string name="cd_close">Close</string>
+     <string name="cd_app_background">App background</string>
++
++    <!-- Update check -->
++    <string name="settings_update_latest">Already up to date</string>
++    <string name="settings_update_available">New version: %1$s</string>
++    <string name="settings_update_check_failed">Failed to check for updates</string>
++    <string name="settings_update_download_failed">Download failed</string>
++    <string name="settings_update_checking">Checking for updates</string>
++    <string name="settings_update_none">No new version</string>
++    <string name="settings_update_action_check">Check for updates</string>
++    <string name="settings_update_action_download">Download update</string>
++    <string name="settings_update_action_close">Close</string>
++    <string name="settings_update_action_install">Install</string>
+ </resources>
+diff --git a/modules/common/src/main/res/values-zh/strings_common.xml b/modules/common/src/main/res/values-zh/strings_common.xml
+index 142c5edf..373b8105 100644
+--- a/modules/common/src/main/res/values-zh/strings_common.xml
++++ b/modules/common/src/main/res/values-zh/strings_common.xml
+@@ -93,4 +93,16 @@
+     <string name="cd_queue_quick_actions">播放队列快捷操作</string>
+     <string name="cd_close">关闭</string>
+     <string name="cd_app_background">应用背景</string>
++
++    <!-- Update check -->
++    <string name="settings_update_latest">已是最新版本</string>
++    <string name="settings_update_available">有新版本：%1$s</string>
++    <string name="settings_update_check_failed">检查更新失败</string>
++    <string name="settings_update_download_failed">下载失败</string>
++    <string name="settings_update_checking">更新检查中</string>
++    <string name="settings_update_none">暂无新版本</string>
++    <string name="settings_update_action_check">检查更新</string>
++    <string name="settings_update_action_download">下载更新</string>
++    <string name="settings_update_action_close">关闭</string>
++    <string name="settings_update_action_install">安装</string>
+ </resources>
+diff --git a/modules/common/src/main/res/values/strings_common.xml b/modules/common/src/main/res/values/strings_common.xml
+index 142c5edf..373b8105 100644
+--- a/modules/common/src/main/res/values/strings_common.xml
++++ b/modules/common/src/main/res/values/strings_common.xml
+@@ -93,4 +93,16 @@
+     <string name="cd_queue_quick_actions">播放队列快捷操作</string>
+     <string name="cd_close">关闭</string>
+     <string name="cd_app_background">应用背景</string>
++
++    <!-- Update check -->
++    <string name="settings_update_latest">已是最新版本</string>
++    <string name="settings_update_available">有新版本：%1$s</string>
++    <string name="settings_update_check_failed">检查更新失败</string>
++    <string name="settings_update_download_failed">下载失败</string>
++    <string name="settings_update_checking">更新检查中</string>
++    <string name="settings_update_none">暂无新版本</string>
++    <string name="settings_update_action_check">检查更新</string>
++    <string name="settings_update_action_download">下载更新</string>
++    <string name="settings_update_action_close">关闭</string>
++    <string name="settings_update_action_install">安装</string>
+ </resources>
+-- 
+2.55.0.windows.3
+

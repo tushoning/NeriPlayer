@@ -122,9 +122,14 @@ adb install -r NeriPlayer-TV.apk          # 装新的 .tv 包
 | `main` | **我方完整代码**（上游 + TV 改动 + 补丁快照 + 脚本），仓库默认分支 |
 | `master` | 上游原样镜像，只 `git fetch` + 快进，永不提交（本地才有，不用推） |
 | `archive/*` | 历史存档，只读 |
-| `patches/` | 上游补丁快照，自动生成，**不要手改** |
+| `patches/` | 电视版补丁快照（上游 → main），自动生成，**不要手改** |
+| `patches-mobile/` | 手机版补丁快照（上游 → 手机分支），**只含手机改动**，同样不要手改 |
 | `fork-tools/` | 同步与生成补丁的脚本 |
-| `.github/workflows/fork-sync.yml` | CI：定时检查上游 Release → 有新版才编译 → 发 Release（**只读仓库，不推 commit**） |
+| `.github/workflows/fork-sync.yml` | CI：定时检查上游 Release → 有新版才在临时工作区里分别叠两套补丁 → 编出电视包和手机包 → 发同一个 Release（**只读仓库，不推 commit**） |
+
+两套补丁互不干扰：CI 每次都先 `git checkout --detach 上游提交`，叠 `patches/` 编电视包，
+再 `git reset --hard 上游提交`，叠 `patches-mobile/` 编手机包。各自的补丁只描述自己那点改动，
+所以上游一动，两边各自 `git am -3`，冲突也只在各自那一路出现。
 
 **`main` 必须保持线性**（不含 merge commit）。`patches/series/` 是靠逐个 `git am`
 重放的，历史里一旦有 merge，merge 之后的提交其 diff 基准是合并结果而不是上游，
@@ -140,6 +145,15 @@ adb install -r NeriPlayer-TV.apk          # 装新的 .tv 包
 ```bash
 git add -A && git commit            # 正常提交到 main
 bash fork-tools/make-patches.sh     # 重新生成 patches/ 快照
+git push origin main
+```
+
+改手机版（只动手机那套补丁）：
+
+```bash
+# 在「上游 + patches-mobile」的分支上提交改动，然后重出快照
+git format-patch 上游提交..HEAD -o /tmp/m   # 按提交拆
+git diff 上游提交..HEAD > patches-mobile/mobile-fork.diff
 git push origin main
 ```
 

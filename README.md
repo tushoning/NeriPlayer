@@ -1,18 +1,18 @@
 [English](./README_EN.md) | [中文](./README.md)
 
-> ## 📺 这是电视适配 fork，不是上游官方仓库
+> ## 📺📱 这是自用修改版 fork，不是上游官方仓库
 >
 > 上游：[cwuom/NeriPlayer](https://github.com/cwuom/NeriPlayer)
 >
-> 本仓库在官方代码基础上做了**电视（Android TV / 遥控器）适配**：侧栏导航、遥控焦点体系、
-> 精简动效与模糊、电视版布局。全部改动见
-> [`patches/tv-fork.diff`](patches/tv-fork.diff)，维护说明见 [`FORK.md`](FORK.md)。
+> 每个 Release 同时提供两个包，都是从同一个上游提交分别叠补丁编出来的：
 >
-> 只发布电视包（`armeabi-v7a`，包名 `moe.ouom.neriplayer.tv`），**不提供手机版**。
-> 手机版请去[上游仓库](https://github.com/cwuom/NeriPlayer/releases)。
+> | 包 | 包名 | ABI | 改了什么 |
+> | :--- | :--- | :--- | :--- |
+> | `NeriPlayer-tv-arm32-v7a.apk` | `moe.ouom.neriplayer.tv` | armeabi-v7a | 电视适配：侧栏导航、遥控焦点、降负载渲染、电视版布局。见 [`patches/`](patches/) |
+> | `NeriPlayer-Mobile-arm64-v8a.apk` | `moe.ouom.neriplayer` | arm64-v8a | 仅播放页「倍速与音调」与应用内检查更新。见 [`patches-mobile/`](patches-mobile/) |
 >
-> 许可证仍是 **GPL-3.0-or-later**（见 [LICENSE](LICENSE)），修改声明见 [NOTICE](NOTICE)。
-> 本仓库的构建不代表上游作者的观点。
+> 维护说明见 [`FORK.md`](FORK.md)。许可证仍是 **GPL-3.0-or-later**（见 [LICENSE](LICENSE)），
+> 修改声明见 [NOTICE](NOTICE)。本仓库的构建不代表上游作者的观点。
 
 <h1 align="center">NeriPlayer (音理音理!)</h1>
 
