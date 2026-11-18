@@ -1,0 +1,40 @@
+From 1f2936f812decb21a21aaae75b4337d8138caa9c Mon Sep 17 00:00:00 2001
+From: Neri Fork <neri@fork.local>
+Date: Thu, 19 Nov 2026 03:41:32 +0800
+Subject: [PATCH] =?UTF-8?q?chore:=20=E5=88=B7=E6=96=B0=E8=A1=A5=E4=B8=81?=
+ =?UTF-8?q?=E5=BF=AB=E7=85=A7=EF=BC=8846=20=E4=B8=AA=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 电视版下载资产名改为 NeriPlayer-tv-arm32-v7a.apk
+- 补丁生成排除 patches-mobile/，自检期望树同步剔除
+---
+ fork-tools/make-patches.sh | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/fork-tools/make-patches.sh b/fork-tools/make-patches.sh
+index 6c4d61de..7d98df43 100644
+--- a/fork-tools/make-patches.sh
++++ b/fork-tools/make-patches.sh
+@@ -43,8 +43,8 @@ BASE_SHA=$(git rev-parse --short "$BASE")
+ BASE_SUBJECT=$(git log -1 --format=%s "$BASE")
+ HEAD_SHA=$(git rev-parse --short HEAD)
+ 
+-# patches/ 自身不参与补丁内容，否则补丁会包含自己
+-FILTER=(-- . ':(exclude)patches')
++# patches/ 与 patches-mobile/ 是补丁快照本身，不参与补丁内容，否则补丁会包含自己
++FILTER=(-- . ':(exclude)patches' ':(exclude)patches-mobile')
+ 
+ if [ -n "$(git rev-list --merges "$BASE..HEAD")" ]; then
+   echo "警告：$BASE_SHA..HEAD 之间还有 merge commit，补丁链可能无法逐个应用。" >&2
+@@ -141,6 +141,9 @@ git read-tree HEAD
+ if [ -n "$(git ls-tree HEAD -- patches)" ]; then
+   git rm -r -q --cached patches
+ fi
++if [ -n "$(git ls-tree HEAD -- patches-mobile)" ]; then
++  git rm -r -q --cached patches-mobile
++fi
+ TIP_TREE=$(git write-tree)
+ unset GIT_INDEX_FILE
+ 
