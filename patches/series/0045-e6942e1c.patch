@@ -1,0 +1,635 @@
+From e6942e1c98c455bc487c8b392124e66993c05766 Mon Sep 17 00:00:00 2001
+From: Neri Fork <neri@fork.local>
+Date: Thu, 19 Nov 2026 03:28:16 +0800
+Subject: [PATCH] =?UTF-8?q?feat(mobile):=20=E5=A2=9E=E5=8A=A0=E6=89=8B?=
+ =?UTF-8?q?=E6=9C=BA=E7=89=88=E8=A1=A5=E4=B8=81=E4=B8=8E=E5=8F=8C=E7=89=88?=
+ =?UTF-8?q?=E6=9C=AC=E5=87=BA=E5=8C=85?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- patches-mobile/：上游 → 手机版的三条补丁（播放页倍速与音调、检查更新、构建参数）
+- CI 改为先叠电视补丁编 TV 包，再重置回上游叠手机补丁编手机包，两个包发同一个 Release
+- 电视包改名 NeriPlayer-tv-arm32-v7a.apk，手机包 NeriPlayer-Mobile-arm64-v8a.apk
+- README / NOTICE / FORK.md 补手机版说明
+---
+ .github/workflows/fork-sync.yml | 317 ++++++++++++++++++--------------
+ FORK.md                         |  18 +-
+ NOTICE                          |  21 ++-
+ README.md                       |  16 +-
+ 4 files changed, 220 insertions(+), 152 deletions(-)
+
+diff --git a/.github/workflows/fork-sync.yml b/.github/workflows/fork-sync.yml
+index b59dca67..351d0987 100644
+--- a/.github/workflows/fork-sync.yml
++++ b/.github/workflows/fork-sync.yml
+@@ -1,25 +1,22 @@
+-name: 同步上游并发布 TV 版
++name: 同步上游并发布电视版 / 手机版
+ 
+ # 干什么：
+ #   定时（每小时）去上游 cwuom/NeriPlayer 看**有没有发布新 Release**。
+-#   有新 Release → 在临时工作区里拉上游最新代码 → 叠上我方补丁 → 编译
+-#                → 发 Release（APK + 源码包）→ 打 seen/<上游 Release 名> 标记。
+-#   没有新 Release → 几秒退出，不编译（上游 master 天天有提交也不管）。
+-#
+-#   手动触发（Run workflow）**总是出包**：不管有没有新 Release，都编一遍并发 Release。
++#   有新 Release → 在临时工作区里拉上游最新代码 → 先叠电视补丁编 TV 包，
++#                再重置回上游叠手机补丁编手机包 → 两个包发到同一个 Release
++#                → 打 seen/<上游 Release 名> 标记。
++#   没有新 Release → 几秒退出，不编译。
++#   手动触发（Run workflow）**总是出包**。
+ #
+ # ★ 这个工作流**从不推送任何 commit**，只推 tag（tag 指向 main 上已有的提交）。
+-#   所以它不需要 workflows 权限，也能永远保持原样不被自己改写：
+ #   上游代码只在临时工作区出现，不进本仓库历史，main 分支保持不动。
+-#   补丁基线要往前走时，在本地跑一次 fork-tools/sync-upstream.sh（用你自己的凭据推）。
++#   两套补丁互不影响：各自从同一个上游提交出发，分别 git am，编完再互相覆盖。
+ #
+ # 合规：GPLv3 §6 —— 二进制和对应源码从同一个地方提供。
+-#       所以 Release 里除了 APK，还附一份 source.tar.gz（含全部子模块，解压即可编译）。
++#       两个 APK 各附一份 source.tar.gz（含全部子模块，解压即可编译）。
+ 
+ on:
+   schedule:
+-    # 每小时看一次上游 Release。没新 Release 时几秒就 exit，不编译，几乎零成本；
+-    # 跑得勤是为了对冲 GitHub schedule 的「best effort」——高峰期会延迟甚至整班跳过。
+     - cron: '23 * * * *'
+   workflow_dispatch:
+ 
+@@ -34,14 +31,15 @@ env:
+   UPSTREAM_REPO: https://github.com/cwuom/NeriPlayer.git
+   UPSTREAM_API: https://api.github.com/repos/cwuom/NeriPlayer
+   KEY_ALIAS: aerial
+-  APK_OUT: NeriPlayer-TV.apk
++  APK_TV: NeriPlayer-tv-arm32-v7a.apk
++  APK_MOBILE: NeriPlayer-Mobile-arm64-v8a.apk
+   # aerial 证书的 SHA-256（公开信息，不是密钥）。传错密钥 / 没生效签名都会在这里失败。
+   CERT_SHA256: 4ca292129ad97359a262d5f5269e7fd7ef0287b33cd19f6e761dd671946581b5
+ 
+ jobs:
+   sync:
+     runs-on: ubuntu-latest
+-    timeout-minutes: 60 # 卡死时早失败，而不是拖到 GitHub 默认的 6 小时
++    timeout-minutes: 90 # 两次编译，卡死时早失败
+     permissions:
+       contents: write # 打 tag、建 Release
+     steps:
+@@ -63,8 +61,7 @@ jobs:
+         run: |
+           set -euo pipefail
+ 
+-          # 记下 main 当前的 commit：tag 只打在这个已有的提交上，
+-          # 推送时只有一个 tag 对象，不涉及任何提交内容。
++          # 记下 main 当前的 commit：tag 只打在这个已有的提交上。
+           MAIN_SHA=$(git rev-parse HEAD)
+           echo "main_sha=$MAIN_SHA" >> "$GITHUB_OUTPUT"
+ 
+@@ -78,7 +75,6 @@ jobs:
+             || { echo "::error::读取上游 Release 列表失败"; exit 1; }
+           echo "release_tag=$REL_TAG" >> "$GITHUB_OUTPUT"
+ 
+-          # tag 可能没被 checkout 拉全（fetch-depth: 0 通常够，这里再兜一次）
+           git fetch --quiet origin '+refs/tags/seen/*:refs/tags/seen/*' 2>/dev/null || true
+ 
+           SEEN=false
+@@ -114,27 +110,31 @@ jobs:
+             echo "→ 没有新 Release，跳过（不编译）。"
+           fi
+ 
+-      - name: 切到上游代码并叠上补丁
+-        id: apply
++      - name: 备份两套补丁
+         if: steps.up.outputs.build == 'true'
+         run: |
+-          set -uo pipefail
+-
+-          # patches/ 是本仓库的文件，切到上游提交后会被删掉，先挪到临时目录
+-          rm -rf /tmp/patches
++          set -euo pipefail
++          # 切到上游提交后这些目录会被删掉，先挪到临时目录
++          rm -rf /tmp/patches /tmp/patches-mobile
+           cp -r patches /tmp/patches
++          cp -r patches-mobile /tmp/patches-mobile
++
++      - name: 切到上游代码并叠上电视补丁
++        id: apply_tv
++        if: steps.up.outputs.build == 'true'
++        run: |
++          set -uo pipefail
+ 
+-          # 切到上游最新提交（游离 HEAD，不会产生分支，也不会推任何东西）
+           git checkout --detach "${{ steps.up.outputs.new }}"
+           git submodule update --init --recursive
+ 
+           if git am -3 --keep-cr /tmp/patches/series/*.patch; then
+             echo "ok=true" >> "$GITHUB_OUTPUT"
+-            echo "补丁已叠上：$(git log --oneline -1)"
++            echo "电视补丁已叠上：$(git log --oneline -1)"
+           else
+             echo "ok=false" >> "$GITHUB_OUTPUT"
+             {
+-              echo "### ❌ 补丁叠不到上游 \`${{ steps.up.outputs.new }}\` 上"
++              echo "### ❌ 电视补丁叠不到上游 \`${{ steps.up.outputs.new }}\` 上"
+               echo ""
+               echo "上游动到了我们改过的代码。冲突文件："
+               echo ""
+@@ -146,25 +146,21 @@ jobs:
+               echo 'bash fork-tools/make-patches.sh'
+               echo 'git push origin main'
+               echo '```'
+-              echo ""
+-              echo "处理原则：import 冲突取并集；上游只是改名就取我方再批量改名；"
+-              echo "上游真重构了就取上游，再把 TV 逻辑补回去。"
+             } >> "$GITHUB_STEP_SUMMARY"
+             git am --abort || true
+             exit 1
+           fi
+ 
+-      - name: 给子模块打补丁
+-        if: steps.apply.outputs.ok == 'true'
++      - name: 给子模块打补丁（电视版）
++        if: steps.apply_tv.outputs.ok == 'true'
+         run: |
+           set -euo pipefail
+-          # np-submodule/accompanist-lyrics-ui 里的 KaraokeLyricsView.kt 被我方改过
+-          # （加 linesInteractive 参数、亚像素滚动容差）。submodule 是别人的仓库，
+-          # 我们的改动推不上去，CI 按 .gitmodules 拉到的是上游原版，没有这些改动，
+-          # app 模块调用 linesInteractive 就会编译失败。这里用备份里的整份文件覆盖回去。
++          # np-submodule/accompanist-lyrics-ui 里的 KaraokeLyricsView.kt 被电视补丁改过
++          # （加 linesInteractive 参数、亚像素滚动容差），submodule 是别人的仓库推不上去，
++          # 这里用备份里的整份文件覆盖回去。手机版不需要，下一步会重置。
+           DEST=np-submodule/accompanist-lyrics-ui
+           SRC=/tmp/patches/submodule/accompanist-lyrics-ui
+-          test -d "$DEST" || { echo "::error::找不到子模块 $DEST，检查 checkout 的 submodules: recursive"; exit 1; }
++          test -d "$DEST" || { echo "::error::找不到子模块 $DEST"; exit 1; }
+           test -d "$SRC"  || { echo "::error::找不到 $SRC"; exit 1; }
+           cp -r "$SRC"/. "$DEST"/
+           TARGET="$DEST/src/src/commonMain/kotlin/com/mocharealm/accompanist/lyrics/ui/composable/lyrics/KaraokeLyricsView.kt"
+@@ -173,22 +169,22 @@ jobs:
+           echo "子模块已覆盖：$(basename "$TARGET")"
+ 
+       - name: 安装 JDK 21
+-        if: steps.apply.outputs.ok == 'true'
++        if: steps.apply_tv.outputs.ok == 'true'
+         uses: actions/setup-java@v5
+         with:
+           distribution: temurin
+           java-version: 21
+ 
+       - name: Gradle 缓存
+-        if: steps.apply.outputs.ok == 'true'
++        if: steps.apply_tv.outputs.ok == 'true'
+         uses: gradle/actions/setup-gradle@v5
+ 
+       - name: 安装 NDK
+-        if: steps.apply.outputs.ok == 'true'
++        if: steps.apply_tv.outputs.ok == 'true'
+         uses: ./.github/actions/android-ndk
+ 
+       - name: 写入签名密钥
+-        if: steps.apply.outputs.ok == 'true'
++        if: steps.apply_tv.outputs.ok == 'true'
+         env:
+           KEYSTORE_B64: ${{ secrets.AERIAL_KEYSTORE_B64 }}
+           STORE_PASS: ${{ secrets.AERIAL_STORE_PASSWORD }}
+@@ -196,8 +192,6 @@ jobs:
+           set -euo pipefail
+           test -n "$KEYSTORE_B64" || { echo "::error::缺少 secret AERIAL_KEYSTORE_B64"; exit 1; }
+           printf '%s' "$KEYSTORE_B64" | base64 -d > app/aerial.keystore
+-          # 密钥传错的话，包发出去也装不上（签名不一致），这里先验一遍。
+-          # 指纹是公开信息（不是秘密），直接写死，省得再配一个 secret。
+           GOT=$(keytool -list -v -keystore app/aerial.keystore -storepass "$STORE_PASS" \
+                   -alias "$KEY_ALIAS" 2>/dev/null \
+                 | sed -n 's/^[[:space:]]*SHA256: //p' | tr -d ':' | tr 'A-Z' 'a-z')
+@@ -209,8 +203,8 @@ jobs:
+           echo "密钥库指纹校验通过：$GOT"
+ 
+       - name: 编译电视包
+-        id: build
+-        if: steps.apply.outputs.ok == 'true'
++        id: build_tv
++        if: steps.apply_tv.outputs.ok == 'true'
+         env:
+           ORG_GRADLE_PROJECT_KEYSTORE_FILE: aerial.keystore
+           ORG_GRADLE_PROJECT_KEYSTORE_PASSWORD: ${{ secrets.AERIAL_STORE_PASSWORD }}
+@@ -218,133 +212,191 @@ jobs:
+           ORG_GRADLE_PROJECT_KEY_PASSWORD: ${{ secrets.AERIAL_KEY_PASSWORD }}
+         run: |
+           set -euo pipefail
+-          # versionCode 和 tag 必须来自同一时刻。tag 名里的 yyyyMMdd-HHmm 会被
+-          # AppUpdateRepository 解析成 yyMMddHH，再和 BuildConfig.VERSION_CODE 比大小；
+-          # 以前 tag 取「发布时刻」、versionCode 取「构建时刻」，构建跨整点就差 1，
+-          # 于是装上新包之后应用内仍然一直提示「有新版本」。
++          # versionCode 和 tag 必须来自同一时刻（tag 里的 yyyyMMdd-HHmm 会被解析成 yyMMddHH
++          # 再和 BuildConfig.VERSION_CODE 比大小）。两个包共用同一个时间戳，版本号也一致。
+           BUILD_TS=$(date -u +%s%3N)
+           BUILD_STAMP=$(date -u -d "@$((BUILD_TS / 1000))" +%Y%m%d-%H%M)
++          echo "ts=$BUILD_TS" >> "$GITHUB_OUTPUT"
+           echo "stamp=$BUILD_STAMP" >> "$GITHUB_OUTPUT"
+           echo "构建时刻(UTC) $BUILD_STAMP"
+           ./gradlew :app:assembleTvrelease -PbuildTimestamp="$BUILD_TS" --warning-mode all --stacktrace
+ 
++      - name: 整理电视产物、打包电视源码
++        id: meta_tv
++        if: steps.apply_tv.outputs.ok == 'true'
++        env:
++          BUILD_STAMP: ${{ steps.build_tv.outputs.stamp }}
++        run: |
++          set -euo pipefail
++          APK=$(ls app/build/outputs/apk/tvrelease/*.apk | head -1)
++          test -n "$APK" || { echo "::error::没找到 tvrelease 的 APK"; exit 1; }
++          cp "$APK" "$APK_TV"
++          VERSION=$(basename "$APK" | sed 's/^NeriPlayer-//; s/-armeabi-v7a.*//; s/\.apk$//')
++          SRC_OUT="NeriPlayer-TV-${BUILD_STAMP}-source.tar.gz"
++          tar -czf "/tmp/$SRC_OUT" \
++            --exclude='./.git' --exclude='./.gradle' \
++            --exclude='./build' --exclude='*/build' --exclude='*/*/build' --exclude='*/*/*/build' \
++            --exclude='*/.git' --exclude='./*.apk' --exclude='./*.tar.gz' \
++            .
++          mv "/tmp/$SRC_OUT" "./$SRC_OUT"
++          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
++          echo "src=$SRC_OUT" >> "$GITHUB_OUTPUT"
++          echo "电视包：$APK_TV（versionName $VERSION）"
++
++      - name: 重置到上游并叠上手机补丁
++        id: apply_mobile
++        if: steps.apply_tv.outputs.ok == 'true'
++        run: |
++          set -uo pipefail
++          # 丢掉电视补丁和子模块覆盖，回到干净的上游
++          git reset --hard "${{ steps.up.outputs.new }}"
++          git submodule update --init --recursive --force
++
++          if git am -3 --keep-cr /tmp/patches-mobile/series/*.patch; then
++            echo "ok=true" >> "$GITHUB_OUTPUT"
++            echo "手机补丁已叠上：$(git log --oneline -1)"
++          else
++            echo "ok=false" >> "$GITHUB_OUTPUT"
++            {
++              echo "### ❌ 手机补丁叠不到上游 \`${{ steps.up.outputs.new }}\` 上"
++              echo ""
++              echo "冲突文件："
++              echo ""
++              git diff --name-only --diff-filter=U | sed 's/^/- `/;s/$/`/'
++              echo ""
++              echo "处理原则：按电视补丁同样的方式在本地重修一次基线，"
++              echo "然后把 \`patches-mobile/\` 一起推上来。"
++            } >> "$GITHUB_STEP_SUMMARY"
++            git am --abort || true
++            exit 1
++          fi
++
++      - name: 编译手机包
++        id: build_mobile
++        if: steps.apply_mobile.outputs.ok == 'true'
++        env:
++          ORG_GRADLE_PROJECT_KEYSTORE_FILE: aerial.keystore
++          ORG_GRADLE_PROJECT_KEYSTORE_PASSWORD: ${{ secrets.AERIAL_STORE_PASSWORD }}
++          ORG_GRADLE_PROJECT_KEY_ALIAS: aerial
++          ORG_GRADLE_PROJECT_KEY_PASSWORD: ${{ secrets.AERIAL_KEY_PASSWORD }}
++        run: |
++          set -euo pipefail
++          # 与电视包共用同一个 buildTimestamp：两个包的 versionCode 完全一致
++          ./gradlew :app:assembleRelease \
++            -PbuildTimestamp="${{ steps.build_tv.outputs.ts }}" \
++            -PnativeAbis=arm64-v8a \
++            --warning-mode all --stacktrace
++
++      - name: 整理手机产物、打包手机源码
++        id: meta_mobile
++        if: steps.apply_mobile.outputs.ok == 'true'
++        env:
++          BUILD_STAMP: ${{ steps.build_tv.outputs.stamp }}
++        run: |
++          set -euo pipefail
++          APK=$(ls app/build/outputs/apk/release/*.apk | head -1)
++          test -n "$APK" || { echo "::error::没找到 release 的 APK"; exit 1; }
++          cp "$APK" "$APK_MOBILE"
++          VERSION=$(basename "$APK" | sed 's/^NeriPlayer-//; s/-arm64-v8a.*//; s/\.apk$//')
++          SRC_OUT="NeriPlayer-Mobile-${BUILD_STAMP}-source.tar.gz"
++          tar -czf "/tmp/$SRC_OUT" \
++            --exclude='./.git' --exclude='./.gradle' \
++            --exclude='./build' --exclude='*/build' --exclude='*/*/build' --exclude='*/*/*/build' \
++            --exclude='*/.git' --exclude='./*.apk' --exclude='./*.tar.gz' \
++            .
++          mv "/tmp/$SRC_OUT" "./$SRC_OUT"
++          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
++          echo "src=$SRC_OUT" >> "$GITHUB_OUTPUT"
++          echo "手机包：$APK_MOBILE（versionName $VERSION）"
++
+       - name: 删掉临时密钥
+         if: always()
+         run: rm -f app/aerial.keystore
+ 
+-      - name: 整理产物、打包源码、写发版说明
++      - name: 校验两个包的签名
++        if: steps.apply_mobile.outputs.ok == 'true'
++        run: |
++          set -euo pipefail
++          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
++          BT=$(ls -d "$SDK"/build-tools/*/ | sort -V | tail -1)
++          WANT=$(printf '%s' "$CERT_SHA256" | tr -d ':' | tr 'A-Z' 'a-z')
++          for apk in "$APK_TV" "$APK_MOBILE"; do
++            GOT=$("${BT}apksigner" verify --print-certs "$apk" \
++                  | grep -i 'SHA-256 digest' | head -1 | sed 's/.*digest: *//' \
++                  | tr -d ':' | tr 'A-Z' 'a-z')
++            if [ "$GOT" != "$WANT" ]; then
++              echo "::error::$apk 签名指纹不符：期望 $WANT 实际 $GOT"
++              exit 1
++            fi
++            echo "$apk 签名校验通过"
++          done
++
++      - name: 写发版说明
+         id: meta
+-        if: steps.apply.outputs.ok == 'true'
++        if: steps.apply_mobile.outputs.ok == 'true'
+         env:
+           UPSTREAM_SHA: ${{ steps.up.outputs.new }}
+           UPSTREAM_RELEASE: ${{ steps.up.outputs.release_tag }}
+-          BUILD_STAMP: ${{ steps.build.outputs.stamp }}
++          BUILD_STAMP: ${{ steps.build_tv.outputs.stamp }}
++          VER_TV: ${{ steps.meta_tv.outputs.version }}
++          VER_MOBILE: ${{ steps.meta_mobile.outputs.version }}
++          SRC_TV: ${{ steps.meta_tv.outputs.src }}
++          SRC_MOBILE: ${{ steps.meta_mobile.outputs.src }}
+         run: |
+           set -euo pipefail
+-          APK=$(ls app/build/outputs/apk/tvrelease/*.apk | head -1)
+-          test -n "$APK" || { echo "::error::没找到 tvrelease 的 APK"; exit 1; }
+-          cp "$APK" "$APK_OUT"
+-          VERSION=$(basename "$APK" | sed 's/^NeriPlayer-//; s/-armeabi-v7a.*//; s/\.apk$//')
+-          # tag 用编译步骤定下的那个时刻，保证 versionCodeOfTag(tag) == BuildConfig.VERSION_CODE。
+-          # 兜底：万一 build 步骤没输出（理论上不会），退回当前时间。
+           if [ -n "${BUILD_STAMP:-}" ]; then
+-            TAG="tv-${BUILD_STAMP}"
++            TAG="v-${BUILD_STAMP}"
+           else
+-            TAG="tv-$(date -u +%Y%m%d-%H%M)"
++            TAG="v-$(date -u +%Y%m%d-%H%M)"
+           fi
+-          SRC_OUT="NeriPlayer-TV-${TAG}-source.tar.gz"
+-          REL_NOTE=""
++          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
++
++          NOTE=""
+           if [ -n "${UPSTREAM_RELEASE:-}" ]; then
+-            REL_NOTE="，由上游 Release \`${UPSTREAM_RELEASE}\` 触发"
++            NOTE="，由上游 \`${UPSTREAM_RELEASE}\` 触发"
+           fi
+ 
+-          # ---- 打包源码：当前工作区就是「上游 $UPSTREAM_SHA + 全部补丁」，
+-          #      子模块内容也在里面，解压即可编译（GPLv3 §6 要求的对应源码） ----
+-          # 输出必须写到 /tmp：直接写当前目录的话，tar 会读到正在增长的自己，
+-          # 报 "file changed as we read it" 并以 1 退出。打完再挪回来。
+-          tar -czf "/tmp/$SRC_OUT" \
+-            --exclude='./.git' \
+-            --exclude='./.gradle' \
+-            --exclude='./build' \
+-            --exclude='*/build' \
+-            --exclude='*/*/build' \
+-            --exclude='*/*/*/build' \
+-            --exclude='*/.git' \
+-            --exclude="./$APK_OUT" \
+-            .
+-          mv "/tmp/$SRC_OUT" "./$SRC_OUT"
+-          echo "源码包：$SRC_OUT ($(du -h "$SRC_OUT" | cut -f1))"
+-
+-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+-          echo "src_out=$SRC_OUT" >> "$GITHUB_OUTPUT"
+-
+           cat > release-notes.md <<EOF
+-          ## 这是什么
++          ## 内容
+ 
+-          **电视适配版** NeriPlayer（本 fork 的唯一用途），基于上游 \`${UPSTREAM_SHA}\` 构建${REL_NOTE}。
++          基于上游 \`${UPSTREAM_SHA}\` 构建${NOTE}。
+ 
+-          - 包名 \`moe.ouom.neriplayer.tv\`（独立包名，可与手机版 / 调试版共存）
+-          - 签名：aerial
+-          - 只含 armeabi-v7a（这台电视是 32 位）
+-          - versionName \`${VERSION}\`
+-          - 构建变体 \`tvrelease\`（R8 混淆、不可调试，不是 debug 包）
++          | 包 | 应用 ID | ABI | versionName |
++          | --- | --- | --- | --- |
++          | \`$APK_TV\`（电视版） | \`moe.ouom.neriplayer.tv\` | armeabi-v7a | \`${VER_TV}\` |
++          | \`$APK_MOBILE\`（手机版） | \`moe.ouom.neriplayer\` | arm64-v8a | \`${VER_MOBILE}\` |
+ 
+-          > 从旧的 \`moe.ouom.neriplayer.debug\` 升级：包名不同，两者会并存。
+-          > 先 \`adb uninstall moe.ouom.neriplayer.debug\` 再装，数据不会迁移。
++          两个包都用 aerial 证书签名，构建变体为 \`tvrelease\` / \`release\`（R8 混淆，非 debug 包）。
+ 
+           ## 与上游的差异
+ 
+-          修改日期 $(date -u +%Y-%m-%d)。完整改动见仓库内 \`patches/tv-fork.diff\`。主要改动：
+-
+-          - TV 侧栏导航与遥控器焦点体系
+-          - 关闭部分动效 / 模糊 / 着色器，降低电视端负载
+-          - 歌词页、正在播放页的电视布局
+-          - 数据库启动时的 WAL 热日志恢复
++          - 电视版：TV 侧栏与遥控器焦点、降负载渲染、电视版播放页/歌词布局。补丁见 \`patches/\`
++          - 手机版：仅播放页「倍速与音调」与应用内检查更新。补丁见 \`patches-mobile/\`
+ 
+-          ## 源码（重要）
++          ## 源码
+ 
+-          **本 Release 附带的 \`${SRC_OUT}\` 就是编出这个 APK 的完整源码**，
+-          已包含全部子模块，解压后执行 \`./gradlew :app:assembleTvrelease\` 即可复现。
+-          它对应上游 \`${UPSTREAM_SHA}\` 加上 \`patches/\` 里的电视适配改动。
++          \`${SRC_TV}\` / \`${SRC_MOBILE}\` 分别对应两个 APK，含全部子模块，
++          解压后执行 \`./gradlew :app:assembleTvrelease\` / \`:app:assembleRelease\` 即可复现。
+ 
+           上游项目：https://github.com/cwuom/NeriPlayer
+ 
+           ## 许可
+ 
+-          本程序为自由软件，按 **GNU General Public License v3.0 或更高版本**发布，
+-          不提供任何担保。许可证全文见源码包内 LICENSE，修改声明见 NOTICE。
++          按 **GPL-3.0-or-later** 发布，不提供任何担保。修改声明见 NOTICE。
+           本构建不是上游官方发布，也不代表上游作者的观点。
+           EOF
+ 
+-      - name: 校验产物的签名
+-        if: steps.apply.outputs.ok == 'true'
+-        run: |
+-          set -euo pipefail
+-          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+-          BT=$(ls -d "$SDK"/build-tools/*/ | sort -V | tail -1)
+-          GOT=$("${BT}apksigner" verify --print-certs "$APK_OUT" \
+-                | grep -i 'SHA-256 digest' | head -1 | sed 's/.*digest: *//' \
+-                | tr -d ':' | tr 'A-Z' 'a-z')
+-          WANT=$(printf '%s' "$CERT_SHA256" | tr -d ':' | tr 'A-Z' 'a-z')
+-          if [ "$GOT" != "$WANT" ]; then
+-            echo "::error::APK 签名指纹不符：期望 $WANT 实际 $GOT（签名没生效？）"
+-            exit 1
+-          fi
+-          echo "APK 签名校验通过：$GOT"
+-
+       - name: 打 tag 并发布 Release
+-        if: steps.apply.outputs.ok == 'true'
++        if: steps.apply_mobile.outputs.ok == 'true'
+         env:
+           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+           TAG: ${{ steps.meta.outputs.tag }}
+-          SRC_OUT: ${{ steps.meta.outputs.src_out }}
++          SRC_TV: ${{ steps.meta_tv.outputs.src }}
++          SRC_MOBILE: ${{ steps.meta_mobile.outputs.src }}
+           MAIN_SHA: ${{ steps.up.outputs.main_sha }}
+         run: |
+           set -uo pipefail
+ 
+-          # 任何一步失败都把真实报错贴到 Run 页面最上方，
+-          # 免得又只剩一句 "Process completed with exit code 1"。
+           fail() {
+             { echo "### ❌ $1"; echo; echo '```'; echo "${2:-（无输出）}" | tail -30; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+             echo "::error::$1"
+@@ -353,31 +405,29 @@ jobs:
+ 
+           [ -n "${TAG:-}" ] || fail "meta 步骤没有产出 tag" "TAG 为空"
+ 
+-          # tag 打在 main 已有的提交上：这样 push 只传一个 tag 对象，
+-          # 不带任何提交内容，不会触发 workflows 权限检查。
+           EXIST=$(git ls-remote --tags origin "refs/tags/$TAG" 2>&1) || fail "查询远端 tag 失败" "$EXIST"
+           if [ -n "$EXIST" ]; then
+             TAG="${TAG}-r${GITHUB_RUN_NUMBER}"
+             echo "同名 tag 已存在，改用 $TAG"
+           fi
+ 
+-          OUT=$(git tag -a "$TAG" "$MAIN_SHA" -m "基于上游 ${{ steps.up.outputs.new }} 的电视适配构建" 2>&1) \
++          OUT=$(git tag -a "$TAG" "$MAIN_SHA" -m "基于上游 ${{ steps.up.outputs.new }} 的电视版 / 手机版构建" 2>&1) \
+             || fail "创建 tag 失败" "$OUT"
+           OUT=$(git push origin "$TAG" 2>&1) || fail "推送 tag 失败" "$OUT"
+           echo "tag 已推送：$TAG → $MAIN_SHA"
+ 
+-          # APK 和源码包一起发，GPLv3 §6 的「同一处提供对应源码」就满足了
+-          OUT=$(gh release create "$TAG" "$APK_OUT" "$SRC_OUT" \
++          OUT=$(gh release create "$TAG" \
++            "$APK_TV" "$SRC_TV" \
++            "$APK_MOBILE" "$SRC_MOBILE" \
+             --repo "${{ github.repository }}" \
+-            --title "TV 版 $TAG" \
++            --title "电视版 / 手机版 $TAG" \
+             --notes-file release-notes.md 2>&1) \
+             || fail "创建 Release 失败（tag $TAG 已在远端，可手动补建）" "$OUT"
+           echo "Release 已发布：$TAG"
+ 
+-      # 放在最后：只有编译、验签、发版全部成功才打标记，
+-      # 中途失败的话下个小时还能重试，不会被误判成「已处理」。
++      # 放在最后：只有全部成功才打标记，中途失败的话下个小时还能重试。
+       - name: 记录已处理的上游 Release
+-        if: steps.apply.outputs.ok == 'true' && steps.up.outputs.release_tag != ''
++        if: steps.apply_mobile.outputs.ok == 'true' && steps.up.outputs.release_tag != ''
+         env:
+           MAIN_SHA: ${{ steps.up.outputs.main_sha }}
+         run: |
+@@ -390,5 +440,4 @@ jobs:
+           git tag "$TAG" "$MAIN_SHA"
+           OUT=$(git push origin "$TAG" 2>&1) || {
+             echo "::error::推送标记 tag 失败"; echo "$OUT" | tail -20; exit 1; }
+-          echo "已标记：$TAG → $(git rev-parse --short=7 "$MAIN_SHA")"
+-          echo "下次定时任务看到这个标记就跳过，直到上游再发新 Release。"
++          echo "已标记：$TAG"
+diff --git a/FORK.md b/FORK.md
+index a2b6c5b6..1c7f8f32 100644
+--- a/FORK.md
++++ b/FORK.md
+@@ -122,9 +122,14 @@ adb install -r NeriPlayer-TV.apk          # 装新的 .tv 包
+ | `main` | **我方完整代码**（上游 + TV 改动 + 补丁快照 + 脚本），仓库默认分支 |
+ | `master` | 上游原样镜像，只 `git fetch` + 快进，永不提交（本地才有，不用推） |
+ | `archive/*` | 历史存档，只读 |
+-| `patches/` | 上游补丁快照，自动生成，**不要手改** |
++| `patches/` | 电视版补丁快照（上游 → main），自动生成，**不要手改** |
++| `patches-mobile/` | 手机版补丁快照（上游 → 手机分支），**只含手机改动**，同样不要手改 |
+ | `fork-tools/` | 同步与生成补丁的脚本 |
+-| `.github/workflows/fork-sync.yml` | CI：定时检查上游 Release → 有新版才编译 → 发 Release（**只读仓库，不推 commit**） |
++| `.github/workflows/fork-sync.yml` | CI：定时检查上游 Release → 有新版才在临时工作区里分别叠两套补丁 → 编出电视包和手机包 → 发同一个 Release（**只读仓库，不推 commit**） |
++
++两套补丁互不干扰：CI 每次都先 `git checkout --detach 上游提交`，叠 `patches/` 编电视包，
++再 `git reset --hard 上游提交`，叠 `patches-mobile/` 编手机包。各自的补丁只描述自己那点改动，
++所以上游一动，两边各自 `git am -3`，冲突也只在各自那一路出现。
+ 
+ **`main` 必须保持线性**（不含 merge commit）。`patches/series/` 是靠逐个 `git am`
+ 重放的，历史里一旦有 merge，merge 之后的提交其 diff 基准是合并结果而不是上游，
+@@ -143,6 +148,15 @@ bash fork-tools/make-patches.sh     # 重新生成 patches/ 快照
+ git push origin main
+ ```
+ 
++改手机版（只动手机那套补丁）：
++
++```bash
++# 在「上游 + patches-mobile」的分支上提交改动，然后重出快照
++git format-patch 上游提交..HEAD -o /tmp/m   # 按提交拆
++git diff 上游提交..HEAD > patches-mobile/mobile-fork.diff
++git push origin main
++```
++
+ `make-patches.sh` 做三件事：
+ 
+ 1. 生成 `patches/tv-fork.diff`（单个合并补丁）
+diff --git a/NOTICE b/NOTICE
+index 4921337e..980ac28d 100644
+--- a/NOTICE
++++ b/NOTICE
+@@ -9,16 +9,21 @@ Upstream project / 上游项目:
+     Copyright (C) 2025-2025 NeriPlayer developers
+ 
+ Modifications / 修改内容:
+-    Television adaptation fork / 电视端适配分支
+-      - TV navigation sidebar and D-pad focus management
+-      - Reduced animation, blur and shader work for low-power TV hardware
+-      - TV-oriented layouts for the now-playing and lyrics screens
+-      - Recovery for unrolled SQLite WAL journals at startup
+-    Full machine-readable diff / 完整差异:
+-      patches/tv-fork.diff
++    A. Television build / 电视版（moe.ouom.neriplayer.tv）
++       - TV navigation sidebar and D-pad focus management
++       - Reduced animation, blur and shader work for low-power TV hardware
++       - TV-oriented layouts for the now-playing and lyrics screens
++       - Recovery for unrolled SQLite WAL journals at startup
++       Diff / 差异: patches/tv-fork.diff
++
++    B. Phone build / 手机版（moe.ouom.neriplayer）
++       - Now-playing toolbar: speaker/volume button replaced by speed & pitch
++         (0.25x-3x, -12..+12 semitones, linked-pitch switch)
++       - In-app update check (launch + Settings - About)
++       Diff / 差异: patches-mobile/mobile-fork.diff
+ 
+ Modified on / 修改日期:
+-    2026-10-24 (first) / 2026-11-07 (latest)
++    2026-10-24 (first) / 2026-11-19 (latest)
+     首次修改 / 最近修改。每次发布的精确构建日期见对应 Release 说明。
+ 
+ License / 许可证:
+diff --git a/README.md b/README.md
+index 4302ecef..2e48d96a 100644
+--- a/README.md
++++ b/README.md
+@@ -1,18 +1,18 @@
+ [English](./README_EN.md) | [中文](./README.md)
+ 
+-> ## 📺 这是电视适配 fork，不是上游官方仓库
++> ## 📺📱 这是自用修改版 fork，不是上游官方仓库
+ >
+ > 上游：[cwuom/NeriPlayer](https://github.com/cwuom/NeriPlayer)
+ >
+-> 本仓库在官方代码基础上做了**电视（Android TV / 遥控器）适配**：侧栏导航、遥控焦点体系、
+-> 精简动效与模糊、电视版布局。全部改动见
+-> [`patches/tv-fork.diff`](patches/tv-fork.diff)，维护说明见 [`FORK.md`](FORK.md)。
++> 每个 Release 同时提供两个包，都是从同一个上游提交分别叠补丁编出来的：
+ >
+-> 只发布电视包（`armeabi-v7a`，包名 `moe.ouom.neriplayer.tv`），**不提供手机版**。
+-> 手机版请去[上游仓库](https://github.com/cwuom/NeriPlayer/releases)。
++> | 包 | 包名 | ABI | 改了什么 |
++> | :--- | :--- | :--- | :--- |
++> | `NeriPlayer-tv-arm32-v7a.apk` | `moe.ouom.neriplayer.tv` | armeabi-v7a | 电视适配：侧栏导航、遥控焦点、降负载渲染、电视版布局。见 [`patches/`](patches/) |
++> | `NeriPlayer-Mobile-arm64-v8a.apk` | `moe.ouom.neriplayer` | arm64-v8a | 仅播放页「倍速与音调」与应用内检查更新。见 [`patches-mobile/`](patches-mobile/) |
+ >
+-> 许可证仍是 **GPL-3.0-or-later**（见 [LICENSE](LICENSE)），修改声明见 [NOTICE](NOTICE)。
+-> 本仓库的构建不代表上游作者的观点。
++> 维护说明见 [`FORK.md`](FORK.md)。许可证仍是 **GPL-3.0-or-later**（见 [LICENSE](LICENSE)），
++> 修改声明见 [NOTICE](NOTICE)。本仓库的构建不代表上游作者的观点。
+ 
+ <h1 align="center">NeriPlayer (音理音理!)</h1>
+ 

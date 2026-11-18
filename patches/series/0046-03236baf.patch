@@ -1,0 +1,30 @@
+From 03236baf69305ccaf122e17e8bb0cc6c5edc6c02 Mon Sep 17 00:00:00 2001
+From: Neri Fork <neri@fork.local>
+Date: Thu, 19 Nov 2026 03:38:13 +0800
+Subject: [PATCH] =?UTF-8?q?fix(tv):=20=E6=9B=B4=E6=96=B0=E4=B8=8B=E8=BD=BD?=
+ =?UTF-8?q?=E8=B5=84=E4=BA=A7=E5=90=8D=E5=AF=B9=E9=BD=90=E5=8F=8C=E7=89=88?=
+ =?UTF-8?q?=E6=9C=AC=20Release?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+CI 现在把电视包改名成 NeriPlayer-tv-arm32-v7a.apk（和手机包同处一个 Release），
+旧的 NeriPlayer-TV.apk 已经不存在，按旧名字下载会 404 —— 表现是能检测到新版本、
+点了「下载更新」却提示下载失败。tag 解析只看时间戳，不受 v- 前缀影响。
+---
+ .../main/java/moe/ouom/neriplayer/update/AppUpdateRepository.kt | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/app/src/main/java/moe/ouom/neriplayer/update/AppUpdateRepository.kt b/app/src/main/java/moe/ouom/neriplayer/update/AppUpdateRepository.kt
+index 69ecd517..423a130e 100644
+--- a/app/src/main/java/moe/ouom/neriplayer/update/AppUpdateRepository.kt
++++ b/app/src/main/java/moe/ouom/neriplayer/update/AppUpdateRepository.kt
+@@ -24,7 +24,7 @@ import java.net.URL
+ internal object AppUpdateRepository {
+ 
+     private const val REPO = "tushoning/NeriPlayer"
+-    private const val ASSET_NAME = "NeriPlayer-TV.apk"
++    private const val ASSET_NAME = "NeriPlayer-tv-arm32-v7a.apk"
+ 
+     /** 前两条是国内加速镜像，最后一条是原链接；下载时按实测延迟排序后再挑。 */
+     private val downloadBases = listOf(

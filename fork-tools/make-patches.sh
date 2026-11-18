@@ -43,8 +43,8 @@ BASE_SHA=$(git rev-parse --short "$BASE")
 BASE_SUBJECT=$(git log -1 --format=%s "$BASE")
 HEAD_SHA=$(git rev-parse --short HEAD)
 
-# patches/ 自身不参与补丁内容，否则补丁会包含自己
-FILTER=(-- . ':(exclude)patches')
+# patches/ 与 patches-mobile/ 是补丁快照本身，不参与补丁内容，否则补丁会包含自己
+FILTER=(-- . ':(exclude)patches' ':(exclude)patches-mobile')
 
 if [ -n "$(git rev-list --merges "$BASE..HEAD")" ]; then
   echo "警告：$BASE_SHA..HEAD 之间还有 merge commit，补丁链可能无法逐个应用。" >&2
@@ -140,6 +140,9 @@ export GIT_INDEX_FILE="$TMPROOT/idx"
 git read-tree HEAD
 if [ -n "$(git ls-tree HEAD -- patches)" ]; then
   git rm -r -q --cached patches
+fi
+if [ -n "$(git ls-tree HEAD -- patches-mobile)" ]; then
+  git rm -r -q --cached patches-mobile
 fi
 TIP_TREE=$(git write-tree)
 unset GIT_INDEX_FILE
