@@ -24,7 +24,7 @@ import java.net.URL
 internal object AppUpdateRepository {
 
     private const val REPO = "tushoning/NeriPlayer"
-    private const val ASSET_NAME = "NeriPlayer-TV.apk"
+    private const val ASSET_NAME = "NeriPlayer-tv-arm32-v7a.apk"
 
     /** 前两条是国内加速镜像，最后一条是原链接；下载时按实测延迟排序后再挑。 */
     private val downloadBases = listOf(
