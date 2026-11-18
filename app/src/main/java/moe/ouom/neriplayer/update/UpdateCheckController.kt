@@ -1,5 +1,5 @@
 /*
- * NeriPlayer TV fork - update check session.
+ * NeriPlayer - update check session (mobile build).
  *
  * This file is part of NeriPlayer (GPL-3.0-or-later).
  */
@@ -79,7 +79,8 @@ internal object UpdateCheckController {
         val myToken = ++token
         _dialogState.value = UpdateCheckUiState.Checking
         scope.launch {
-            val found = runCatching { AppUpdateRepository.fetchLatest() }.getOrNull()
+            val found = runCatching { AppUpdateRepository.fetchLatest() }
+                .getOrDefault(AppUpdateRepository.FetchResult.Failed)
             if (myToken != token) return@launch
             // 检查期间用户可能已经点了「关闭」，那就别再把窗口顶出来
             if (_dialogState.value == null) return@launch
@@ -105,7 +106,8 @@ internal object UpdateCheckController {
         prefs.edit().putLong(KEY_LAST_CHECK_DAY, today).apply()
 
         val myToken = ++token
-        val found = runCatching { AppUpdateRepository.fetchLatest() }.getOrNull()
+        val found = runCatching { AppUpdateRepository.fetchLatest() }
+            .getOrDefault(AppUpdateRepository.FetchResult.Failed)
         if (myToken != token) return LaunchUpdateCheckResult.Skipped
         return when (val state = found.toUiState()) {
             is UpdateCheckUiState.Available -> {
@@ -121,9 +123,15 @@ internal object UpdateCheckController {
         _dialogState.value = null
     }
 
-    private fun AppUpdateRepository.Latest?.toUiState(): UpdateCheckUiState = when {
-        this == null -> UpdateCheckUiState.Failed
-        versionCode <= BuildConfig.VERSION_CODE -> UpdateCheckUiState.UpToDate
-        else -> UpdateCheckUiState.Available(this)
+    private fun AppUpdateRepository.FetchResult.toUiState(): UpdateCheckUiState = when (this) {
+        AppUpdateRepository.FetchResult.Failed -> UpdateCheckUiState.Failed
+        // 没有手机版 Release 也等于「没得更新」，别当成错误
+        AppUpdateRepository.FetchResult.NotFound -> UpdateCheckUiState.UpToDate
+        is AppUpdateRepository.FetchResult.Found ->
+            if (latest.versionCode <= BuildConfig.VERSION_CODE) {
+                UpdateCheckUiState.UpToDate
+            } else {
+                UpdateCheckUiState.Available(latest)
+            }
     }
 }
